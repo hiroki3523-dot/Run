@@ -14,7 +14,7 @@ run_worker_first = ["/api/*", "/webhook", "/auth/*"]
 [[d1_databases]]
 binding = "DB"
 database_name = "sub3"
-database_id = "REPLACE_WITH_YOUR_D1_ID"  # Cloudflare の画面で作成した D1 の ID に置き換える
+database_id = "732355b3-9d87-4f98-ae5d-eafe8707c43c"
 migrations_dir = "migrations"
 
 # Cron は UTC。22:30 UTC = 翌 7:30 JST
