@@ -6,7 +6,7 @@ export interface Env {
   STRAVA_CLIENT_ID: string;
   STRAVA_CLIENT_SECRET: string;
   STRAVA_VERIFY_TOKEN: string;
-  NTFY_SERVER: string;
+  NTFY_SERVER?: string;
   NTFY_TOPIC: string;
   NTFY_TOKEN?: string;
 }
