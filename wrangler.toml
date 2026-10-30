@@ -1,0 +1,31 @@
+name = "sub3-runner"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+# 静的 UI (public/) を配信。/api・/webhook・/auth は Worker が処理する
+[assets]
+directory = "./public"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/webhook", "/auth/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sub3"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+migrations_dir = "migrations"
+
+# Cron は UTC。22:30 UTC = 翌 7:30 JST
+[triggers]
+crons = ["30 22 * * *"]
+
+[vars]
+APP_URL = "https://sub3-runner.example.workers.dev"
+NTFY_SERVER = "https://ntfy.sh"
+
+# 以下は `wrangler secret put` で設定する:
+#   APP_TOKEN            UI/API 用のログイントークン
+#   STRAVA_CLIENT_ID
+#   STRAVA_CLIENT_SECRET
+#   STRAVA_VERIFY_TOKEN  Webhook 検証用の任意文字列
+#   NTFY_TOPIC           推測されにくいトピック名
+#   NTFY_TOKEN           (任意) ntfy のアクセストークン
