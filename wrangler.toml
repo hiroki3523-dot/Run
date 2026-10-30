@@ -1,0 +1,32 @@
+name = "sub3-runner"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+# 設定値はすべて Cloudflare の画面で「シークレット」として登録する。
+# 画面で追加した変数がデプロイで消えないようにしておく
+keep_vars = true
+
+# 静的 UI (public/) を配信。/api・/webhook・/auth は Worker が処理する
+[assets]
+directory = "./public"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/webhook", "/auth/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sub3"
+database_id = "REPLACE_WITH_YOUR_D1_ID"  # Cloudflare の画面で作成した D1 の ID に置き換える
+migrations_dir = "migrations"
+
+# Cron は UTC。22:30 UTC = 翌 7:30 JST
+[triggers]
+crons = ["30 22 * * *"]
+
+# 以下は Cloudflare の画面 (Worker の設定 > 変数とシークレット) でシークレットとして登録する:
+#   APP_URL              この Worker の URL (例: https://sub3-runner.xxx.workers.dev)
+#   APP_TOKEN            UI/API 用のログイントークン
+#   STRAVA_CLIENT_ID
+#   STRAVA_CLIENT_SECRET
+#   STRAVA_VERIFY_TOKEN  Webhook 検証用の任意文字列
+#   NTFY_TOPIC           推測されにくいトピック名
+#   NTFY_TOKEN           (任意) ntfy のアクセストークン
+#   NTFY_SERVER          (任意) 既定は https://ntfy.sh
