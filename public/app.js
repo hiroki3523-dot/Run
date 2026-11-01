@@ -1036,7 +1036,22 @@ async function activityDetailView(id) {
   const [a, shoes] = await Promise.all([api(`/activities/${id}`), api('/shoes')]);
   const plans = await api(`/plans?from=${a.date}&to=${a.date}`);
   const ev = a.evaluation;
-  const metric = (name, m) => `<div class="metric"><span>${name}</span>${scoreHtml(m?.score)}<span class="muted">${esc(m?.summary)}</span></div>`;
+  const metric = (name, m, w) => `<div class="metric"><span>${name}${w ? `<small class="wt">配点 ${w}%</small>` : ''}</span>${scoreHtml(m?.score)}<span class="muted">${esc(m?.summary)}</span></div>`;
+  const W = ev?.weights;
+  const HOW = {
+    pace: ['ペース', '計画のペース帯に入って走れた距離の割合と、帯からはみ出した秒数。1kmごとの安定、後半の失速も見ます。帯からの平均のはみ出しが0秒で満点、1秒/kmごとに約7点減ります。'],
+    hr: ['心拍', '目標の心拍域に収まっていたか。一定ペースの練習では、後半に心拍が上がる「ドリフト」(2%以内なら満点) も見ます。'],
+    cadence: ['ケイデンス', '目標ピッチとの差と、後半の落ち込み。目標より1spm低いごとに約8点減ります。'],
+    form: ['フォーム', '歩幅とピッチのばらつき、後半に歩幅が縮んでいないか。'],
+  };
+  const howCard = (ev) => {
+    if (!W) return '';
+    const rows = ['pace', 'hr', 'cadence', 'form'].filter((k) => W[k] > 0 && ev[k]?.score != null).map((k) => `<tr><td><b>${HOW[k][0]}</b><div class="muted">${HOW[k][1]}</div></td><td class="num">${ev[k].score}</td><td class="num">${W[k]}%</td></tr>`).join('');
+    return `<details class="how"><summary>この点数のつけ方</summary>
+      <p class="muted">総合点は、上の各指標の点数を「配点」で重みづけした平均です。${ev.type === 'free' ? 'メニューが無いので、単独の走りの質(安定・心拍・ピッチ・フォーム)で採点します。' : `${esc(PLAN_LABELS[ev.type])}は、この練習の目的に合わせて配点を変えています。`}距離が計画に届かなくても点数は下がりません (評価は走りの質だけ)。</p>
+      <table class="how-t"><tr><th>指標</th><th>点</th><th>配点</th></tr>${rows}</table>
+      <p class="muted">目安: 90点以上 とても良い / 75点以上 良い / 60点以上 合格 / 60点未満 見直しが必要。</p></details>`;
+  };
 
   setTimeout(() => {
     view.querySelectorAll('[data-pc]').forEach((b) => (b.onclick = async () => {
@@ -1084,7 +1099,8 @@ async function activityDetailView(id) {
     ${ev ? `
     <div class="card">
       <h2>評価 <span class="badge" data-t="${ev.type}">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></h2>
-      ${metric('ペース', ev.pace)}${metric('心拍', ev.hr)}${metric('ケイデンス', ev.cadence)}${ev.form ? metric('フォーム', ev.form) : ''}
+      ${metric('ペース', ev.pace, W?.pace)}${metric('心拍', ev.hr, W?.hr)}${metric('ケイデンス', ev.cadence, W?.cadence)}${ev.form ? metric('フォーム', ev.form, W?.form) : ''}
+      ${howCard(ev)}
       <ul class="bullets">${ev.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
       ${ev.focus?.length ? `<h3 class="sub">次に意識すること</h3><ul class="bullets focus">${ev.focus.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
       ${ev.pace.details.rep_paces ? `<p class="muted num">各本: ${esc(ev.pace.details.rep_paces)}</p>` : ''}

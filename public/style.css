@@ -390,6 +390,11 @@ li.cur { background: var(--accent-soft); border-radius: 12px; }
 .gmark.m-goal .glabel, .gmark.m-goal2 .glabel { top: 0; }
 .glabel b { font-size: 13px; color: var(--text); }
 .gend { position: absolute; left: 0; right: 0; bottom: -8px; display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
+small.wt { display: block; font-size: 11px; font-weight: 400; color: var(--muted); }
+details.how { margin: 12px 0; padding: 12px 14px; border-radius: 14px; background: var(--btn-bg); }
+details.how summary { cursor: pointer; font-weight: 700; min-height: 32px; display: flex; align-items: center; }
+.how-t td, .how-t th { vertical-align: top; }
+.how-t td .muted { font-size: 12px; margin-top: 2px; font-weight: 400; }
 /* ---- シューズ */
 ul.shoes { list-style: none; margin: 0; padding: 0; }
 .shoe-item { padding: 14px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
