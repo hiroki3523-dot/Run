@@ -270,3 +270,29 @@ ul.focus li::marker { color: var(--accent); }
 .step .chip { padding: 8px 12px; }
 .step .stepper b { font-size: 17px; font-weight: 500; white-space: nowrap; }
 .step .stepper button { padding: 10px 5px; font-size: 12px; }
+
+/* ---- ボタンと文字を見分けやすく */
+:root { --btn-bg: color-mix(in srgb, var(--text) 8%, var(--surface)); --btn-line: color-mix(in srgb, var(--text) 22%, var(--surface)); }
+button, .btn, .chip {
+  background: var(--btn-bg); border: 1.5px solid var(--btn-line); color: var(--text); font-weight: 600;
+  box-shadow: 0 2px 0 var(--btn-line);
+}
+button:active, .btn:active, .chip:active { box-shadow: 0 0 0 var(--btn-line); transform: translateY(2px); }
+.chip.on, button.primary, .btn.primary { background: linear-gradient(135deg, #2b3dff, #7a5cff); border-color: transparent; color: #fff; box-shadow: 0 2px 0 rgb(43 61 255 / .45); }
+button.danger, .chip.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--surface)); }
+nav a { background: transparent; }
+/* 見出しラベル: 左に色の棒を付けて、ボタンの文字ではないと分かるように */
+.field .lbl, .part .lbl { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: .02em; }
+.field .lbl::before, .part .lbl::before { content: ""; width: 4px; height: 14px; border-radius: 2px; background: var(--accent); }
+.part .lbl::before { background: var(--muted); }
+.field .stepper b { color: var(--text); }
+/* ブロック型の値表示はボタンではない: 枠なし・文字だけ */
+.stepper b, .step-meta, .zone-note { background: none; border: 0; box-shadow: none; }
+
+/* ---- 戻る (固定ヘッダー) */
+header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px; min-height: 56px; background: color-mix(in srgb, var(--bg) 88%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); padding-bottom: 10px; }
+.backbtn { font-size: 17px; padding: 8px 18px 8px 12px; border-radius: 999px; min-height: 48px; min-width: 96px; }
+.hidden { display: none !important; }
+.dlg-actions { position: sticky; bottom: -24px; margin: 12px -24px -24px; padding: 14px 24px 24px; background: var(--surface); border-top: 1px solid var(--line); }
+.step-head { background: transparent; border: 0; box-shadow: none; border-radius: 0; min-height: 56px; }
+.step-head:active { transform: none; background: var(--btn-bg); }
