@@ -7,17 +7,39 @@ const PLAN_LABELS = {
   easy: 'Easy', jog: 'Jog', long: 'ロング走', m: 'Mペース走', lt: 'LT走',
   interval: 'インターバル', race: 'レース', rest: '休養',
 };
-const PURPOSE_LABELS = { daily: '普段用', recovery: 'リカバリー用', workout: 'ポイント走用', race: '本番用' };
-const PURPOSE_HINTS = { daily: '普段用 (Easy・ロング走)', recovery: 'リカバリー用 (ジョグ・疲労抜き。クッション厚め)', workout: 'ポイント走用 (LT・インターバル・Mペース走)', race: 'レース本番用 (本番と、本番ペースの練習)' };
-/** 計画の種類 → 向いている用途の順 */
-const SHOE_PREF = { jog: ['recovery', 'daily'], race: ['race', 'workout'], m: ['workout', 'race', 'daily'], lt: ['workout', 'race', 'daily'], interval: ['workout', 'race', 'daily'] };
+const PURPOSE_LABELS = { easy: 'イージー走', recovery: 'リカバリー・ジョグ', long: 'ロング走', pace: 'ペース走(M・LT)', speed: 'スピード練習', race: 'レース本番' };
+const PURPOSE_HINTS = {
+  easy: 'ふだんのEasy。いちばん使う 1 足',
+  recovery: '疲労抜き・ジョグ。クッション厚め',
+  long: 'ロング走。距離を踏むときの 1 足',
+  pace: 'MペースやLT走。軽めでよく走る靴',
+  speed: 'インターバル・レペ。反発のある靴',
+  race: 'レース本番と、本番ペースの練習',
+};
+const LEGACY_PURPOSE = { daily: ['easy', 'recovery', 'long'], workout: ['pace', 'speed'] };
+/** 保存値 (カンマ区切り。古い daily / workout も読める) → 用途の配列 */
+const purposesOf = (v) => [...new Set(String(v || '').split(',').map((x) => x.trim()).filter(Boolean).flatMap((x) => LEGACY_PURPOSE[x] ?? [x]).filter((x) => PURPOSE_LABELS[x]))];
+const purposeText = (s) => purposesOf(s.purpose).map((x) => PURPOSE_LABELS[x]).join('・') || '用途未設定';
+/** 計画の種類 → 向いている用途 (先頭ほど優先) */
+const SHOE_PREF = { easy: ['easy', 'recovery', 'long'], jog: ['recovery', 'easy'], long: ['long', 'easy'], m: ['pace', 'race', 'speed'], lt: ['pace', 'speed', 'race'], interval: ['speed', 'pace', 'race'], race: ['race'] };
+/** シューズ名からの用途の推定 (一括設定ボタンで使う) */
+const SHOE_GUESS = [
+  [/アルファフライ|alphafly|ヴェイパーフライ|vaporfly|ヴェイパー|vapor|metaspeed|メタスピード|adios pro|アディオス/i, ['race', 'speed']],
+  [/evo\s*sl|エボ|ズームフライ|zoom\s*fly|ペガサスターボ|turbo|rc elite|ライトレーサー|シーラス/i, ['pace', 'speed']],
+  [/インヴィンシブル|invincible|ボメロ|vomero|nimbus|superblast/i, ['recovery', 'long', 'easy']],
+  [/ペガサス|pegasus|ストラクチャー|structure|ghost|kayano/i, ['easy', 'long']],
+];
+const guessPurposes = (name) => (SHOE_GUESS.find(([re]) => re.test(name || '')) || [null, null])[1];
 let SHOES = [];
-/** メニューに合うシューズを、用途 → すり減りの少ない順で 1 足選ぶ */
+/** メニューに合うシューズを選ぶ: 用途が合う順 → 走行距離の少ない順。理由も返す */
 function recommendShoe(type) {
   const pool = SHOES.filter((x) => !x.retired && x.total_km < x.limit_km);
-  for (const pu of SHOE_PREF[type] ?? ['daily']) {
-    const c = pool.filter((x) => x.purpose === pu).sort((a, b) => a.total_km / a.limit_km - b.total_km / b.limit_km)[0];
-    if (c) return c;
+  for (const pu of SHOE_PREF[type] ?? ['easy']) {
+    const c = pool.filter((x) => purposesOf(x.purpose).includes(pu)).sort((a, b) => a.total_km / a.limit_km - b.total_km / b.limit_km);
+    if (c.length) {
+      const why = c.length > 1 ? `${PURPOSE_LABELS[pu]}用 ${c.length} 足のうち、走行距離が最も少ない` : `${PURPOSE_LABELS[pu]}用に設定している唯一の 1 足`;
+      return { shoe: c[0], why };
+    }
   }
   return null;
 }
@@ -193,8 +215,8 @@ function goalCard(settings, next) {
 
 function shoeLine(p, calendar) {
   if (!calendar || p.type === 'rest' || p.activity_id) return '';
-  const sh = recommendShoe(p.type);
-  return sh ? `<div class="shoe-rec">おすすめ: ${esc(sh.name)} <span class="muted">(${PURPOSE_LABELS[sh.purpose]}・${Math.round(sh.total_km)}km)</span></div>` : '';
+  const r = recommendShoe(p.type);
+  return r ? `<div class="shoe-rec">おすすめ: ${esc(r.shoe.name)} <span class="muted">${Math.round(r.shoe.total_km)}km</span><div class="muted why">${esc(r.why)}</div></div>` : '';
 }
 
 /** 同じ日・同じ内容の計画が重なっていたら 1 つにまとめる (走った実績が付いている方を残す) */
@@ -1027,53 +1049,125 @@ async function editRace(r) {
 
 // ---- シューズ
 
-/** シューズの入れ替え・買い足しの提案 (用途ごとの有無、摩耗、本番前の慣らし) */
+/** シューズの提案。短く、多くても 3 つ */
 function shoeAdvice(shoes, race) {
   const live = shoes.filter((x) => !x.retired);
   const out = [];
   const daysTo = race ? Math.round((new Date(race.date) - new Date(today())) / 86400000) : null;
-  for (const [pu, why] of [['race', 'ペースを上げた練習と本番に'], ['workout', 'LT走・インターバルに'], ['recovery', 'ジョグ・疲労抜きに'], ['daily', '普段のEasyとロング走に']]) {
-    if (!live.some((x) => x.purpose === pu)) out.push({ tone: 'warn', text: `${PURPOSE_LABELS[pu]}シューズがありません。${why}使う 1 足を用意すると、脚への負担を分散できます (もう持っている場合は、そのシューズをタップして用途を選んでください)` });
+  const over = live.filter((x) => x.total_km >= x.limit_km);
+  if (over.length) out.push({ tone: 'bad', text: `交換目安を超えています: ${over.map((x) => esc(x.name)).join('、')}。引退にするか、入れ替えを。` });
+  const raceShoe = live.find((x) => purposesOf(x.purpose).includes('race'));
+  if (race && daysTo != null && daysTo >= 0 && daysTo <= 56) {
+    if (!raceShoe) out.push({ tone: 'warn', text: `本番用がありません。${esc(race.name)}まで${daysTo}日。` });
+    else if (raceShoe.total_km < 30) out.push({ tone: 'warn', text: `${esc(raceShoe.name)}は${Math.round(raceShoe.total_km)}km。本番前に 30〜50km で慣らしを。` });
   }
-  for (const x of live) {
-    const left = Math.round(x.limit_km - x.total_km);
-    const pu = PURPOSE_LABELS[x.purpose] ?? x.purpose;
-    if (left <= 0) out.push({ tone: 'bad', text: `${x.name} (${pu}) は目安の ${x.limit_km}km を超えました。入れ替えを検討してください` });
-    else if (x.total_km / x.limit_km >= 0.85) out.push({ tone: 'warn', text: `${x.name} (${pu}) は残り約 ${left}km。次の 1 足を早めに選んでおくと安心です` });
-    if (x.purpose === 'race' && race && daysTo != null && daysTo >= 0 && daysTo <= 56) {
-      if (x.total_km < 30) out.push({ tone: 'warn', text: `${x.name} は ${race.name} (あと ${daysTo} 日) までに 30〜50km 走って足に慣らしておくと安心です (現在 ${Math.round(x.total_km)}km)` });
-      else if (x.total_km / x.limit_km >= 0.75) out.push({ tone: 'warn', text: `${x.name} は走行 ${Math.round(x.total_km)}km で、本番用としては消耗が進んでいます。${race.name} 用に新しい 1 足を、本番の 3〜4 週間前までに用意すると慣らせます` });
-    }
-  }
-  // 同じ用途に 3 足以上あり、距離が少ない足があれば整理を提案
-  for (const pu of Object.keys(PURPOSE_LABELS)) {
-    const same = live.filter((x) => x.purpose === pu);
-    if (same.length >= 3) out.push({ tone: 'info', text: `${PURPOSE_LABELS[pu]}が ${same.length} 足あります。あまり走っていない足は、用途を見直すか引退にすると整理できます` });
-  }
-  return out;
+  const missing = ['recovery', 'pace', 'speed', 'long'].filter((pu) => !live.some((x) => purposesOf(x.purpose).includes(pu)));
+  if (missing.length && live.length) out.push({ tone: 'info', text: `用途が未設定: ${missing.map((pu) => PURPOSE_LABELS[pu]).join('・')}。` });
+  const near = live.filter((x) => x.total_km < x.limit_km && x.total_km / x.limit_km >= 0.85);
+  if (near.length) out.push({ tone: 'warn', text: `そろそろ交換: ${near.map((x) => `${esc(x.name)}(残り${Math.round(x.limit_km - x.total_km)}km)`).join('、')}` });
+  return out.slice(0, 3);
+}
+
+const STATUS = [[0, '使用中'], [2, '予備'], [1, '引退']];
+
+async function putShoe(s, patch) {
+  await api(`/shoes/${s.id}`, { method: 'PUT', body: { ...s, ...patch } });
 }
 
 async function shoesView() {
   const [shoes, races] = await Promise.all([api('/shoes'), api('/races').catch(() => [])]);
   const nextRace = races.filter((r) => r.date >= today() && ['A', 'B'].includes(r.priority)).sort((a, b) => a.date.localeCompare(b.date))[0];
   const advice = shoeAdvice(shoes, nextRace);
+  const guesses = shoes.filter((x) => !x.retired && guessPurposes(x.name) && purposesOf(x.purpose).join() !== guessPurposes(x.name).join());
   setTimeout(() => {
-    view.querySelector('#add-shoe').onclick = () => editShoe({ purpose: 'daily', limit_km: 700, initial_km: 0 });
-    view.querySelectorAll('[data-shoe]').forEach((el) => (el.onclick = () => editShoe(shoes.find((s) => s.id === Number(el.dataset.shoe)))));
+    view.querySelector('#add-shoe').onclick = () => editShoe({ purpose: 'easy', limit_km: 700, initial_km: 0 });
+    view.querySelectorAll('[data-shoe]').forEach((el) => (el.onclick = (e) => {
+      if (e.target.closest('[data-st],[data-pq]') || el._swiped) return;
+      editShoe(shoes.find((s) => s.id === Number(el.dataset.shoe)));
+    }));
+    // 左右にスライドして状態を変える (右: 予備/使用中へ、左: 引退)
+    view.querySelectorAll('.shoe-item').forEach((li) => {
+      const s = shoes.find((x) => x.id === Number(li.dataset.shoe));
+      const fg = li.querySelector('.shoe-fg');
+      let x0 = 0, y0 = 0, dx = 0, on = false, id = null;
+      const rightTo = (s.retired || 0) === 0 ? 2 : 0;
+      fg.addEventListener('pointerdown', (e) => { if (e.target.closest('button')) return; x0 = e.clientX; y0 = e.clientY; dx = 0; on = false; id = e.pointerId; });
+      fg.addEventListener('pointermove', (e) => {
+        if (id !== e.pointerId) return;
+        const mx = e.clientX - x0, my = e.clientY - y0;
+        if (!on && Math.abs(mx) > 12 && Math.abs(mx) > Math.abs(my) * 1.5) { on = true; fg.setPointerCapture(id); }
+        if (!on) return;
+        dx = Math.max(-140, Math.min(140, mx));
+        if ((s.retired || 0) === 1 && dx < 0) dx = 0;
+        fg.style.transition = 'none'; fg.style.transform = `translateX(${dx}px)`;
+        li.classList.toggle('arm-r', dx > 90); li.classList.toggle('arm-l', dx < -90);
+        li.classList.toggle('peek-r', dx > 10); li.classList.toggle('peek-l', dx < -10);
+      });
+      const end = async () => {
+        if (id == null) return;
+        id = null;
+        const swiped = on; on = false;
+        fg.style.transition = 'transform .2s'; fg.style.transform = '';
+        li.classList.remove('peek-r', 'peek-l');
+        if (swiped) { li._swiped = true; setTimeout(() => (li._swiped = false), 350); }
+        const to = dx > 90 ? rightTo : dx < -90 ? 1 : null;
+        li.classList.remove('arm-r', 'arm-l');
+        if (to != null && to !== (s.retired || 0)) { await putShoe(s, { retired: to }); route(); }
+      };
+      fg.addEventListener('pointerup', end); fg.addEventListener('pointercancel', end);
+    });
+    // 用途はその場でタップして切り替え
+    view.querySelectorAll('[data-pq]').forEach((b) => (b.onclick = async (e) => {
+      e.stopPropagation();
+      const s = shoes.find((x) => x.id === Number(b.dataset.sid));
+      const cur = purposesOf(s.purpose);
+      const next = cur.includes(b.dataset.pq) ? cur.filter((k) => k !== b.dataset.pq) : [...cur, b.dataset.pq];
+      if (!next.length) return;
+      s.purpose = next.join(',');
+      b.classList.toggle('on');
+      const t = b.closest('li').querySelector('.tiny'); if (t) t.textContent = purposeText(s);
+      await putShoe(s, { purpose: s.purpose });
+    }));
+    view.querySelectorAll('[data-st]').forEach((b) => (b.onclick = async () => {
+      const s = shoes.find((x) => x.id === Number(b.dataset.sid));
+      if (Number(b.dataset.st) === 1 && !confirm(`${s.name} を引退にします (走行距離の記録は残ります)`)) return;
+      b.disabled = true;
+      await putShoe(s, { retired: Number(b.dataset.st) });
+      route();
+    }));
+    const g = view.querySelector('#guess');
+    if (g) g.onclick = async () => {
+      if (!confirm(`名前から用途を推定して設定します:\n${guesses.map((x) => `${x.name} → ${guessPurposes(x.name).map((p) => PURPOSE_LABELS[p]).join('・')}`).join('\n')}\n(あとで各シューズから直せます)`)) return;
+      g.disabled = true;
+      for (const x of guesses) await putShoe(x, { purpose: guessPurposes(x.name).join(',') });
+      route();
+    };
   });
+  const row = (s) => {
+    const ratio = s.total_km / s.limit_km;
+    const rt = (s.retired || 0) === 0 ? '予備にする' : '使用中に戻す';
+    return `<li data-shoe="${s.id}" class="shoe-item ${s.retired ? 'off' : ''}">
+      <div class="shoe-bg"><span class="bg-r">${rt}</span><span class="bg-l">${(s.retired || 0) === 1 ? '' : '役目を終える'}</span></div>
+      <div class="shoe-fg">
+      <div class="shoe-row">
+        <div class="shoe-img">${s.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div>
+        <div class="shoe-body"><div class="row spread"><b>${esc(s.name)}</b><span class="num">${s.total_km.toFixed(0)} / ${s.limit_km}km</span></div>
+        <div class="bar ${ratio >= 1 ? 'over' : ratio >= 0.9 ? 'warn' : ''}"><div style="width:${Math.min(100, ratio * 100)}%"></div></div>
+        <div class="muted tiny">${purposeText(s)}</div></div>
+      </div>
+      <div class="chips mini">${Object.entries(PURPOSE_LABELS).map(([k, v]) => `<button type="button" class="chip ${purposesOf(s.purpose).includes(k) ? 'on' : ''}" data-pq="${k}" data-sid="${s.id}">${v}</button>`).join('')}</div>
+      <div class="seg3" role="group" aria-label="状態">${STATUS.map(([v, l]) => `<button type="button" data-st="${v}" data-sid="${s.id}" class="${(s.retired || 0) === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+      </div>
+    </li>`;
+  };
+  const active = shoes.filter((s) => !s.retired), rest = shoes.filter((s) => s.retired);
   return `
     <div class="row spread" style="margin-bottom:8px"><h2>シューズ</h2><button class="primary" id="add-shoe">＋ 追加</button></div>
-    <p class="muted">Strava でギアを設定して走ると自動で登録・加算されます。各シューズをタップして「どんな練習で使うか」(普段用・ポイント走用・本番用) を選ぶと、計画のメニューにおすすめが出ます。</p>
-    <div class="card"><h2>シューズの提案</h2>${advice.length ? `<ul class="advice">${advice.map((a) => `<li class="${a.tone}">${esc(a.text)}</li>`).join('')}</ul>` : '<p class="muted">いまのところ入れ替えの必要はありません。用途もそろっています。</p>'}</div>
-    <div class="card"><ul class="list">${shoes.map((s) => {
-      const ratio = s.total_km / s.limit_km;
-      return `<li data-shoe="${s.id}" class="shoe-row" style="cursor:pointer;${s.retired ? 'opacity:.5' : ''}">
-        <div class="shoe-img">${s.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div>
-        <div class="shoe-body"><div class="row spread"><span>${esc(s.name)} <span class="badge">${PURPOSE_LABELS[s.purpose] ?? s.purpose}</span>${s.retired ? ' <span class="muted">引退</span>' : ''}</span>
-        <span class="num">${s.total_km.toFixed(0)} / ${s.limit_km}km</span></div>
-        <div class="bar ${ratio >= 1 ? 'over' : ratio >= 0.9 ? 'warn' : ''}"><div style="width:${Math.min(100, ratio * 100)}%"></div></div></div>
-      </li>`;
-    }).join('') || '<li class="muted">未登録</li>'}</ul></div>`;
+    ${advice.length ? `<div class="card"><ul class="advice">${advice.map((a) => `<li class="${a.tone}">${a.text}</li>`).join('')}</ul></div>` : ''}
+    ${guesses.length ? `<div class="card"><p class="muted" style="margin-top:0">名前から、用途を自動で設定できます (${guesses.length}足)。</p><button id="guess" class="primary wide">用途をまとめて設定</button></div>` : ''}
+    <div class="card"><ul class="list shoes">${active.map(row).join('') || '<li class="muted">使用中のシューズはありません</li>'}</ul></div>
+    ${rest.length ? `<details class="card"><summary>予備・引退 (${rest.length}足)</summary><ul class="list shoes">${rest.map(row).join('')}</ul></details>` : ''}
+    <p class="muted hint">用途はその場でタップして切り替え。行を右へスライドで「予備/使用中」、左へスライドで「役目を終える(引退)」。名前をタップすると写真や交換目安を直せます。</p>`;
 }
 
 /** 写真を選ぶと 320px 以内の JPEG に縮小して data URL にする */
@@ -1124,22 +1218,38 @@ async function editShoe(s) {
       </div>
       <input type="hidden" name="image" id="shoe-image" value="${s.image ? esc(s.image) : ''}">
     </div>
-    <div class="grid2">
-      <label>どんな練習で使う？<select name="purpose">${Object.entries(PURPOSE_HINTS).map(([k, v]) => `<option value="${k}" ${s.purpose === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-      <p class="muted hint">ここで選んだ用途をもとに、計画のメニューに合うシューズをおすすめします</p>
-      <label>交換目安 (km)<input name="limit_km" inputmode="numeric" value="${s.limit_km}"></label>
+    <div class="field"><span class="lbl">どんな練習で使う？ (複数選べます)</span>
+      <div class="chips" id="pu-chips">${Object.entries(PURPOSE_LABELS).map(([k, v]) => `<button type="button" class="chip ${purposesOf(s.purpose).includes(k) ? 'on' : ''}" data-pu="${k}">${v}</button>`).join('')}</div>
+      <p class="muted hint" id="pu-hint"></p>
+      <input type="hidden" name="purpose" value="${purposesOf(s.purpose).join(',')}">
     </div>
+    <label>交換目安 (km)<input name="limit_km" inputmode="numeric" value="${s.limit_km}"></label>
     <div class="grid2">
       <label>初期距離 (km)<input name="initial_km" inputmode="decimal" value="${s.initial_km}"></label>
       <label>Strava gear ID<input name="strava_gear_id" placeholder="g12345" value="${esc(s.strava_gear_id)}"></label>
     </div>
-    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="retired" style="width:auto" ${s.retired ? 'checked' : ''}> 引退済み</label>`,
+    <div class="field"><span class="lbl">状態</span>
+      <div class="chips" id="st-chips">${STATUS.map(([v, l]) => `<button type="button" class="chip ${(s.retired || 0) === v ? 'on' : ''}" data-stv="${v}">${l}</button>`).join('')}</div>
+      <input type="hidden" name="retired" value="${s.retired || 0}">
+    </div>`,
     s.id ? { onDelete: async () => { await api(`/shoes/${s.id}`, { method: 'DELETE' }); route(); } } : {},
   );
   wireShoePhoto();
+  const hint = () => {
+    const sel = [...dialogForm.querySelectorAll('[data-pu].on')].map((b) => b.dataset.pu);
+    dialogForm.querySelector('#pu-hint').textContent = sel.map((k) => `${PURPOSE_LABELS[k]}: ${PURPOSE_HINTS[k]}`).join(' / ');
+    dialogForm.querySelector('[name=purpose]').value = sel.join(',');
+  };
+  dialogForm.querySelectorAll('[data-pu]').forEach((b) => (b.onclick = () => { b.classList.toggle('on'); hint(); }));
+  dialogForm.querySelectorAll('[data-stv]').forEach((b) => (b.onclick = () => {
+    dialogForm.querySelectorAll('[data-stv]').forEach((x) => x.classList.remove('on'));
+    b.classList.add('on');
+    dialogForm.querySelector('[name=retired]').value = b.dataset.stv;
+  }));
+  hint();
   const values = await pending;
   if (!values) return;
-  await api(s.id ? `/shoes/${s.id}` : '/shoes', { method: s.id ? 'PUT' : 'POST', body: { ...values, retired: !!values.retired } });
+  await api(s.id ? `/shoes/${s.id}` : '/shoes', { method: s.id ? 'PUT' : 'POST', body: { ...values, retired: Number(values.retired) || 0 } });
   route();
 }
 
