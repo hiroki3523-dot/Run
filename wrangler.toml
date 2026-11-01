@@ -1,4 +1,4 @@
-name = "sub3-runner"
+name = "run"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
 # 設定値はすべて Cloudflare の画面で「シークレット」として登録する。
