@@ -9,6 +9,7 @@ import { DEFAULT_PLACE, forecast, searchPlaces } from './forecast';
 import { generatePlan, type PlannerRace } from './planner';
 import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
 import { getActivity, getSeries } from './strava';
+import { buildRunReview } from './runreview';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
 import { getBackfill, startBackfill, stopBackfill } from './backfill';
@@ -300,6 +301,58 @@ api.get('/activities/:id/splits', async (c) => {
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
   }
+});
+
+/** ランのレビュー (アップ・メイン・ダウンの内訳、ラップ推移、心拍、フォーム、レースに向けた判断) */
+api.get('/activities/:id/review', async (c) => {
+  const id = Number(c.req.param('id'));
+  const row = await c.env.DB.prepare('SELECT * FROM activities WHERE id = ?').bind(id).first<Record<string, any>>();
+  if (!row) return c.notFound();
+  const ev = row.evaluation ? JSON.parse(row.evaluation) : null;
+  if (ev?.role === 'warmup' || ev?.role === 'cooldown') {
+    const m = await c.env.DB.prepare(`SELECT id FROM activities WHERE date = ? AND json_extract(evaluation, '$.role') = 'work' ORDER BY distance_m DESC LIMIT 1`).bind(row.date).first<{ id: number }>();
+    return c.json({ role: ev.role, main_id: m?.id ?? null });
+  }
+  const st = await getSettings(c.env);
+  const plan = row.plan_id ? await c.env.DB.prepare('SELECT * FROM plans WHERE id = ?').bind(row.plan_id).first<Plan>() : null;
+  const { results: sib } = await c.env.DB.prepare(
+    `SELECT distance_m, moving_time_s, avg_hr, json_extract(evaluation, '$.role') AS role FROM activities WHERE date = ? ORDER BY start_date_local`,
+  ).bind(row.date).all<{ distance_m: number; moving_time_s: number; avg_hr: number | null; role: string | null }>();
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const race = await c.env.DB.prepare(`SELECT name, date, goal_time_s, distance_m FROM races WHERE date >= ? AND priority IN ('A','B') ORDER BY date LIMIT 1`).bind(today).first<any>();
+  const rpeRaw = await kvGet(c.env, `rpe:${id}`);
+  let splits: { km: number; time_s: number; pace_s: number | null; hr: number | null }[] = [];
+  try {
+    const a = (await getActivity(c.env, id)) as unknown as { splits_metric?: { distance: number; moving_time: number; average_heartrate?: number }[] };
+    splits = (a.splits_metric ?? []).map((x) => ({
+      km: Math.round(x.distance) / 1000, time_s: Math.round(x.moving_time),
+      pace_s: x.distance > 0 ? Math.round((x.moving_time / x.distance) * 1000) : null,
+      hr: x.average_heartrate ? Math.round(x.average_heartrate) : null,
+    }));
+  } catch { /* ラップが取れなくても、あるぶんでレビューする */ }
+  const lt = st.coros.lt_pace_s;
+  const series = await getSeries(c.env, id, [lt * 1.397, lt * 1.154, lt * 1.073, lt * 0.98, lt * 0.899].map(Math.round), [0.8, 0.9, 0.95, 1.017, 1.057].map((r) => Math.round(st.coros.lthr * r))).catch(() => null);
+  const review = buildRunReview({
+    score: row.score ?? 0,
+    sub: { pace: ev?.pace?.score ?? null, hr: ev?.hr?.score ?? null, form: ev?.form?.score ?? null },
+    main: { distance_m: row.distance_m, moving_time_s: row.moving_time_s, avg_hr: row.avg_hr, max_hr: row.max_hr },
+    parts: sib,
+    splits, series,
+    lthr: st.coros.lthr ?? st.lthr, max_hr: st.max_hr,
+    band: plan?.pace_min_s && plan?.pace_max_s ? { min: plan.pace_min_s, max: plan.pace_max_s } : null,
+    race: race ?? null, today,
+    rpe: rpeRaw ? Number(rpeRaw) : null,
+  });
+  return c.json({ ...review, rpe: rpeRaw ? Number(rpeRaw) : null, shoe_id: row.shoe_id });
+});
+
+/** 走ったときの主観的なきつさ (1〜4) を残す */
+api.put('/activities/:id/rpe', async (c) => {
+  const b = await c.req.json<{ rpe?: number }>();
+  const v = Number(b.rpe);
+  if (![1, 2, 3, 4].includes(v)) return c.json({ error: 'rpe は 1〜4' }, 400);
+  await kvSet(c.env, `rpe:${Number(c.req.param('id'))}`, String(v));
+  return c.json({ ok: true });
 });
 
 /** 実績詳細のグラフ用の時系列 (ペース・心拍・ピッチ・ストライド・標高) とゾーン分布 */

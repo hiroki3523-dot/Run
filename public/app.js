@@ -1412,6 +1412,37 @@ function lapTable(sp) {
   return `<table class="num lap"><tr><th>km</th><th>距離</th><th>時間</th><th>ペース</th><th></th><th>心拍</th></tr>${sp.map((x, i) => `<tr class="${x.pace_s === fast ? 'best' : ''}"><td>${i + 1}</td><td>${x.km.toFixed(2)}</td><td>${x.time_s ? mmss(x.time_s) : '-'}</td><td><b>${x.pace_s ? pace(x.pace_s) : '-'}</b></td><td><span class="sbar" style="width:${x.pace_s ? 25 + ((slow - x.pace_s) / Math.max(1, slow - fast)) * 75 : 0}%"></span></td><td>${x.hr ?? '-'}</td></tr>`).join('')}</table>`;
 }
 
+
+/** ランのレビュー (文章+数字)。サーバーが組み立てた内容を表示する */
+function reviewHtml(rv, a, shoes, sel) {
+  if (rv.main_id !== undefined) {
+    const L = { warmup: 'アップ', cooldown: 'ダウン' }[rv.role];
+    return `<div class="card rv"><h2>レビュー</h2><p class="muted">このランは ${L} です。評価はメインのランで見ます。</p>${rv.main_id ? `<a class="btn" href="#/activities/${rv.main_id}">メインのレビューを見る ›</a>` : ''}</div>`;
+  }
+  const sec = (t, body) => `<div class="rv-sec"><h3>${t}</h3>${body}</div>`;
+  const ps = (arr) => arr.map((t) => `<p>${esc(t)}</p>`).join('');
+  let h = `<div class="card rv"><h2>レビュー</h2>
+    <div class="rv-top"><div><span class="muted">今回の評価</span><div class="rv-grade">${esc(rv.grade)}</div><span class="muted">${esc(rv.headline)}</span></div>
+    ${rv.race ? `<div><span class="muted">${esc(rv.race.name)}</span><div class="rv-goal num">${esc(rv.race.goal)}</div><span class="muted">${rv.race.need_pace ? `必要ペース ${esc(rv.race.need_pace)}` : `あと${rv.race.days}日`}</span></div>` : ''}</div>
+    <table class="rv-t num">${rv.rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table></div>`;
+  if (rv.pace) {
+    const n = rv.pace.laps.length;
+    h += `<div class="card rv">${sec(esc(rv.pace.title), `
+      ${areaChart(rv.pace.laps, rv.pace.laps.map((_, i) => i + 1), n, { color: '#4a90e2', invert: true, fmt: (v) => pace(Math.round(v)), avg: null, minSpan: 16, label: 'ラップ推移' })}
+      <div class="rv-chips">${rv.pace.chips.map(([t, v, d]) => `<div><span class="muted">${esc(t)}</span><b class="num">${esc(v)}</b><span class="muted">${esc(d)}</span></div>`).join('')}</div>${ps(rv.pace.text)}`)}</div>`;
+  }
+  if (rv.hr) h += `<div class="card rv">${sec(esc(rv.hr.title), `<table class="rv-t num"><tr><th>区間</th><th>平均心拍</th></tr>${rv.hr.rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join('')}</table>${ps(rv.hr.text)}`)}</div>`;
+  if (rv.form) h += `<div class="card rv">${sec(esc(rv.form.title), `<div class="rv-chips">${rv.form.stats.map(([t, v, u]) => `<div><span class="muted">${esc(t)}</span><b class="num">${esc(v)}<small>${esc(u)}</small></b></div>`).join('')}</div>${ps(rv.form.text)}`)}</div>`;
+  if (rv.verdict) h += `<div class="card rv">${sec(esc(rv.verdict.title), `${ps(rv.verdict.text)}${rv.verdict.table.length ? `<table class="rv-t num"><tr><th>区間</th><th>推奨ペース</th></tr>${rv.verdict.table.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>` : ''}`)}</div>`;
+  const rp = ['かなり余裕あり', '余裕あり', 'ややきつい', 'かなりきつい'];
+  const list = shoes.filter((x) => x.retired !== 1).slice(0, 5);
+  h += `<div class="card rv"><h3>評価をくわしくするために 2 つ教えてください</h3>
+    <div class="rv-q"><b>1. 走っているときの主観的なきつさは？</b>${rp.map((t, i) => `<label class="rv-o"><input type="radio" name="rpe" value="${i + 1}" ${sel.rpe === i + 1 ? 'checked' : ''}><span>${t}</span></label>`).join('')}</div>
+    <div class="rv-q"><b>2. 履いたシューズは？</b>${list.map((x) => `<label class="rv-o"><input type="radio" name="shoe" value="${x.id}" ${sel.shoe === x.id ? 'checked' : ''}><span>${esc(x.name)}</span></label>`).join('')}<label class="rv-o"><input type="radio" name="shoe" value="" ${sel.shoe == null ? 'checked' : ''}><span>その他・なし</span></label></div>
+    <button type="button" class="primary wide" id="rv-go">この内容で再評価する</button></div>`;
+  return h;
+}
+
 async function activityDetailView(id) {
   const [a, shoes] = await Promise.all([api(`/activities/${id}`), api('/shoes')]);
   const plans = await api(`/plans?from=${a.date}&to=${a.date}`);
@@ -1465,6 +1496,25 @@ async function activityDetailView(id) {
       if (!box || !Array.isArray(sp) || !sp.length) { if (box) box.innerHTML = '<span class="muted">取得できませんでした</span>'; return; }
       box.innerHTML = lapTable(sp);
     }).catch(() => {});
+    const loadReview = () => api(`/activities/${id}/review`).then((rv) => {
+      const box = view.querySelector('#review');
+      if (!box || !rv || rv.error) { if (box) box.innerHTML = ''; return; }
+      const sel = { rpe: rv.rpe, shoe: rv.shoe_id ?? a.shoe_id ?? null };
+      box.innerHTML = reviewHtml(rv, a, shoes, sel);
+      const go = box.querySelector('#rv-go');
+      if (go) go.onclick = async () => {
+        const rpe = box.querySelector('[name=rpe]:checked')?.value;
+        const shoe = box.querySelector('[name=shoe]:checked')?.value;
+        go.disabled = true; go.textContent = '再評価しています…';
+        try {
+          if (rpe) await api(`/activities/${id}/rpe`, { method: 'PUT', body: { rpe: Number(rpe) } });
+          if (shoe !== undefined && String(shoe || '') !== String(a.shoe_id ?? '')) await api(`/activities/${id}`, { method: 'PUT', body: { shoe_id: shoe ? Number(shoe) : null } });
+          await api(`/activities/${id}/reevaluate`, { method: 'POST' });
+        } catch (e) { alert(e.message); }
+        route();
+      };
+    }).catch(() => { const box = view.querySelector('#review'); if (box) box.innerHTML = ''; });
+    loadReview();
     api(`/activities/${id}/series`).then((sr) => {
       const box = view.querySelector('#series');
       if (!box || !sr || sr.error) { if (box) box.innerHTML = ''; return; }
@@ -1506,6 +1556,7 @@ async function activityDetailView(id) {
         <div><b id="st-cal">-</b><span>カロリー kcal</span></div>
       </div>
     </div>
+    <div id="review"><div class="card"><span class="muted">レビューをつくっています…</span></div></div>
     ${ev && W && a.score != null && a.score < 85 ? (() => {
       const NM = { pace: 'ペース', hr: '心拍', cadence: 'ケイデンス', form: 'フォーム' };
       const lost = ['pace', 'hr', 'cadence', 'form'].filter((k) => W[k] > 0 && ev[k]?.score != null)
