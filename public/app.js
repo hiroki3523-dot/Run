@@ -454,6 +454,15 @@ async function settingsView() {
       setToken(new FormData(e.target).get('token'));
       route();
     };
+    const ti = view.querySelector('#token-input');
+    view.querySelector('#token-show').onclick = (e) => {
+      ti.type = ti.type === 'password' ? 'text' : 'password';
+      e.target.textContent = ti.type === 'password' ? '表示する' : '隠す';
+    };
+    view.querySelector('#token-copy').onclick = async (e) => {
+      try { await navigator.clipboard.writeText(ti.value); e.target.textContent = 'コピーしました'; }
+      catch { ti.type = 'text'; ti.select(); e.target.textContent = '長押しでコピー'; }
+    };
     const out = view.querySelector('#out');
     const run = (sel, fn) => { const b = view.querySelector(sel); if (b) b.onclick = async () => { b.disabled = true; try { out.textContent = JSON.stringify(await fn(), null, 2); } catch (e) { out.textContent = e.message; } b.disabled = false; }; };
     run('#subscribe', () => api('/strava/subscribe', { method: 'POST' }));
@@ -506,9 +515,14 @@ async function settingsView() {
     <div class="card">
       <h2>アクセストークン</h2>
       <form id="token-form" class="row">
-        <input name="token" type="password" placeholder="APP_TOKEN" value="${esc(getToken())}" style="flex:1">
+        <input name="token" id="token-input" type="password" placeholder="APP_TOKEN" value="${esc(getToken())}" style="flex:1">
         <button class="primary">保存</button>
       </form>
+      <div class="row" style="margin-top:8px">
+        <button id="token-show" type="button">表示する</button>
+        <button id="token-copy" type="button">コピー</button>
+      </div>
+      <p class="muted">ホーム画面のアプリと Safari は別々に保存されます。Safari でコピーして、ホーム画面のアプリに貼り付けてください。</p>
       ${err ? `<p class="error">${esc(err)}</p>` : ''}
     </div>
     <pre id="out" style="white-space:pre-wrap;word-break:break-all;margin:8px 4px"></pre>
