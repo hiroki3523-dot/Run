@@ -154,6 +154,7 @@ function runNotification(env: Env, act: StravaActivity, plan: Plan | null, ev: E
     `ケイデンス ${ev.cadence.score ?? '-'}: ${ev.cadence.summary}`,
     '',
     ...ev.comments.map((c) => `・${c}`),
+    ...(ev.focus?.length ? ['', '次に意識すること', ...ev.focus.map((c) => `→ ${c}`)] : []),
   ];
   return {
     title: `${ev.score}点 | ${label} ${fmtKm(act.distance)}km`,

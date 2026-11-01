@@ -235,3 +235,5 @@ table.splits { width: 100%; border-collapse: collapse; }
 table.splits td, table.splits th { padding: 6px 4px; text-align: left; font-weight: 400; font-size: 14px; }
 table.splits th { color: var(--muted); font-size: 12px; }
 .sbar { display: block; height: 10px; border-radius: 5px; background: var(--accent); }
+h3.sub { margin: 16px 0 8px; font-size: 13px; font-weight: 600; letter-spacing: .04em; color: var(--muted); }
+ul.focus li::marker { color: var(--accent); }

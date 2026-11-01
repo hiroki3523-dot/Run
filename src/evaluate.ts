@@ -133,6 +133,8 @@ function evalPace(type: EvalType, band: PaceBand | null, samples: Sample[], laps
   const details: MetricResult['details'] = {
     avg_pace: round(avgPace, 0),
     split_cv_pct: splitCv == null ? null : round(splitCv * 100),
+    split_fast_s: splits.length ? round(Math.min(...splits), 0) : null,
+    split_slow_s: splits.length ? round(Math.max(...splits), 0) : null,
     half_diff_s: halfDiff == null ? null : round(halfDiff, 0),
     work_km: round(work.reduce((a, s) => a + s.dt / s.pace, 0), 2),
   };
@@ -411,63 +413,150 @@ export function evaluateRun(input: ActivityInput, plan: Plan | null, settings: S
     cadence,
     volume,
     form,
-    comments: buildComments(type, pace, hr, cadence, volume, form),
+    comments: buildComments(type, pace, hr, cadence, volume, form, settings),
+    focus: buildFocus(type, pace, hr, cadence, form, settings),
   };
 }
 
-function buildComments(type: EvalType, pace: MetricResult, hr: MetricResult, cad: MetricResult, vol: MetricResult, form: MetricResult): string[] {
+/** サブ3 に必要なペース (秒/km) */
+const SUB3_PACE_S = Math.round(10800 / 42.195);
+
+const mmss = (sec: number) => fmtPace(sec);
+
+/**
+ * 数字を入れた具体的なコメント。
+ * 1) 指標ごとの実測値と基準との差 (ピッチ・心拍・ペース・歩幅)
+ * 2) 問題があればその理由
+ */
+function buildComments(
+  type: EvalType,
+  pace: MetricResult,
+  hr: MetricResult,
+  cad: MetricResult,
+  vol: MetricResult,
+  form: MetricResult,
+  settings: Settings,
+): string[] {
   const c: string[] = [];
   const pd = pace.details;
   const hd = hr.details;
   const label = type === 'free' ? 'フリーラン' : PLAN_LABELS[type];
+  const easyLike = EASY_TYPES.includes(type) || type === 'long';
 
-  if (pace.score != null) {
-    if (EASY_TYPES.includes(type) && (pd.in_band_pct as number) < 80) {
-      c.push(`${label}にしては速すぎる区間が多めです。回復を優先してペースを抑えましょう。`);
-    } else if ((type === 'm' || type === 'lt' || type === 'race') && (pd.in_band_pct as number) >= 80) {
-      c.push(`${label}は目標ペース帯をしっかりキープできています。`);
-    } else if ((type === 'm' || type === 'lt') && pd.in_band_pct != null && (pd.in_band_pct as number) < 60) {
-      c.push(`${label}の目標帯 (${pd.target}) から外れる時間が長めです。`);
-    } else if ((type === 'm' || type === 'lt') && pd.in_band_pct != null) {
-      c.push(`${label}の目標帯 (${pd.target}) 滞在は ${pd.in_band_pct}%。もう一段ペースを安定させたいところです。`);
-    }
-    if (type === 'interval' && (pd.fade_pct as number) > 3) {
-      c.push(`最終本が 1 本目より ${pd.fade_pct}% 遅くなっています。設定か本数の見直しを。`);
+  // ---- ペース
+  if (pace.score != null && pd.avg_pace != null) {
+    const avg = pd.avg_pace as number;
+    const gap = avg - SUB3_PACE_S;
+    const base = `平均ペース ${mmss(avg)}/km (サブ3の ${mmss(SUB3_PACE_S)} に対して ${gap >= 0 ? '+' : '-'}${mmss(Math.abs(gap))})`;
+    const fast = pd.split_fast_s as number | null;
+    const slow = pd.split_slow_s as number | null;
+    const cv = pd.split_cv_pct as number | null;
+    const spread = fast != null && slow != null ? `。1km ごとは ${mmss(fast)}〜${mmss(slow)} (ばらつき ${cv}%)` : '';
+    c.push(base + spread);
+    if (pd.in_band_pct != null && !easyLike) {
+      c.push(`${label}の目標帯 ${pd.target} に入っていた時間は ${pd.in_band_pct}%。`);
     }
     const hdiff = pd.half_diff_s as number | null;
-    if (hdiff != null && (type === 'm' || type === 'long' || type === 'race')) {
-      if (hdiff <= -2) c.push(`後半が ${-hdiff}秒/km 速いネガティブスプリット。理想的です。`);
-      else if (hdiff >= 8) c.push(`後半に ${hdiff}秒/km 失速。前半の入りか補給を見直しましょう。`);
+    if (hdiff != null && Math.abs(hdiff) >= 3) {
+      c.push(hdiff > 0 ? `後半は前半より ${hdiff}秒/km 遅くなっています。` : `後半は前半より ${-hdiff}秒/km 速く、ネガティブスプリットです。`);
     }
+    const lastDrop = pd.last_km_drop_s as number | undefined;
+    if (lastDrop != null && lastDrop > 10) c.push(`最後の 1km は平均より ${lastDrop}秒/km 遅くなっています。`);
   }
 
-  if (hr.score != null) {
-    const drift = hd.drift_pct as number | undefined;
-    if (drift != null && drift > 5) c.push(`心拍ドリフトが ${drift}% と大きめ。暑さ・脱水・疲労の可能性があります。`);
-    else if (drift != null && drift <= 3 && (type === 'long' || type === 'm')) c.push(`心拍ドリフト ${drift}% で有酸素ベースは良好です。`);
-    if ((EASY_TYPES.includes(type) || type === 'long') && (hd.in_range_pct as number) < 70) {
-      c.push(`心拍が上限 ${String(hd.target).split('-')[1]}bpm を超える時間が長めです。`);
-    }
+  if (type === 'interval' && pd.reps != null) {
+    c.push(`${pd.reps}本: ${pd.rep_paces} (目標 ${pd.target}・帯に入った本 ${pd.in_band_pct}%)`);
+    if ((pd.fade_pct as number) > 3) c.push(`最終本が 1 本目より ${pd.fade_pct}% 遅くなっています。`);
   }
+
+  // ---- 心拍
+  if (hr.score != null && hd.avg_hr != null) {
+    const avgHr = hd.avg_hr as number;
+    const pct = Math.round((avgHr / settings.lthr) * 100);
+    const zone = hrZone(avgHr, settings.lthr);
+    let line = `平均心拍 ${avgHr}bpm (乳酸閾値心拍 ${settings.lthr} の ${pct}%・ゾーン${zone})`;
+    if (hd.drift_pct != null) line += `。ドリフト ${hd.drift_pct}%`;
+    c.push(line);
+    if (easyLike && pct > 85) c.push(`${label}で ${pct}% は高め。ゾーン1〜2 (${Math.round(settings.lthr * 0.85)}bpm 未満) に収めたい強度です。`);
+    if (hd.drift_pct != null && (hd.drift_pct as number) > 5) c.push('同じペースでも後半に心拍が上がっています。暑さ・脱水・疲労の影響が考えられます。');
+  }
+
+  // ---- ピッチ
+  if (cad.score != null) {
+    const avg = cad.details.avg_spm as number;
+    const target = cad.details.target_spm as number;
+    const diff = avg - target;
+    let line = `ピッチ ${avg}spm (目標 ${target}・${diff >= 0 ? '+' : ''}${diff})`;
+    const fade = cad.details.fade_spm as number | null;
+    if (fade != null && fade > 2) line += `。後半は前半より ${fade}spm 低下`;
+    c.push(line);
+  }
+
+  // ---- 歩幅
+  if (form.score != null) {
+    const fd = form.details;
+    let line = `歩幅 ${fd.stride_m}m・ピッチのばらつき ${fd.cadence_cv_pct}%`;
+    if ((fd.stride_shrink_pct as number) > 2) line += `。後半は歩幅が ${fd.stride_shrink_pct}% 縮んでいます`;
+    c.push(line);
+  }
+
+  if (vol.score != null && (vol.details.ratio_pct as number) < 85) c.push(`距離は計画の ${vol.details.ratio_pct}% でした (参考)。`);
+  if (c.length === 0) c.push('ストリームデータがなく、詳しい評価はできませんでした。');
+  return c;
+}
+
+/**
+ * 「次に意識すること」。減点の大きい指標から最大 3 つ、数字つきで具体的な行動を示す。
+ * サブ3 のペース (4:16/km) で走るのに必要な歩幅・ピッチも添える。
+ */
+function buildFocus(type: EvalType, pace: MetricResult, hr: MetricResult, cad: MetricResult, form: MetricResult, settings: Settings): string[] {
+  const items: { loss: number; text: string }[] = [];
+  const easyLike = EASY_TYPES.includes(type) || type === 'long';
+  const need = (SUB3_PACE_S ? 1000 / SUB3_PACE_S : 0) / (settings.target_cadence / 60); // サブ3 ペース・目標ピッチでの歩幅
 
   if (cad.score != null) {
     const avg = cad.details.avg_spm as number;
     const target = cad.details.target_spm as number;
     const fade = cad.details.fade_spm as number | null;
-    if (avg < target - 5) c.push(`ケイデンス ${avg}spm は目標より低め。接地を短く、ピッチを意識しましょう。`);
-    if (fade != null && fade > 3) c.push(`後半にケイデンスが ${fade}spm 落ちています。疲労時のフォーム維持が課題です。`);
+    if (avg < target - 1) {
+      items.push({
+        loss: 100 - cad.score,
+        text: `ピッチを ${avg}→${target}spm へ。歩幅を伸ばすより、足を体の真下に着いて回転を上げる意識で (サブ3 のペースは歩幅 ${need.toFixed(2)}m × ${settings.target_cadence}spm で走れます)。`,
+      });
+    } else if (fade != null && fade > 2) {
+      items.push({ loss: 100 - cad.score, text: `後半にピッチが ${fade}spm 落ちています。残り 1/3 で腕振りをコンパクトに速くして、ピッチを保つ練習を。` });
+    }
   }
-
+  if (hr.score != null) {
+    const d = hr.details;
+    if (d.drift_pct != null && (d.drift_pct as number) > 4) {
+      items.push({ loss: 100 - hr.score, text: `心拍ドリフト ${d.drift_pct}%。前半を ${Math.max(5, Math.round(((d.drift_pct as number) * 2) / 1))}秒/km ほど抑えて入り、補水とジェルを 5km ごとに。` });
+    } else if (easyLike && d.avg_hr != null && (d.avg_hr as number) / settings.lthr > 0.85) {
+      items.push({ loss: 100 - hr.score, text: `心拍 ${d.avg_hr}bpm は高め。${Math.round(settings.lthr * 0.8)}〜${Math.round(settings.lthr * 0.85)}bpm になるまでペースを落として走る。` });
+    }
+  }
+  if (pace.score != null) {
+    const d = pace.details;
+    const cv = d.split_cv_pct as number | null;
+    const hdiff = d.half_diff_s as number | null;
+    if (hdiff != null && hdiff > 4) {
+      items.push({ loss: 100 - pace.score, text: `後半 +${hdiff}秒/km の失速。最初の 3km を目標より 5〜8秒/km 遅く入って、後半に同じペースで走り切る。` });
+    } else if (cv != null && cv > (EASY_TYPES.includes(type) ? 4 : 2.5)) {
+      items.push({ loss: 100 - pace.score, text: `1km ごとのばらつき ${cv}%。時計のラップペースを見て、±5秒/km に収まるように刻む。` });
+    } else if (!easyLike && d.in_band_pct != null && (d.in_band_pct as number) < 80) {
+      items.push({ loss: 100 - pace.score, text: `目標帯 ${d.target} に入った時間は ${d.in_band_pct}%。設定ペースの感覚を体に覚えさせる繰り返しを。` });
+    }
+  }
   if (form.score != null) {
     const fd = form.details;
-    if ((fd.cadence_cv_pct as number) > 5) c.push(`ピッチのばらつきが ${fd.cadence_cv_pct}% と大きめ。リズムを一定に保つ意識を。`);
-    if ((fd.stride_shrink_pct as number) > 2) c.push(`後半に歩幅が ${fd.stride_shrink_pct}% 縮んでいます。疲れでフォームが小さくなっています。`);
+    if ((fd.stride_shrink_pct as number) > 2) {
+      items.push({ loss: 100 - form.score, text: `後半に歩幅が ${fd.stride_shrink_pct}% 縮んでいます。疲れても、お尻とハムストリングで地面を押す意識でフォームを保つ。` });
+    } else if ((fd.cadence_cv_pct as number) > 5) {
+      items.push({ loss: 100 - form.score, text: `ピッチのばらつき ${fd.cadence_cv_pct}%。信号待ちや坂のあとも、すぐ同じリズムに戻す。` });
+    }
   }
-  const cv = pace.details.split_cv_pct as number | null | undefined;
-  if (cv != null && cv > (EASY_TYPES.includes(type) ? 4 : 2.5)) c.push(`1km ごとのペースのばらつきが ${cv}%。一定のリズムで刻めていません。`);
-  const lastDrop = pace.details.last_km_drop_s as number | undefined;
-  if (lastDrop != null && lastDrop > 10) c.push(`最後の 1km が平均より ${lastDrop}秒/km 遅い。最後まで保つ力が課題です。`);
-  if (vol.score != null && (vol.details.ratio_pct as number) < 85) c.push('計画距離に届いていません (参考)。');
-  if (c.length === 0) c.push('ペース・心拍・ピッチ・歩幅とも安定。目立った減点はありません。');
-  return c;
+  items.sort((a, b) => b.loss - a.loss);
+  const out = items.slice(0, 3).map((i) => i.text);
+  if (out.length === 0) out.push('大きな課題はありません。次回も同じ内容を再現し、ペースか心拍のどちらか 1 つだけ改善を狙いましょう。');
+  return out;
 }

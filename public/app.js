@@ -262,9 +262,9 @@ async function plansView(params) {
         const data = JSON.parse(view.querySelector('#bulk-text').value);
         const replace = view.querySelector('#bulk-replace').checked;
         const r = await api('/plans/bulk', { method: 'POST', body: { plans: Array.isArray(data) ? data : data.plans, replace } });
-        out.textContent = `✅ ${r.imported} 件登録しました`;
+        out.textContent = `${r.imported} 件登録しました`;
         setTimeout(route, 800);
-      } catch (e) { out.textContent = `❌ ${e.message}`; }
+      } catch (e) { out.textContent = `エラー: ${e.message}`; }
     };
     view.querySelector('#copy-week').onclick = async () => {
       if (!confirm(`この週の計画を翌週 (${md(addDays(ws, 7))}〜) に複製しますか？`)) return;
@@ -284,7 +284,7 @@ async function plansView(params) {
       <div class="row spread num"><span>計画 ${km(total)}km・実績 ${km(actual)}km</span><button id="copy-week">翌週へ複製</button></div>
     </div>
     <div class="card" id="auto-card">
-      <button id="auto-toggle">🧠 実績と目標から計画を自動で作る</button>
+      <button id="auto-toggle">実績と目標から計画を自動で作る</button>
       <div id="auto-box" class="hidden" style="margin-top:12px">
         <p class="muted">直近4週間の走行距離と、先週の達成度、レースの目標ペースから、レース当日までの毎日のメニューを作ります。</p>
         <label>目標レース<select id="auto-race"></select></label>
@@ -294,7 +294,7 @@ async function plansView(params) {
       </div>
     </div>
     <div class="card">
-      <button id="bulk-toggle">📋 メニューを貼り付けて登録</button>
+      <button id="bulk-toggle">メニューを貼り付けて登録</button>
       <div id="bulk-box" class="hidden" style="margin-top:8px">
         <p class="muted">Claude が作った JSON を貼り付けます。</p>
         <textarea id="bulk-text" rows="8" style="width:100%" placeholder='[{"date":"2026-11-03","type":"jog","distance_m":8000,"notes":"..."}]'></textarea>
@@ -343,7 +343,7 @@ function wireAutoPlan(root) {
     e.target.disabled = true;
     try {
       const r = await call(true);
-      q('#auto-out').innerHTML = `<p>✅ ${r.added} 日分を登録しました${r.skipped ? ` (登録済みの ${r.skipped} 日は飛ばしました)` : ''}</p>`;
+      q('#auto-out').innerHTML = `<p>${r.added} 日分を登録しました${r.skipped ? ` (登録済みの ${r.skipped} 日は飛ばしました)` : ''}</p>`;
       setTimeout(route, 1200);
     } catch (err) { q('#auto-out').innerHTML = `<p class="error">${esc(err.message)}</p>`; e.target.disabled = false; }
   };
@@ -524,7 +524,8 @@ async function activityDetailView(id) {
     <div class="card">
       <h2>評価 <span class="badge" data-t="${ev.type}">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></h2>
       ${metric('ペース', ev.pace)}${metric('心拍', ev.hr)}${metric('ケイデンス', ev.cadence)}${ev.form ? metric('フォーム', ev.form) : ''}
-      <ul>${ev.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
+      <ul class="bullets">${ev.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
+      ${ev.focus?.length ? `<h3 class="sub">次に意識すること</h3><ul class="bullets focus">${ev.focus.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
       ${ev.pace.details.rep_paces ? `<p class="muted num">各本: ${esc(ev.pace.details.rep_paces)}</p>` : ''}
       ${zones.length ? `<p class="muted num">心拍ゾーン Z1–Z5: ${zones.map((z) => `${Math.round(z)}%`).join(' / ')}</p>` : ''}
     </div>` : ''}
@@ -621,7 +622,7 @@ async function shoesView() {
     <div class="card"><ul class="list">${shoes.map((s) => {
       const ratio = s.total_km / s.limit_km;
       return `<li data-shoe="${s.id}" class="shoe-row" style="cursor:pointer;${s.retired ? 'opacity:.5' : ''}">
-        <div class="shoe-img">${s.image ? `<img src="${s.image}" alt="">` : '👟'}</div>
+        <div class="shoe-img">${s.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div>
         <div class="shoe-body"><div class="row spread"><span>${esc(s.name)} <span class="badge">${PURPOSE_LABELS[s.purpose] ?? s.purpose}</span>${s.retired ? ' <span class="muted">引退</span>' : ''}</span>
         <span class="num">${s.total_km.toFixed(0)} / ${s.limit_km}km</span></div>
         <div class="bar ${ratio >= 1 ? 'over' : ratio >= 0.9 ? 'warn' : ''}"><div style="width:${Math.min(100, ratio * 100)}%"></div></div></div>
@@ -651,7 +652,7 @@ function wireShoePhoto() {
   const q = (id) => dialogForm.querySelector(id);
   const set = (url) => {
     q('#shoe-image').value = url;
-    q('#shoe-preview').innerHTML = url ? `<img src="${url}" alt="">` : '👟';
+    q('#shoe-preview').innerHTML = url ? `<img src="${url}" alt="">` : '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>';
   };
   q('#shoe-file').onchange = async (e) => {
     const f = e.target.files[0];
@@ -669,7 +670,7 @@ async function editShoe(s) {
     <h2>${s.id ? 'シューズを編集' : 'シューズを追加'}</h2>
     <label>名称<input name="name" value="${esc(s.name)}" required></label>
     <div class="shoe-photo">
-      <div class="shoe-img big" id="shoe-preview">${s.image ? `<img src="${s.image}" alt="">` : '👟'}</div>
+      <div class="shoe-img big" id="shoe-preview">${s.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div>
       <div class="row">
         <label class="btn" style="margin:0">写真を選ぶ<input type="file" id="shoe-file" accept="image/*" hidden></label>
         <a class="btn" id="shoe-search" target="_blank" rel="noopener">画像を探す</a>
@@ -728,8 +729,8 @@ async function settingsView() {
     run('#subscription', () => api('/strava/subscription'));
     const notifyText = (r) => {
       const res = r.results || [];
-      if (res.length === 0) return '❌ 通知先が未設定です (NTFY_TOPIC か BARK_KEY を設定してください)';
-      return res.map((x) => `${x.ok ? '✅' : '❌'} ${x.channel}${x.error ? `: ${x.error}` : ' に送信しました'}`).join('\n');
+      if (res.length === 0) return '通知先が未設定です (NTFY_TOPIC か BARK_KEY を設定してください)';
+      return res.map((x) => `[${x.ok ? 'OK' : '失敗'}] ${x.channel}${x.error ? `: ${x.error}` : ' に送信しました'}`).join('\n');
     };
     run('#test-notify', async () => notifyText(await api('/notify/test', { method: 'POST' })));
     run('#morning', async () => notifyText(await api('/notify/morning', { method: 'POST' })));
@@ -741,7 +742,7 @@ async function settingsView() {
       const waiting = b.active && b.pause_until && b.pause_until * 1000 > Date.now();
       const state = !b.started ? '未実行'
         : b.active ? (waiting ? `⏸ Strava の上限待ち (${fmtTime(b.pause_until)} ごろ再開)` : '▶ 取り込み中')
-        : b.finished ? (b.last_error ? '⚠️ エラーで停止' : '✅ 完了') : '⏹ 停止中';
+        : b.finished ? (b.last_error ? 'エラーで停止' : '完了') : '停止中';
       const pos = b.active && b.after ? `現在位置 ${new Date(b.after * 1000).toISOString().slice(0, 10)} 付近` : '';
       el.innerHTML = `<div><b>${state}</b></div>
         <div class="num">取り込み済み ${db.count ?? 0} 件${db.oldest ? `(${db.oldest.replace(/-/g, '/')} 〜 ${db.newest.replace(/-/g, '/')})` : ''}</div>
@@ -766,11 +767,11 @@ async function settingsView() {
       await api('/settings/reset', { method: 'POST' });
       cachedSettings = null;
       setTimeout(route, 600);
-      return '✅ COROS 基準に戻しました';
+      return 'COROS 基準に戻しました';
     });
     run('#seed', async () => {
       const r = await api('/seed', { method: 'POST' });
-      return `✅ レース ${r.races} 件・計画 ${r.plans} 件を登録しました (登録済みの日付は飛ばします)`;
+      return `レース ${r.races} 件・計画 ${r.plans} 件を登録しました (登録済みの日付は飛ばします)`;
     });
     run('#backfill-2025', async () => {
       const days = Math.ceil((Date.now() - Date.parse('2025-01-01T00:00:00+09:00')) / 86400000);
@@ -817,7 +818,7 @@ async function settingsView() {
     ${status ? `
     <div class="card">
       <h2>Strava</h2>
-      <p>${status.strava_connected ? `✅ 連携済み (athlete ${status.athlete_id})` : '未連携'}</p>
+      <p>${status.strava_connected ? `連携済み (athlete ${status.athlete_id})` : '未連携'}</p>
       <div class="row">
         <a class="btn primary" href="/auth/strava?key=${encodeURIComponent(getToken())}">${status.strava_connected ? '再連携' : 'Strava と連携'}</a>
         <button id="subscribe">Webhook 登録</button>

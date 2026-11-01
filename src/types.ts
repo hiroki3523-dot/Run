@@ -140,4 +140,6 @@ export interface Evaluation {
   /** フォームの安定度 (歩幅・ピッチ)。古い評価には無い */
   form?: MetricResult;
   comments: string[];
+  /** 次に意識すること (数字つき・最大3つ) */
+  focus?: string[];
 }
