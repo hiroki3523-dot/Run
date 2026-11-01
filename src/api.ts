@@ -1,3 +1,4 @@
+import { cleanPurposes } from './shoes';
 import { Hono } from 'hono';
 import { addDays, weekStart } from './format';
 import { ingestActivity, morningBriefing, SHOE_TOTAL_SQL } from './process';
@@ -504,7 +505,9 @@ api.get('/shoes', async (c) => {
 function shoeValues(b: Record<string, unknown>) {
   if (!b.name) throw new Error('name は必須です');
   const image = typeof b.image === 'string' && b.image.startsWith('data:image/') && b.image.length < 400_000 ? b.image : null;
-  return [b.name, b.purpose ?? 'daily', b.strava_gear_id || null, num(b.limit_km) ?? 700, num(b.initial_km) ?? 0, b.retired ? 1 : 0, image];
+  // retired: 0 使用中 / 1 引退 / 2 予備 (おすすめには出さない)
+  const st = typeof b.retired === 'boolean' ? (b.retired ? 1 : 0) : [0, 1, 2].includes(Number(b.retired)) ? Number(b.retired) : 0;
+  return [b.name, cleanPurposes(b.purpose), b.strava_gear_id || null, num(b.limit_km) ?? 700, num(b.initial_km) ?? 0, st, image];
 }
 
 api.post('/shoes', async (c) => {

@@ -1,3 +1,4 @@
+import { pickShoe, type ShoeRow } from './shoes';
 import { evaluateRun, resolveTargets } from './evaluate';
 import { addDays, daysBetween, fmtDuration, fmtKm, fmtPace, jstDate, weekStart } from './format';
 import { notify } from './notify';
@@ -245,11 +246,9 @@ export async function morningBriefing(env: Env, today = jstDate()) {
   }
 
   const point = plans.find((p) => ['m', 'lt', 'interval', 'race'].includes(p.type));
-  const shoe = await env.DB.prepare(
-    `SELECT name FROM (${SHOE_TOTAL_SQL}) WHERE retired = 0 AND purpose = ? ORDER BY total_km / limit_km LIMIT 1`,
-  )
-    .bind(point ? (point.type === 'race' ? 'race' : 'workout') : 'daily')
-    .first<{ name: string }>();
+  const { results: allShoes } = await env.DB.prepare(`SELECT * FROM (${SHOE_TOTAL_SQL})`).all<ShoeRow>();
+  const todayType = (point ?? plans.find((p) => p.type !== 'rest'))?.type;
+  const shoe = todayType ? pickShoe(allShoes, todayType) : null;
   if (shoe && plans.some((p) => p.type !== 'rest')) lines.push(`👟 ${shoe.name}`);
 
   const first = plans[0];
