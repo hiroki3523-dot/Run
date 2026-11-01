@@ -66,7 +66,7 @@ describe('evaluateRun', () => {
     const ev = evaluateRun(input([{ sec: 3000, pace: 265, hr: 162, spm: 182 }]), plan({ type: 'easy' }), S);
     expect(ev.pace.score!).toBeLessThan(50);
     expect(ev.hr.score!).toBeLessThan(50);
-    expect(ev.comments.some((c) => c.includes('速すぎ'))).toBe(true);
+    expect(ev.comments.some((c) => c.includes('高め'))).toBe(true);
   });
 
   it('M ペース走はアップ・ダウンを除いて評価する', () => {
@@ -84,7 +84,7 @@ describe('evaluateRun', () => {
     // 心拍・ケイデンスも本練習部分の値になる
     expect(ev.hr.details.avg_hr).toBe(158);
     expect(ev.cadence.details.avg_spm).toBe(184);
-    expect(ev.comments.some((c) => c.includes('キープ'))).toBe(true);
+    expect(ev.comments.some((c) => c.includes('目標帯'))).toBe(true);
   });
 
   it('M ペース走の後半失速を検出する', () => {
@@ -97,7 +97,7 @@ describe('evaluateRun', () => {
       S,
     );
     expect(ev.pace.details.half_diff_s as number).toBeGreaterThan(8);
-    expect(ev.comments.some((c) => c.includes('失速'))).toBe(true);
+    expect(ev.comments.some((c) => c.includes('遅くなっています'))).toBe(true);
   });
 
   it('心拍ドリフトを計算する', () => {
@@ -130,7 +130,7 @@ describe('evaluateRun', () => {
       S,
     );
     expect(ev.cadence.score!).toBeLessThan(60);
-    expect(ev.comments.some((c) => c.includes('ケイデンス'))).toBe(true);
+    expect(ev.comments.some((c) => c.includes('ピッチ'))).toBe(true);
   });
 
   it('ピッチ・歩幅が崩れると form が減点される', () => {
@@ -164,6 +164,13 @@ describe('evaluateRun', () => {
     expect(uneven.score).toBeLessThan(even.score - 15);
   });
 
+  it('コメントは数字つきで、次に意識することが出る', () => {
+    const ev = evaluateRun(input([{ sec: 2400, pace: 370, hr: 125, spm: 170 }]), null, S);
+    expect(ev.comments.some((c) => /ピッチ 170spm/.test(c))).toBe(true);
+    expect(ev.comments.some((c) => /平均ペース 6:10/.test(c) && c.includes('サブ3'))).toBe(true);
+    expect(ev.focus!.some((c) => c.includes('170→177'))).toBe(true);
+  });
+
   it('計画なしはフリーラン、距離評価なし', () => {
     const ev = evaluateRun(input([{ sec: 2400, pace: 300, hr: 145, spm: 178 }]), null, S);
     expect(ev.type).toBe('free');
@@ -185,7 +192,7 @@ describe('evaluateRun', () => {
   it('計画距離に届かないと減点', () => {
     const ev = evaluateRun(input([{ sec: 1800, pace: 320, hr: 140, spm: 178 }]), plan({ type: 'easy', distance_m: 15000 }), S);
     expect(ev.volume.score!).toBeLessThan(50);
-    expect(ev.comments).toContain('計画距離に届いていません (参考)。');
+    expect(ev.comments.some((c) => c.includes('距離は計画の'))).toBe(true);
   });
 });
 
