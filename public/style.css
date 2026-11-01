@@ -138,7 +138,9 @@ dialog::backdrop { background: rgb(8 10 20 / .55); -webkit-backdrop-filter: blur
 .week-day.today { position: relative; }
 .week-day.today > div:first-child strong { color: var(--accent); }
 .week-day.today::before { content: ""; position: absolute; left: -20px; top: 16px; width: 3px; height: 28px; border-radius: 3px; background: var(--accent); }
-.plan-item { display: flex; justify-content: space-between; gap: 8px; cursor: pointer; }
+.plan-item { display: block; cursor: pointer; }
+.plan-item > .num:empty { display: none; }
+.plan-item > .num { margin-top: 10px; }
 
 /* ---- 表・指標 */
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
@@ -345,7 +347,7 @@ ul.advice li.warn { border-left-color: var(--c-m); }
 ul.advice li.bad { border-left-color: var(--bad); }
 ul.advice li.info { border-left-color: var(--accent); }
 
-.actual-mini { text-decoration: none; color: var(--text); white-space: nowrap; }
+.actual-mini { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 14px; background: var(--accent-soft); text-decoration: none; color: var(--text); font-size: 14px; }
 
 /* ---- 実績詳細: メニュー選択・ゾーン・グラフ */
 .plan-choices { display: grid; gap: 10px; margin: 12px 0 16px; }
@@ -595,12 +597,12 @@ table.lap .sbar { height: 8px; }
 .pl-main { min-width: 0; flex: 1; }
 .pl-t { font-weight: 600; }
 .stp { display: grid; gap: 2px; margin: 8px 0 2px; }
-.stp-r { display: grid; grid-template-columns: 10px 1fr auto auto; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
+.stp-r { display: grid; grid-template-columns: 10px 5.6em 3.9em 1fr; white-space: nowrap; align-items: center; gap: 6px; font-size: 13px; padding: 3px 0; }
 .stp-r i { width: 4px; height: 18px; border-radius: 2px; background: var(--kc); }
 .stp-n { font-weight: 600; }
 .stp-n small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
-.stp-d { text-align: right; }
-.stp-p { color: var(--muted); font-size: 12px; min-width: 76px; text-align: right; }
+.stp-d { text-align: left; font-weight: 600; }
+.stp-p { color: var(--muted); font-size: 13px; text-align: left; }
 .pl-memo { margin-top: 4px; font-size: 12.5px; }
 /* 予実 */
 a.act { display: block; margin-top: 8px; padding: 10px 12px; border-radius: 14px; background: var(--accent-soft); color: var(--text); text-decoration: none; font-size: 13.5px; }
@@ -629,6 +631,14 @@ a.act { display: block; margin-top: 8px; padding: 10px 12px; border-radius: 14px
 .rv-o { display: flex; align-items: center; gap: 12px; padding: 10px 4px; font-size: 15px; min-height: 44px; }
 .rv-o input { width: 22px; height: 22px; accent-color: var(--accent); }
 
+.card.hero .hero-d { display: flex; align-items: baseline; gap: 8px; font-size: 20px; }
+
+/* メニュー通りに走れたかの印 */
+.day-body { position: relative; min-width: 0; }
+.plan-item { position: relative; }
+.jmark { position: absolute; top: 0; right: 0; width: 30px; height: 30px; display: grid; place-items: center; }
+.jmark.ok { color: var(--good); } .jmark.warn { color: var(--c-m); } .jmark.ng { color: var(--bad); }
+.plan-item.has-mark .pl-main, .day-body > .plan-item:first-of-type .pl-main { padding-right: 40px; }
 .fb-g { margin: 14px 0; display: grid; gap: 6px; }
 .fb-g b { font-size: 15px; }
 .fb-g .muted { font-size: 12px; }

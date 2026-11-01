@@ -140,14 +140,14 @@ async function homeView() {
     ${status.strava_connected ? '' : '<div class="card error">Strava が未連携です。<a href="#/settings">設定</a>から連携してください。</div>'}
     <div class="card">
       <div class="row spread"><h2>今日 ${md(t)}(${dow(t)})</h2><a href="#/plans" class="muted">計画を編集</a></div>
-      ${todays.length === 0 ? '<p class="muted">メニュー未登録</p>' : todays.map(planLine).join('')}
+      ${todays.length === 0 ? '<p class="muted">メニュー未登録</p>' : todays.map((p, i) => planLine(p, false, i === 0 ? markHtml(dayJudge(t, todays, acts.filter((x) => x.date === t), settings)) : '')).join('')}
     </div>
     ${wxWeek ? weekWxCard(t, wxWeek.place) : ''}
     ${next ? `
     <div class="card hero">
-      <div class="row spread"><h2>${esc(next.name)}</h2><span class="badge">${esc(next.priority)}</span></div>
+      <div class="row spread"><h2>${esc(next.name)}まで</h2><span class="badge">${esc(next.priority)}</span></div>
       <div class="row spread">
-        <div><span class="big">${daysBetween(t, next.date)}</span> 日</div>
+        <div class="hero-d">${daysBetween(t, next.date) === 0 ? '<span class="big" style="font-size:44px">本日</span>' : `あと <span class="big">${daysBetween(t, next.date)}</span> 日`}</div>
         <div class="muted num">${md(next.date)}・${km(next.distance_m)}km${next.goal_time_s ? `<br>目標 ${dur(next.goal_time_s)} (${pace(next.goal_time_s / (next.distance_m / 1000))}/km)` : ''}</div>
       </div>
       <a class="herolink" href="#/races/${next.id}">ペース表・持ち物 ›</a>
@@ -155,7 +155,9 @@ async function homeView() {
     ${weatherCard(weather)}
     ${goalCard(settings, next)}` : ''}
     ${(() => {
-      const l = [...acts].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)[0];
+      const srt = [...acts].sort((a, b) => b.date.localeCompare(a.date) || (b.start_date_local || '').localeCompare(a.start_date_local || '') || b.id - a.id);
+      // その日のランが複数あるときは、メイン (アップ・ダウンではない方) を出す
+      const l = srt.length ? (srt.filter((x) => x.date === srt[0].date).find((x) => x.role === 'work') || srt[0]) : null;
       return l ? `<a class="card" href="#/activities/${l.id}" style="display:block;text-decoration:none;color:inherit">
         <div class="row spread"><h2>最新ランの評価</h2>${scoreHtml(l.score)}</div>
         <div class="muted num">${md(l.date)}(${dow(l.date)}) ${km(l.distance_m, 2)}km・${pace(l.moving_time_s / (l.distance_m / 1000))}/km${l.avg_hr ? `・${Math.round(l.avg_hr)}bpm` : ''}</div>
@@ -511,11 +513,43 @@ function cleanNotes(notes, steps) {
   return n;
 }
 
-function planLine(p, hideActual = false) {
+
+/** その日のメニュー通りに走れたかを、チェック / ▲ / バツ で判定する */
+function dayJudge(d, dayPlans, dayActs, settings) {
+  const runPlans = dayPlans.filter((p) => p.type !== 'rest');
+  const done = dayActs.reduce((a, r) => a + r.distance_m, 0);
+  const past = d < today();
+  if (!runPlans.length) return done > 0 && dayPlans.length ? { k: 'warn', t: '休養日に走りました' } : null;
+  if (!done) return past ? { k: 'ng', t: '未実施' } : null;
+  const planned = runPlans.reduce((a, p) => a + (p.distance_m || 0), 0);
+  if (d === today() && planned && done < planned * 0.9) return null; // 今日はまだ途中かもしれない
+  const dr = planned ? Math.abs(done - planned) / planned : 0;
+  let dev = 0, band = null;
+  if (runPlans.length === 1) {
+    const pl = runPlans[0];
+    const mainAct = dayActs.find((a) => a.role === 'work') || (dayActs.length === 1 ? dayActs[0] : null);
+    band = pl.pace_min_s ? { min: pl.pace_min_s, max: pl.pace_max_s } : settings?.paces?.[pl.type] || null;
+    if (mainAct && band) {
+      const avg = mainAct.moving_time_s / (mainAct.distance_m / 1000);
+      dev = avg < band.min - 3 ? band.min - 3 - avg : avg > band.max + 3 ? avg - band.max - 3 : 0;
+    }
+  }
+  if (dr <= 0.1 && dev === 0) return { k: 'ok', t: 'メニュー通り' };
+  if (dr <= 0.25 && dev <= 10) return { k: 'warn', t: dr > 0.1 ? '距離がずれました' : 'ペースがずれました' };
+  return { k: 'ng', t: dr > 0.25 ? '距離が大きくずれました' : 'ペースが大きくずれました' };
+}
+const JMARK = {
+  ok: '<svg viewBox="0 0 32 32" width="30" height="30"><circle cx="16" cy="16" r="15" fill="currentColor" opacity=".16"/><path d="M9 16.5l5 5 9-10" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  warn: '<svg viewBox="0 0 32 32" width="30" height="30"><circle cx="16" cy="16" r="15" fill="currentColor" opacity=".16"/><path d="M16 8.5l8 14H8z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/></svg>',
+  ng: '<svg viewBox="0 0 32 32" width="30" height="30"><circle cx="16" cy="16" r="15" fill="currentColor" opacity=".16"/><path d="M10.5 10.5l11 11M21.5 10.5l-11 11" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>',
+};
+const markHtml = (j) => (j ? `<span class="jmark ${j.k}" title="${j.t}" role="img" aria-label="${j.t}">${JMARK[j.k]}</span>` : '');
+
+function planLine(p, hideActual = false, mark = '') {
   const steps = parseSteps(p);
   const target = p.type === 'rest' ? '' : [p.distance_m ? `${km(p.distance_m)}km` : '', steps.length ? '' : p.pace_min_s ? `${pace(p.pace_min_s)}-${pace(p.pace_max_s)}` : '', p.hr_max ? `≤${p.hr_max}bpm` : ''].filter(Boolean).join(' ');
   const memo = cleanNotes(p.notes, steps);
-  return `<div class="plan-item" data-plan="${p.id}">
+  return `<div class="plan-item ${mark ? 'has-mark' : ''}" data-plan="${p.id}">${mark}
     <div class="pl-main"><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type]}</span> <span class="num pl-t">${target}</span>${steps.length ? stepRows(steps) : ''}${memo ? `<div class="muted pl-memo">${esc(memo)}</div>` : ''}${shoeLine(p, hideActual)}</div>
     <div class="num">${p.activity_id && !hideActual ? `<a class="actual-mini" href="#/activities/${p.activity_id}"><span class="muted">実績</span> ${km(p.actual_distance_m)}km${p.activity_count > 1 ? `<span class="muted">(${p.activity_count}本)</span>` : ''} ${scoreHtml(p.score)}</a>` : ''}</div>
   </div>`;
@@ -652,7 +686,8 @@ async function plansView(params) {
         return `
         <div class="week-day ${d === t ? 'today' : ''}" data-day="${d}">
           <div class="daycol">${dp.length ? '<span class="grip" data-grip="' + d + '" aria-label="ドラッグして入れ替え">⠿</span>' : '<span class="grip off"></span>'}<div><strong>${md(d)}</strong><div class="muted">${dow(d)}</div>${wxDay(d)}${dayTag(d)}</div></div>
-          <div>
+          <div class="day-body">
+            ${markHtml(dayJudge(d, dp, weekActs.filter((a) => a.date === d), settings))}
             ${dp.map((p) => planLine(p, true)).join('')}
             ${actLine(weekActs.filter((a) => a.date === d))}
             ${dayDiff(d, dp, weekActs.filter((a) => a.date === d))}
