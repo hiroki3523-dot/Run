@@ -145,9 +145,9 @@ async function homeView() {
     ${wxWeek ? weekWxCard(t, wxWeek.place) : ''}
     ${next ? `
     <div class="card hero">
-      <div class="row spread"><h2>${esc(next.name)}</h2><span class="badge">${esc(next.priority)}</span></div>
+      <div class="row spread"><h2>${esc(next.name)}まで</h2><span class="badge">${esc(next.priority)}</span></div>
       <div class="row spread">
-        <div><span class="big">${daysBetween(t, next.date)}</span> 日</div>
+        <div class="hero-d">${daysBetween(t, next.date) === 0 ? '<span class="big" style="font-size:44px">本日</span>' : `あと <span class="big">${daysBetween(t, next.date)}</span> 日`}</div>
         <div class="muted num">${md(next.date)}・${km(next.distance_m)}km${next.goal_time_s ? `<br>目標 ${dur(next.goal_time_s)} (${pace(next.goal_time_s / (next.distance_m / 1000))}/km)` : ''}</div>
       </div>
       <a class="herolink" href="#/races/${next.id}">ペース表・持ち物 ›</a>
@@ -155,7 +155,9 @@ async function homeView() {
     ${weatherCard(weather)}
     ${goalCard(settings, next)}` : ''}
     ${(() => {
-      const l = [...acts].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)[0];
+      const srt = [...acts].sort((a, b) => b.date.localeCompare(a.date) || (b.start_date_local || '').localeCompare(a.start_date_local || '') || b.id - a.id);
+      // その日のランが複数あるときは、メイン (アップ・ダウンではない方) を出す
+      const l = srt.length ? (srt.filter((x) => x.date === srt[0].date).find((x) => x.role === 'work') || srt[0]) : null;
       return l ? `<a class="card" href="#/activities/${l.id}" style="display:block;text-decoration:none;color:inherit">
         <div class="row spread"><h2>最新ランの評価</h2>${scoreHtml(l.score)}</div>
         <div class="muted num">${md(l.date)}(${dow(l.date)}) ${km(l.distance_m, 2)}km・${pace(l.moving_time_s / (l.distance_m / 1000))}/km${l.avg_hr ? `・${Math.round(l.avg_hr)}bpm` : ''}</div>
