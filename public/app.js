@@ -84,12 +84,14 @@ function openDialog(html, { onDelete } = {}) {
 async function homeView() {
   const t = today();
   const ws = weekStart(t);
-  const [plans, acts, races, summary, status] = await Promise.all([
+  const [plans, acts, races, summary, status, settings, weather] = await Promise.all([
     api(`/plans?from=${ws}&to=${addDays(ws, 6)}`),
     api(`/activities?from=${addDays(t, -14)}&to=${t}`),
     api('/races'),
     api(`/summary?from=${addDays(ws, -7 * 7)}&to=${addDays(ws, 6)}`),
     api('/status'),
+    api('/settings'),
+    api('/race-weather').catch(() => null),
   ]);
   const todays = plans.filter((p) => p.date === t);
   const next = races.find((r) => r.date >= t);
@@ -108,7 +110,10 @@ async function homeView() {
         <div><span class="big">${daysBetween(t, next.date)}</span> 日</div>
         <div class="muted num">${md(next.date)}・${km(next.distance_m)}km${next.goal_time_s ? `<br>目標 ${dur(next.goal_time_s)} (${pace(next.goal_time_s / (next.distance_m / 1000))}/km)` : ''}</div>
       </div>
-    </div>` : ''}
+      ${next.goal_time_s ? splitTable(next) : ''}
+    </div>
+    ${weatherCard(weather)}
+    ${goalCard(settings, next)}` : ''}
     <div class="card week">
       <h2>今週</h2>
       <div class="row spread num"><span>${km(thisWeek.actual_m)} / ${km(thisWeek.planned_m)} km</span><span class="muted">ポイント練 ${thisWeek.points_done}/${thisWeek.points_planned}</span></div>
@@ -122,6 +127,46 @@ async function homeView() {
       <h2>最近のラン</h2>
       ${activityList(acts.slice(0, 5))}
     </div>`;
+}
+
+/** 等ペースで走った場合の 5km ごとの通過タイム */
+function splitTable(race) {
+  const per = race.goal_time_s / (race.distance_m / 1000);
+  const rows = [];
+  for (let k = 5; k < race.distance_m / 1000; k += 5) rows.push([`${k}km`, per * k]);
+  rows.push([`${km(race.distance_m, 1)}km`, race.goal_time_s]);
+  return `<details class="splits"><summary>ペース表 (等ペース ${pace(per)}/km)</summary>
+    <div class="split-grid num">${rows.map(([l, t]) => `<span>${l}</span><b>${dur(t)}</b>`).join('')}</div>
+    <p class="muted">30km までは目標ペースを守り、残りで上げるのが基本です。</p></details>`;
+}
+
+function weatherCard(w) {
+  if (!w) return '';
+  const hrs = w.hours.map((h) => `<div><div class="muted">${h.h}時</div><b>${Math.round(h.temp)}℃</b><div class="muted">${h.humidity ?? '-'}%</div></div>`).join('');
+  return `<div class="card">
+    <div class="row spread"><h2>${esc(w.race)}の天気 (${w.place})</h2><span class="muted num">${md(w.date)}</span></div>
+    <div class="num" style="font-size:20px">${Math.round(w.tmin)}〜${Math.round(w.tmax)}℃ <span class="muted" style="font-size:13px">降水${w.precip_pct ?? '-'}%・風${w.wind_max.toFixed(0)}m/s</span></div>
+    <div class="hours num">${hrs}</div>
+    <p style="margin:8px 0 0">${esc(w.advice)}</p>
+  </div>`;
+}
+
+/** COROS の予測タイムと目標の差 */
+function goalCard(settings, next) {
+  const c = settings?.coros;
+  if (!c || !next) return '';
+  const full = c.predicted_s.full;
+  const rows = [['サブ3 (3:00:00)', 10800]];
+  if (next.goal_time_s && next.goal_time_s !== 10800) rows.unshift([`${next.name} 目標`, next.goal_time_s]);
+  const line = ([label, goal]) => {
+    const d = full - goal;
+    return `<div class="row spread"><span>${esc(label)} ${dur(goal)}</span><b class="num ${d <= 0 ? 'ok' : 'gap'}">${d <= 0 ? `予測より ${dur(-d)} 余裕` : `あと ${dur(d)} 短縮`}</b></div>`;
+  };
+  return `<div class="card">
+    <h2>目標までの距離 (COROS 予測 ${dur(full)})</h2>
+    <div class="goal-rows">${rows.map(line).join('')}</div>
+    <p class="muted">予測は理想条件での値です。本番は暑さや補給で数分遅くなるのが普通です。</p>
+  </div>`;
 }
 
 function planLine(p) {

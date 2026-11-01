@@ -2,6 +2,7 @@ import { evaluateRun, resolveTargets } from './evaluate';
 import { addDays, daysBetween, fmtDuration, fmtKm, fmtPace, jstDate, weekStart } from './format';
 import { notify } from './notify';
 import { getSettings } from './settings';
+import { raceWeather, weatherAdvice } from './weather';
 import { getActivity, getGear, getStreams, RUN_TYPES, type StravaActivity } from './strava';
 import { PLAN_LABELS, type Env, type Evaluation, type Plan } from './types';
 
@@ -205,6 +206,31 @@ export async function morningBriefing(env: Env, today = jstDate()) {
   if (race) {
     const goal = race.goal_time_s ? ` 目標 ${fmtDuration(race.goal_time_s)} (${fmtPace(race.goal_time_s / (race.distance_m / 1000))}/km)` : '';
     lines.push(`🏁 ${race.name} まで ${daysBetween(today, race.date)}日${goal}`);
+  }
+
+  // 週の初め (月曜) は先週のまとめ、増やしすぎの警告、レース前は当日の天気
+  const prev = addDays(today, -7);
+  if (new Date(`${today}T00:00:00Z`).getUTCDay() === 1) {
+    const w = await env.DB.prepare(
+      `SELECT (SELECT COALESCE(SUM(distance_m), 0) FROM activities WHERE date BETWEEN ?1 AND ?2) AS done,
+              (SELECT COALESCE(SUM(distance_m), 0) FROM plans WHERE date BETWEEN ?1 AND ?2) AS planned,
+              (SELECT COALESCE(SUM(distance_m), 0) FROM activities WHERE date BETWEEN ?3 AND ?4) AS before,
+              (SELECT COALESCE(MAX(distance_m), 0) FROM activities WHERE date BETWEEN ?1 AND ?2) AS longest`,
+    )
+      .bind(prev, addDays(prev, 6), addDays(prev, -7), addDays(prev, -1))
+      .first<{ done: number; planned: number; before: number; longest: number }>();
+    if (w) {
+      lines.push('', `📊 先週 ${fmtKm(w.done)}km (計画 ${fmtKm(w.planned)}km)・最長 ${fmtKm(w.longest)}km`);
+      if (w.before > 0 && w.done > w.before * 1.2) lines.push(`⚠️ 前の週より ${Math.round((w.done / w.before - 1) * 100)}% 増。ケガに注意して今週は抑えめに`);
+    }
+  }
+  if (race && daysBetween(today, race.date) <= 14) {
+    try {
+      const w = await raceWeather(race.name, race.date);
+      if (w) lines.push(`🌤 ${race.date.slice(5).replace('-', '/')} ${w.place} ${Math.round(w.tmin)}〜${Math.round(w.tmax)}℃・降水${w.precip_pct ?? '-'}%・風${w.wind_max.toFixed(0)}m/s。${weatherAdvice(w)}`);
+    } catch (e) {
+      console.warn('weather failed', e);
+    }
   }
 
   const point = plans.find((p) => ['m', 'lt', 'interval', 'race'].includes(p.type));

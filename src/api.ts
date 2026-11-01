@@ -3,6 +3,7 @@ import { addDays, weekStart } from './format';
 import { ingestActivity, morningBriefing, SHOE_TOTAL_SQL } from './process';
 import { notify } from './notify';
 import { seedInitial } from './seed';
+import { raceWeather, weatherAdvice } from './weather';
 import { getSettings, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
 import { getBackfill, startBackfill, stopBackfill } from './backfill';
@@ -167,6 +168,24 @@ api.post('/plans/copy-week', async (c) => {
     );
   }
   return c.json({ copied: results.length });
+});
+
+// ---------------------------------------------------------------- 天気
+
+/** 次のレース (16 日以内) の当日予報 */
+api.get('/race-weather', async (c) => {
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const race = await c.env.DB.prepare('SELECT name, date FROM races WHERE date >= ? ORDER BY date LIMIT 1')
+    .bind(today)
+    .first<{ name: string; date: string }>();
+  if (!race) return c.json(null);
+  try {
+    const w = await raceWeather(race.name, race.date);
+    return c.json(w ? { race: race.name, ...w, advice: weatherAdvice(w) } : null);
+  } catch (e) {
+    console.error('weather failed', e);
+    return c.json(null);
+  }
 });
 
 // ---------------------------------------------------------------- activities
