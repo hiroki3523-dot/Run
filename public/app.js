@@ -1222,6 +1222,15 @@ async function activityDetailView(id) {
         <div style="text-align:right"><div class="muted">総合</div><div class="big">${scoreHtml(a.score)}</div></div>
       </div>
     </div>
+    ${ev && W && a.score != null && a.score < 85 ? (() => {
+      const NM = { pace: 'ペース', hr: '心拍', cadence: 'ケイデンス', form: 'フォーム' };
+      const lost = ['pace', 'hr', 'cadence', 'form'].filter((k) => W[k] > 0 && ev[k]?.score != null)
+        .map((k) => ({ k, loss: Math.round(W[k] * (100 - ev[k].score) / 100) })).filter((x) => x.loss >= 3).sort((x, y) => y.loss - x.loss);
+      return lost.length ? `<div class="card why"><h2>${a.score}点の内訳</h2>
+        <p class="muted" style="margin:0 0 6px">100点から引かれた点</p>
+        ${lost.map((x) => `<div class="row spread why-row"><b>${NM[x.k]}</b><b class="num bad">−${x.loss}</b></div><div class="muted why-sub">${esc(ev[x.k].summary)}</div>`).join('')}
+      </div>` : '';
+    })() : ''}
     ${ev ? `
     <div class="card">
       <h2>評価 <span class="badge" data-t="${ev.type}">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></h2>
