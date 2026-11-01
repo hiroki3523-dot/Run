@@ -7,7 +7,20 @@ const PLAN_LABELS = {
   easy: 'Easy', jog: 'Jog', long: 'ロング走', m: 'Mペース走', lt: 'LT走',
   interval: 'インターバル', race: 'レース', rest: '休養',
 };
-const PURPOSE_LABELS = { daily: '練習', workout: 'ポイント', race: 'レース' };
+const PURPOSE_LABELS = { daily: '普段用', workout: 'ポイント走用', race: '本番用' };
+const PURPOSE_HINTS = { daily: '普段用 (Easy・ジョグ・ロング走)', workout: 'ポイント走用 (LT・インターバル・Mペース走)', race: 'レース本番用 (本番と、本番ペースの練習)' };
+/** 計画の種類 → 向いている用途の順 */
+const SHOE_PREF = { race: ['race', 'workout'], m: ['workout', 'race', 'daily'], lt: ['workout', 'race', 'daily'], interval: ['workout', 'race', 'daily'] };
+let SHOES = [];
+/** メニューに合うシューズを、用途 → すり減りの少ない順で 1 足選ぶ */
+function recommendShoe(type) {
+  const pool = SHOES.filter((x) => !x.retired && x.total_km < x.limit_km);
+  for (const pu of SHOE_PREF[type] ?? ['daily']) {
+    const c = pool.filter((x) => x.purpose === pu).sort((a, b) => a.total_km / a.limit_km - b.total_km / b.limit_km)[0];
+    if (c) return c;
+  }
+  return null;
+}
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 
 // ---------------------------------------------------------------- utils
@@ -177,10 +190,16 @@ function goalCard(settings, next) {
   </div>`;
 }
 
+function shoeLine(p, calendar) {
+  if (!calendar || p.type === 'rest' || p.activity_id) return '';
+  const sh = recommendShoe(p.type);
+  return sh ? `<div class="shoe-rec">おすすめ: ${esc(sh.name)} <span class="muted">(${PURPOSE_LABELS[sh.purpose]}・${Math.round(sh.total_km)}km)</span></div>` : '';
+}
+
 function planLine(p, hideActual = false) {
   const target = p.type === 'rest' ? '' : [p.distance_m ? `${km(p.distance_m)}km` : '', p.pace_min_s ? `${pace(p.pace_min_s)}-${pace(p.pace_max_s)}` : '', p.hr_max ? `≤${p.hr_max}bpm` : ''].filter(Boolean).join(' ');
   return `<div class="plan-item" data-plan="${p.id}">
-    <div><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type]}</span> <span class="num">${target}</span>${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}</div>
+    <div><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type]}</span> <span class="num">${target}</span>${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}${shoeLine(p, hideActual)}</div>
     <div class="num">${p.activity_id && !hideActual ? `<a href="#/activities/${p.activity_id}">${km(p.actual_distance_m)}km ${scoreHtml(p.score)}</a>` : ''}</div>
   </div>`;
 }
@@ -211,11 +230,13 @@ function activityList(acts) {
 
 async function plansView(params) {
   const ws = weekStart(params.get('week') || today());
-  const [plans, weekActs, settings] = await Promise.all([
+  const [plans, weekActs, settings, shoes] = await Promise.all([
     api(`/plans?from=${ws}&to=${addDays(ws, 6)}`),
     api(`/activities?from=${ws}&to=${addDays(ws, 6)}`),
     api('/settings'),
+    api('/shoes').catch(() => []),
   ]);
+  SHOES = shoes;
   const actLine = (a) => `<a class="actual" href="#/activities/${a.id}"><span>実績 ${km(a.distance_m, 1)}km ${pace(a.moving_time_s / (a.distance_m / 1000))}/km${a.avg_hr ? ` ${Math.round(a.avg_hr)}bpm` : ''}</span>${scoreHtml(a.score)}</a>`;
   /** 1 日ぶんの 計画 と 実績 の差 */
   const dayDiff = (d, dayPlans, dayActs) => {
@@ -919,7 +940,7 @@ async function shoesView() {
   });
   return `
     <div class="row spread" style="margin-bottom:8px"><h2>シューズ</h2><button class="primary" id="add-shoe">＋ 追加</button></div>
-    <p class="muted">Strava でギアを設定して走ると自動で登録・加算されます。</p>
+    <p class="muted">Strava でギアを設定して走ると自動で登録・加算されます。各シューズをタップして「どんな練習で使うか」(普段用・ポイント走用・本番用) を選ぶと、計画のメニューにおすすめが出ます。</p>
     <div class="card"><ul class="list">${shoes.map((s) => {
       const ratio = s.total_km / s.limit_km;
       return `<li data-shoe="${s.id}" class="shoe-row" style="cursor:pointer;${s.retired ? 'opacity:.5' : ''}">
@@ -980,7 +1001,8 @@ async function editShoe(s) {
       <input type="hidden" name="image" id="shoe-image" value="${s.image ? esc(s.image) : ''}">
     </div>
     <div class="grid2">
-      <label>用途<select name="purpose">${Object.entries(PURPOSE_LABELS).map(([k, v]) => `<option value="${k}" ${s.purpose === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      <label>どんな練習で使う？<select name="purpose">${Object.entries(PURPOSE_HINTS).map(([k, v]) => `<option value="${k}" ${s.purpose === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      <p class="muted hint">ここで選んだ用途をもとに、計画のメニューに合うシューズをおすすめします</p>
       <label>交換目安 (km)<input name="limit_km" inputmode="numeric" value="${s.limit_km}"></label>
     </div>
     <div class="grid2">
