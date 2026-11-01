@@ -1098,11 +1098,6 @@ async function activitiesView(params) {
     <div class="card">
       <div class="row spread"><h2>${kind === 'day' ? '日次' : kind === 'week' ? '週間' : '月間'}評価</h2>
         ${r.grade ? `<span class="grade g${r.grade}">${r.grade}<small>${GRADE_NOTE[r.grade]}${r.grade_calc ? `・${r.grade_calc.pts}点` : ''}</small></span>` : ''}</div>
-      ${r.grade ? `<details class="how"><summary>${r.grade} とは？ (等級の決まり方)</summary>
-        <p class="muted" style="margin-top:0">${kind === 'day' ? '今日' : kind === 'week' ? '今週' : '今月'}の「走りの質」と「計画どおりに走れたか」を 1 つの点数にして、4 段階に分けています。</p>
-        ${r.grade_calc ? `<table class="how-t"><tr><td>平均点 (各ランの評価)</td><td class="num">${r.grade_calc.avg}</td></tr><tr><td>距離が計画とずれた分</td><td class="num">−${r.grade_calc.dist_penalty}</td></tr><tr><td>ポイント練習を抜いた分</td><td class="num">−${r.grade_calc.quality_penalty}</td></tr><tr><td><b>等級の点数</b></td><td class="num"><b>${r.grade_calc.pts}</b></td></tr></table>` : ''}
-        <p class="muted"><b>A</b> 85点以上 狙いどおり / <b>B</b> 70〜84 概ね良好 / <b>C</b> 55〜69 要調整 / <b>D</b> 55未満 立て直し</p>
-        <p class="muted">距離のずれは、計画の ±10% を超えるほど減点 (最大 30)。ポイント練習は、計画した回数のうち走れなかった割合で最大 15 点を引きます。</p></details>` : ''}
       <div class="grid3">
         ${stat('距離', `${r.km}km`, r.planned_km ? `計画 ${r.planned_km}km${pct ? `・${pct}` : ''}` : '')}
         ${stat('回数', `${r.runs}回`, `${r.run_days}日`)}
