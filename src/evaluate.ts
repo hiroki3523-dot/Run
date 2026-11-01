@@ -300,7 +300,15 @@ function evalHr(
   } else if (EASY_TYPES.includes(type) || type === 'long') {
     target = weightedMean(withHr.map((s) => (s.hr! <= range.max ? 1 : 0)), dts)!;
   } else {
-    target = weightedMean(withHr.map((s) => (s.hr! >= range.min && s.hr! <= range.max ? 1 : 0)), dts)!;
+    // ペース走 (M・LT など): 心拍は走り出しで遅れて上がり、後半は自然に上がるので、
+    // 目標域の ±3bpm は満点、そこから外れるほど段階的に減らす (10bpm 外れて約 4 割)
+    target = weightedMean(
+      withHr.map((s) => {
+        const dev = s.hr! < range.min ? range.min - s.hr! : s.hr! > range.max ? s.hr! - range.max : 0;
+        return dev <= 3 ? 1 : Math.max(0, 1 - (dev - 3) / 12);
+      }),
+      dts,
+    )!;
   }
   details.in_range_pct = round(target * 100);
 
@@ -454,6 +462,56 @@ export function stepWindows(plan: Plan | null, settings: Settings): StepWin[] {
     }
   }
   return out;
+}
+
+export type StepRole = 'warmup' | 'work' | 'cooldown';
+
+/** 計画のステップを、アップ・メイン・ダウンの距離範囲に並べる (インターバルの休憩はメインに含める) */
+function roleWindows(plan: Plan | null, settings: Settings): { role: StepRole; from: number; to: number; band: PaceBand }[] {
+  if (!plan?.steps) return [];
+  let steps: Array<Record<string, any>>;
+  try {
+    steps = typeof plan.steps === 'string' ? JSON.parse(plan.steps) : (plan.steps as any);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(steps)) return [];
+  const lenOf = (t: RawTarget) => {
+    const b = targetBand(t, settings);
+    return t.by === 'time' ? ((t.value ?? 0) / ((b.min + b.max) / 2)) * 1000 : (t.value ?? 0);
+  };
+  const out: { role: StepRole; from: number; to: number; band: PaceBand }[] = [];
+  let pos = 0;
+  for (const sp of steps) {
+    if (sp.kind === 'interval') {
+      const len = (sp.reps ?? 1) * (lenOf(sp.work) + lenOf(sp.rest)) - lenOf(sp.rest);
+      out.push({ role: 'work', from: pos, to: pos + len, band: targetBand(sp.work, settings) });
+      pos += len + lenOf(sp.rest);
+    } else {
+      const w = lenOf(sp as RawTarget);
+      const role: StepRole = sp.kind === 'warmup' ? 'warmup' : sp.kind === 'cooldown' ? 'cooldown' : 'work';
+      out.push({ role, from: pos, to: pos + w, band: targetBand(sp as RawTarget, settings) });
+      pos += w;
+    }
+  }
+  return out;
+}
+
+/**
+ * この 1 本のランが、計画のアップ・メイン・ダウンのどれにあたるかを、
+ * 同じ日の前のラン (offset_m = それまでに走った距離) からの位置で決める。
+ * 当てはまらなければ null (ステップなし・計画の外)。
+ */
+export function stepRole(plan: Plan | null, settings: Settings, offsetM: number, distM: number): { role: StepRole; band: PaceBand } | null {
+  const wins = roleWindows(plan, settings);
+  if (!wins.length) return null;
+  const a = offsetM, b = offsetM + distM;
+  const ov: Record<StepRole, number> = { warmup: 0, work: 0, cooldown: 0 };
+  for (const w of wins) ov[w.role] += Math.max(0, Math.min(b, w.to) - Math.max(a, w.from));
+  const best = (Object.keys(ov) as StepRole[]).reduce((x, y) => (ov[y] > ov[x] ? y : x));
+  if (ov[best] < Math.min(distM * 0.3, 300)) return null;
+  const same = wins.filter((w) => w.role === best);
+  return { role: best, band: (best === 'cooldown' ? same[same.length - 1] : same[0]).band };
 }
 
 /** メイン区間ごとのペース帯に対する評価 (帯からはみ出した平均秒数 → 点数) */

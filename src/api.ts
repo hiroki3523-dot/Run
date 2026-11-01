@@ -150,7 +150,15 @@ api.put('/plans/:id', async (c) => {
   )
     .bind(...planValues(await c.req.json()), c.req.param('id'))
     .first();
-  return row ? c.json(row) : c.notFound();
+  if (!row) return c.notFound();
+  // 計画を直したら、その計画に紐づく実績も新しい内容で評価し直す
+  try {
+    const { results } = await c.env.DB.prepare('SELECT id FROM activities WHERE plan_id = ? ORDER BY distance_m DESC LIMIT 6').bind(c.req.param('id')).all<{ id: number }>();
+    for (const r of results) await ingestActivity(c.env, r.id, { planId: Number(c.req.param('id')) });
+  } catch (e) {
+    console.warn('re-evaluate after plan update failed', e);
+  }
+  return c.json(row);
 });
 
 api.delete('/plans/:id', async (c) => {
@@ -492,7 +500,7 @@ api.get('/activities', async (c) => {
   const { from, to } = c.req.query();
   const { results } = await c.env.DB.prepare(
     `SELECT a.id, a.date, a.name, a.sport_type, a.distance_m, a.moving_time_s, a.avg_hr, a.avg_cadence_spm,
-       a.score, a.plan_id, p.type AS plan_type, s.name AS shoe_name
+       a.score, a.plan_id, a.start_date_local, json_extract(a.evaluation, '$.role') AS role, p.type AS plan_type, s.name AS shoe_name
      FROM activities a LEFT JOIN plans p ON p.id = a.plan_id LEFT JOIN shoes s ON s.id = a.shoe_id
      WHERE a.date BETWEEN ? AND ? ORDER BY a.start_date_local DESC`,
   )
@@ -510,7 +518,7 @@ api.get('/activities/:id', async (c) => {
   if (!row) return c.notFound();
   const plan = row.plan_id ? await c.env.DB.prepare('SELECT * FROM plans WHERE id = ?').bind(row.plan_id).first() : null;
   const { results: siblings } = await c.env.DB.prepare(
-    `SELECT id, name, start_date_local, distance_m, moving_time_s, avg_hr, score, plan_id FROM activities WHERE date = ? ORDER BY start_date_local`,
+    `SELECT id, name, start_date_local, distance_m, moving_time_s, avg_hr, score, plan_id, json_extract(evaluation, '$.role') AS role FROM activities WHERE date = ? ORDER BY start_date_local`,
   ).bind(row.date).all();
   return c.json({ ...row, evaluation: row.evaluation ? JSON.parse(row.evaluation as string) : null, plan, siblings });
 });

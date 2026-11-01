@@ -167,6 +167,8 @@ export interface Evaluation {
   weights?: { pace: number; hr: number; cadence: number; form: number };
   /** ロング走の本番ペース区間を評価したとき、その距離 (km) */
   section_km?: number;
+  /** アップ・メイン・ダウンのうち、このランがどれにあたるか (ステップのある計画のとき) */
+  role?: 'warmup' | 'work' | 'cooldown';
   comments: string[];
   /** 次に意識すること (数字つき・最大3つ) */
   focus?: string[];
