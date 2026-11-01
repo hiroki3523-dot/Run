@@ -258,12 +258,13 @@ api.get('/shoes', async (c) => {
 
 function shoeValues(b: Record<string, unknown>) {
   if (!b.name) throw new Error('name は必須です');
-  return [b.name, b.purpose ?? 'daily', b.strava_gear_id || null, num(b.limit_km) ?? 700, num(b.initial_km) ?? 0, b.retired ? 1 : 0];
+  const image = typeof b.image === 'string' && b.image.startsWith('data:image/') && b.image.length < 400_000 ? b.image : null;
+  return [b.name, b.purpose ?? 'daily', b.strava_gear_id || null, num(b.limit_km) ?? 700, num(b.initial_km) ?? 0, b.retired ? 1 : 0, image];
 }
 
 api.post('/shoes', async (c) => {
   const row = await c.env.DB.prepare(
-    'INSERT INTO shoes (name, purpose, strava_gear_id, limit_km, initial_km, retired) VALUES (?, ?, ?, ?, ?, ?) RETURNING *',
+    'INSERT INTO shoes (name, purpose, strava_gear_id, limit_km, initial_km, retired, image) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *',
   )
     .bind(...shoeValues(await c.req.json()))
     .first();
@@ -272,7 +273,7 @@ api.post('/shoes', async (c) => {
 
 api.put('/shoes/:id', async (c) => {
   const row = await c.env.DB.prepare(
-    `UPDATE shoes SET name = ?, purpose = ?, strava_gear_id = ?, limit_km = ?, initial_km = ?, retired = ?, alert_sent = 0
+    `UPDATE shoes SET name = ?, purpose = ?, strava_gear_id = ?, limit_km = ?, initial_km = ?, retired = ?, image = ?, alert_sent = 0
      WHERE id = ? RETURNING *`,
   )
     .bind(...shoeValues(await c.req.json()), c.req.param('id'))

@@ -185,3 +185,13 @@ nav a.active { background: linear-gradient(135deg, #2b3dff, #7a5cff); color: #ff
 button.primary, .btn.primary { background: linear-gradient(135deg, #2b3dff, #7a5cff); border-color: transparent; color: #fff; }
 h1::before { background: linear-gradient(135deg, #ff8a1f, #ff4f7b); }
 .week-day.today::before { background: linear-gradient(180deg, var(--c-m), var(--c-lt)); }
+
+/* ---- 計画の横に実績 / シューズ写真 */
+a.actual { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 8px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--text); text-decoration: none; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.shoe-row { display: grid; grid-template-columns: 56px 1fr; gap: 12px; align-items: center; }
+.shoe-body { min-width: 0; }
+.shoe-img { width: 56px; height: 56px; border-radius: 14px; background: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 24px; overflow: hidden; }
+.shoe-img img { width: 100%; height: 100%; object-fit: cover; }
+.shoe-img.big { width: 100%; height: 160px; font-size: 48px; }
+.shoe-img.big img { object-fit: contain; }
+.shoe-photo { display: grid; gap: 10px; margin-bottom: 12px; }
