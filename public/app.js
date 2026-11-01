@@ -255,7 +255,7 @@ async function plansView(params) {
       if (e.target.closest('a')) return;
       editPlan(plans.find((p) => p.id === Number(el.dataset.plan)), settings);
     }));
-    wirePrefs(view, settings);
+    wirePrefs(view, settings, ws);
     wireAutoPlan(view);
     wireTools(view);
     wireDrag(view, plans, ws);
@@ -312,11 +312,11 @@ async function plansView(params) {
     <h2 class="sect">予定を組む</h2>
     <div class="card tools">
       <div class="tool-tabs">
-        <button type="button" data-tool="prefs">週の条件</button>
-        <button type="button" data-tool="auto">自動で作る</button>
+        <button type="button" data-tool="prefs" class="on">週を自動配置</button>
+        <button type="button" data-tool="auto">レースまで</button>
         <button type="button" data-tool="bulk">貼り付け</button>
       </div>
-      <div class="tool-pane hidden" id="pane-prefs"><div id="prefs-body"></div></div>
+      <div class="tool-pane" id="pane-prefs"><div id="prefs-body"></div></div>
       <div class="tool-pane hidden" id="pane-auto">
         <p class="muted">直近4週間の走行距離と先週の達成度、レースの目標ペースから、レース当日までの毎日のメニューを作ります。</p>
         <label>目標レース<select id="auto-race"></select></label>
@@ -397,27 +397,26 @@ function wireDrag(root, plans, ws) {
   });
 }
 
-const WEEKDAYS = [['月', 1], ['火', 2], ['水', 3], ['木', 4], ['金', 5], ['土', 6], ['日', 0]];
 
-/** 自動計画の希望 (ポイント走の回数・ロング走・休養日・走れない日)。タップするとすぐ保存 */
-function wirePrefs(root, settings) {
+/** この週の条件 (ポイント走の回数・ロング走・休みの回数・走れない日)。選ぶとすぐ保存し、ボタンで自動配置 */
+function wirePrefs(root, settings, ws) {
   const body = root.querySelector('#prefs-body');
   const prefs = settings.plan_prefs;
   const t = today();
-  const next14 = [...Array(14)].map((_, i) => addDays(t, i));
+  const from = ws > t ? ws : t;
+  const weekDays = [...Array(7)].map((_, i) => addDays(ws, i)).filter((d) => d >= t);
   const chip = (attr, val, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" ${attr}="${val}">${label}</button>`;
   const draw = () => {
     body.innerHTML = `
-      <div class="field"><span class="lbl">きつい練習の回数 (1週間あたり)</span><span class="sub">LT走・インターバル・Mペース走など</span><div class="chips">${[0, 1, 2, 3].map((n) => chip('data-pp', n, `${n}回`, prefs.points_per_week === n)).join('')}</div></div>
-      <div class="field"><span class="lbl">長く走る日の回数 (1週間あたり)</span><span class="sub">ロング走</span><div class="chips">${[0, 1].map((n) => chip('data-lp', n, `${n}回`, prefs.long_per_week === n)).join('')}</div></div>
-      <div class="field"><span class="lbl">長く走る曜日</span><div class="chips">${WEEKDAYS.map(([l, n]) => chip('data-ld', n, l, prefs.long_day === n)).join('')}</div></div>
-      <div class="field"><span class="lbl">毎週、走らない曜日</span><span class="sub">複数選べます</span><div class="chips">${WEEKDAYS.map(([l, n]) => chip('data-rd', n, l, prefs.rest_days.includes(n))).join('')}</div></div>
-      <div class="field"><span class="lbl">今回だけ走れない日</span><span class="sub">仕事や用事がある日 (今後2週間)</span><div class="chips">${next14.map((d) => chip('data-bl', d, `${Number(d.slice(5, 7))}/${Number(d.slice(8))}(${dow(d)})`, prefs.blocked.includes(d))).join('')}</div></div>
-      <button type="button" id="regen" class="primary wide">この条件で今週の残りを作り直す</button>
-      <p class="muted" id="prefs-msg"></p>`;
+      <div class="field"><span class="lbl">ポイント走</span><div class="chips">${[0, 1, 2, 3].map((n) => chip('data-pp', n, `${n}回`, prefs.points_per_week === n)).join('')}</div></div>
+      <div class="field"><span class="lbl">ロング走</span><div class="chips">${[0, 1].map((n) => chip('data-lp', n, `${n}回`, prefs.long_per_week === n)).join('')}</div></div>
+      <div class="field"><span class="lbl">休息日</span><div class="chips">${[0, 1, 2, 3].map((n) => chip('data-rp', n, `${n}回`, prefs.rest_per_week === n)).join('')}</div></div>
+      ${weekDays.length ? `<div class="field"><span class="lbl">走れない日 (予定がある日)</span><span class="sub">あれば選びます。その日は休みにします</span><div class="chips">${weekDays.map((d) => chip('data-bl', d, `${Number(d.slice(5, 7))}/${Number(d.slice(8))}(${dow(d)})`, prefs.blocked.includes(d))).join('')}</div></div>` : ''}
+      <button type="button" id="regen" class="primary wide" ${weekDays.length ? '' : 'disabled'}>この週を自動で配置</button>
+      <p class="muted" id="prefs-msg">${weekDays.length ? '配置したあと、カレンダーの「⠿」をドラッグして入れ替えられます' : '過ぎた週は作り直せません'}</p>`;
   };
   const save = async () => {
-    try { await api('/settings', { method: 'PUT', body: { plan_prefs: prefs } }); body.querySelector('#prefs-msg').textContent = '保存しました'; }
+    try { await api('/settings', { method: 'PUT', body: { plan_prefs: prefs } }); }
     catch (e) { body.querySelector('#prefs-msg').textContent = `エラー: ${e.message}`; }
   };
   body.addEventListener('click', async (e) => {
@@ -425,17 +424,20 @@ function wirePrefs(root, settings) {
     if (!b) return;
     const d = b.dataset;
     if (b.id === 'regen') {
-      const ws = weekStart(t);
-      if (!confirm(`今日から${md(addDays(ws, 6))}までの計画を、この条件で作り直します (走った日の計画は残します)`)) return;
+      if (!confirm(`${md(from)}〜${md(addDays(ws, 6))}の計画を、この条件で作り直します (走った日の計画は残します)`)) return;
       b.disabled = true;
-      try { const r = await api('/plans/generate', { method: 'POST', body: { overwrite: true, commit: true, from: t, to: addDays(ws, 6) } }); body.querySelector('#prefs-msg').textContent = `${r.added} 日分を作り直しました`; setTimeout(route, 900); }
-      catch (err) { body.querySelector('#prefs-msg').textContent = `エラー: ${err.message}`; b.disabled = false; }
+      prefs.rest_days = [];
+      try {
+        await save();
+        const r = await api('/plans/generate', { method: 'POST', body: { overwrite: true, commit: true, from, to: addDays(ws, 6) } });
+        body.querySelector('#prefs-msg').textContent = `${r.added} 日分を配置しました`;
+        setTimeout(route, 700);
+      } catch (err) { body.querySelector('#prefs-msg').textContent = `エラー: ${err.message}`; b.disabled = false; }
       return;
     }
     if (d.pp != null) prefs.points_per_week = Number(d.pp);
     else if (d.lp != null) prefs.long_per_week = Number(d.lp);
-    else if (d.ld != null) prefs.long_day = Number(d.ld);
-    else if (d.rd != null) { const n = Number(d.rd); prefs.rest_days = prefs.rest_days.includes(n) ? prefs.rest_days.filter((x) => x !== n) : [...prefs.rest_days, n]; }
+    else if (d.rp != null) prefs.rest_per_week = Number(d.rp);
     else if (d.bl) prefs.blocked = prefs.blocked.includes(d.bl) ? prefs.blocked.filter((x) => x !== d.bl) : [...prefs.blocked, d.bl];
     else return;
     draw();
