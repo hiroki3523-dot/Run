@@ -1449,7 +1449,7 @@ function lapTable(sp) {
 
 
 /** ランのレビュー (文章+数字)。サーバーが組み立てた内容を表示する */
-function reviewHtml(rv, a, shoes, sel) {
+function reviewHtml(rv) {
   if (rv.main_id !== undefined) {
     const L = { warmup: 'アップ', cooldown: 'ダウン' }[rv.role];
     return `<div class="card rv"><h2>レビュー</h2><p class="muted">このランは ${L} です。評価はメインのランで見ます。</p>${rv.main_id ? `<a class="btn" href="#/activities/${rv.main_id}">メインのレビューを見る ›</a>` : ''}</div>`;
@@ -1469,13 +1469,20 @@ function reviewHtml(rv, a, shoes, sel) {
   if (rv.hr) h += `<div class="card rv">${sec(esc(rv.hr.title), `<table class="rv-t num"><tr><th>区間</th><th>平均心拍</th></tr>${rv.hr.rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join('')}</table>${ps(rv.hr.text)}`)}</div>`;
   if (rv.form) h += `<div class="card rv">${sec(esc(rv.form.title), `<div class="rv-chips">${rv.form.stats.map(([t, v, u]) => `<div><span class="muted">${esc(t)}</span><b class="num">${esc(v)}<small>${esc(u)}</small></b></div>`).join('')}</div>${ps(rv.form.text)}`)}</div>`;
   if (rv.verdict) h += `<div class="card rv">${sec(esc(rv.verdict.title), `${ps(rv.verdict.text)}${rv.verdict.table.length ? `<table class="rv-t num"><tr><th>区間</th><th>推奨ペース</th></tr>${rv.verdict.table.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>` : ''}`)}</div>`;
-  const rp = ['かなり余裕あり', '余裕あり', 'ややきつい', 'かなりきつい'];
-  const list = shoes.filter((x) => x.retired !== 1).slice(0, 5);
-  h += `<div class="card rv"><h3>評価をくわしくするために 2 つ教えてください</h3>
-    <div class="rv-q"><b>1. 走っているときの主観的なきつさは？</b>${rp.map((t, i) => `<label class="rv-o"><input type="radio" name="rpe" value="${i + 1}" ${sel.rpe === i + 1 ? 'checked' : ''}><span>${t}</span></label>`).join('')}</div>
-    <div class="rv-q"><b>2. 履いたシューズは？</b>${list.map((x) => `<label class="rv-o"><input type="radio" name="shoe" value="${x.id}" ${sel.shoe === x.id ? 'checked' : ''}><span>${esc(x.name)}</span></label>`).join('')}<label class="rv-o"><input type="radio" name="shoe" value="" ${sel.shoe == null ? 'checked' : ''}><span>その他・なし</span></label></div>
-    <button type="button" class="primary wide" id="rv-go">この内容で再評価する</button></div>`;
   return h;
+}
+
+const FB_RPE = [[1, 'かなり楽'], [2, '余裕あり'], [3, 'ややきつい'], [4, 'きつい']];
+const FB_LEG = [['light', '軽い'], ['normal', 'ふつう'], ['heavy', '重い'], ['pain', '違和感・痛み']];
+const FB_TAG = [['hot', '暑い'], ['cold', '寒い'], ['wind', '風'], ['sleep', '睡眠不足'], ['hungry', '空腹・補給'], ['tired', '疲れが残っていた']];
+/** ふりかえり: タップで答えるとすぐ保存され、レビューの文章に反映される */
+function feedbackHtml(fb, notes) {
+  const grp = (title, hint, kind, items, on) => `<div class="fb-g"><b>${title}</b><span class="muted">${hint}</span><div class="chips">${items.map(([v, l]) => `<button type="button" class="chip ${on(v) ? 'on' : ''}" data-fb="${kind}" data-v="${v}">${l}</button>`).join('')}</div></div>`;
+  return `<div class="card rv"><h3>ふりかえり</h3><p class="muted" style="margin:0 0 4px">タップするだけ。答えると、レビューの文章に反映されます。</p>
+    ${grp('走っているときのきつさ', '1つ選ぶ', 'rpe', FB_RPE, (v) => fb.rpe === v)}
+    ${grp('いまの脚・体の状態', '1つ選ぶ', 'leg', FB_LEG, (v) => fb.leg === v)}
+    ${grp('影響しそうなこと', 'あてはまるものをすべて', 'tag', FB_TAG, (v) => (fb.tags || []).includes(v))}
+    <div id="fb-notes">${(notes || []).map((t) => `<p class="fb-note">${esc(t)}</p>`).join('')}</div></div>`;
 }
 
 async function activityDetailView(id) {
@@ -1531,23 +1538,27 @@ async function activityDetailView(id) {
       if (!box || !Array.isArray(sp) || !sp.length) { if (box) box.innerHTML = '<span class="muted">取得できませんでした</span>'; return; }
       box.innerHTML = lapTable(sp);
     }).catch(() => {});
+    let fbState = { rpe: null, leg: null, tags: [] };
     const loadReview = () => api(`/activities/${id}/review`).then((rv) => {
-      const box = view.querySelector('#review');
+      const box = view.querySelector('#review'), fbox = view.querySelector('#fb');
       if (!box || !rv || rv.error) { if (box) box.innerHTML = ''; return; }
-      const sel = { rpe: rv.rpe, shoe: rv.shoe_id ?? a.shoe_id ?? null };
-      box.innerHTML = reviewHtml(rv, a, shoes, sel);
-      const go = box.querySelector('#rv-go');
-      if (go) go.onclick = async () => {
-        const rpe = box.querySelector('[name=rpe]:checked')?.value;
-        const shoe = box.querySelector('[name=shoe]:checked')?.value;
-        go.disabled = true; go.textContent = '再評価しています…';
-        try {
-          if (rpe) await api(`/activities/${id}/rpe`, { method: 'PUT', body: { rpe: Number(rpe) } });
-          if (shoe !== undefined && String(shoe || '') !== String(a.shoe_id ?? '')) await api(`/activities/${id}`, { method: 'PUT', body: { shoe_id: shoe ? Number(shoe) : null } });
-          await api(`/activities/${id}/reevaluate`, { method: 'POST' });
-        } catch (e) { alert(e.message); }
-        route();
-      };
+      box.innerHTML = reviewHtml(rv);
+      if (rv.main_id !== undefined) { if (fbox) fbox.innerHTML = ''; return; }
+      fbState = { rpe: rv.fb?.rpe ?? null, leg: rv.fb?.leg ?? null, tags: rv.fb?.tags ?? [] };
+      if (fbox) {
+        fbox.innerHTML = feedbackHtml(fbState, rv.notes);
+        fbox.onclick = async (e) => {
+          const t = e.target.closest('[data-fb]');
+          if (!t) return;
+          const k = t.dataset.fb, v = t.dataset.v;
+          let body;
+          if (k === 'tag') { const s2 = new Set(fbState.tags); s2.has(v) ? s2.delete(v) : s2.add(v); fbState.tags = [...s2]; body = { tags: fbState.tags }; }
+          else { fbState[k] = (fbState[k] === (k === 'rpe' ? Number(v) : v)) ? null : (k === 'rpe' ? Number(v) : v); body = { [k]: fbState[k] }; }
+          fbox.querySelectorAll(`[data-fb="${k}"]`).forEach((x) => x.classList.toggle('on', k === 'tag' ? fbState.tags.includes(x.dataset.v) : String(fbState[k]) === x.dataset.v));
+          try { await api(`/activities/${id}/feedback`, { method: 'PUT', body }); } catch (err) { alert(err.message); return; }
+          api(`/activities/${id}/review`).then((r2) => { if (r2 && !r2.error && r2.main_id === undefined) { view.querySelector('#review').innerHTML = reviewHtml(r2); view.querySelector('#fb-notes').innerHTML = (r2.notes || []).map((t) => `<p class="fb-note">${esc(t)}</p>`).join(''); } }).catch(() => {});
+        };
+      }
     }).catch(() => { const box = view.querySelector('#review'); if (box) box.innerHTML = ''; });
     loadReview();
     api(`/activities/${id}/series`).then((sr) => {
@@ -1592,6 +1603,7 @@ async function activityDetailView(id) {
       </div>
     </div>
     <div id="review"><div class="card"><span class="muted">レビューをつくっています…</span></div></div>
+    <div id="fb"></div>
     ${ev && W && a.score != null && a.score < 85 ? (() => {
       const NM = { pace: 'ペース', hr: '心拍', cadence: 'ケイデンス', form: 'フォーム' };
       const lost = ['pace', 'hr', 'cadence', 'form'].filter((k) => W[k] > 0 && ev[k]?.score != null)
