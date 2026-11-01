@@ -115,7 +115,7 @@ async function homeView() {
     ${weatherCard(weather)}
     ${goalCard(settings, next)}` : ''}
     ${(() => {
-      const l = [...acts].sort((a, b) => b.start_date_local.localeCompare(a.start_date_local))[0];
+      const l = [...acts].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)[0];
       return l ? `<a class="card" href="#/activities/${l.id}" style="display:block;text-decoration:none;color:inherit">
         <div class="row spread"><h2>最新ランの評価</h2>${scoreHtml(l.score)}</div>
         <div class="muted num">${md(l.date)}(${dow(l.date)}) ${km(l.distance_m, 2)}km・${pace(l.moving_time_s / (l.distance_m / 1000))}/km${l.avg_hr ? `・${Math.round(l.avg_hr)}bpm` : ''}</div>
