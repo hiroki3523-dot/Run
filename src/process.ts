@@ -42,10 +42,13 @@ export async function ingestActivity(env: Env, id: number, opts: IngestOptions =
   }
 
   const [streams, settings] = await Promise.all([getStreams(env, id), getSettings(env)]);
+  // 同じ日に続けて走った前のラン (アップなど) の距離。ステップの位置合わせに使う
+  const offsetM = evalPlan?.steps ? await precedingDistance(env, id, date, act.start_date_local) : 0;
   const evaluation = evaluateRun(
     { distance_m: act.distance, moving_time_s: act.moving_time, laps: act.laps ?? [], streams },
     evalPlan,
     settings,
+    { offset_m: offsetM },
   );
   const shoeId = act.gear_id ? await ensureShoe(env, act) : null;
 
@@ -98,6 +101,22 @@ export async function deleteActivity(env: Env, id: number): Promise<void> {
 }
 
 /** 同日の計画から選ぶ。1 つだけならそれ。複数あれば、まだ走っていない計画を優先して距離が近いもの (1 つの計画に複数のワークアウトを紐づけられる) */
+/** このランの直前まで、30 分以内の間隔でつながっている同日のランの合計距離 (m) */
+async function precedingDistance(env: Env, id: number, date: string, start: string): Promise<number> {
+  const { results } = await env.DB.prepare(
+    'SELECT start_date_local AS s, elapsed_time_s AS e, distance_m AS d FROM activities WHERE date = ? AND id != ? AND start_date_local < ? ORDER BY start_date_local DESC',
+  ).bind(date, id, start).all<{ s: string; e: number; d: number }>();
+  const ms = (x: string) => new Date(x.length === 16 ? `${x}:00Z` : x.replace(/Z?$/, 'Z')).getTime();
+  let cur = ms(start), sum = 0;
+  for (const r of results) {
+    const end = ms(r.s) + (r.e ?? 0) * 1000;
+    if (cur - end > 30 * 60 * 1000) break;
+    sum += r.d;
+    cur = ms(r.s);
+  }
+  return sum;
+}
+
 async function findPlan(env: Env, activityId: number, date: string, distance: number, current: number | null) {
   const { results } = await env.DB.prepare(
     `SELECT p.* FROM plans p
