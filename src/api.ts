@@ -727,5 +727,8 @@ api.post('/notify/morning', async (c) => {
 
 api.onError((err, c) => {
   console.error(err);
+  if (/daily row read limit|exceeded D1/i.test(err.message)) {
+    return c.json({ error: 'データベースの無料枠 (1日の読み取り上限) に達しました。毎朝 9:00 にリセットされます。' }, 503);
+  }
   return c.json({ error: err.message }, 400);
 });
