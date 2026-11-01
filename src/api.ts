@@ -4,6 +4,9 @@ import { ingestActivity, morningBriefing, SHOE_TOTAL_SQL } from './process';
 import { notify } from './notify';
 import { seedInitial } from './seed';
 import { raceWeather, weatherAdvice } from './weather';
+import { generatePlan, type PlannerRace } from './planner';
+import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
+import { getActivity } from './strava';
 import { getSettings, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
 import { getBackfill, startBackfill, stopBackfill } from './backfill';
@@ -168,6 +171,150 @@ api.post('/plans/copy-week', async (c) => {
     );
   }
   return c.json({ copied: results.length });
+});
+
+// ---------------------------------------------------------------- 振り返り (日・週・月)
+
+api.get('/review', async (c) => {
+  const { from, to, kind } = c.req.query();
+  if (!isDate(from) || !isDate(to)) return c.json({ error: 'from/to が必要です' }, 400);
+  const k = kind === 'day' || kind === 'month' ? kind : 'week';
+  const lthr = (await getSettings(c.env)).coros.lthr;
+  const load = async (a: string, b: string) => {
+    const [runs, plans] = await Promise.all([
+      c.env.DB.prepare(
+        `SELECT id, date, name, distance_m, moving_time_s, avg_hr, score, plan_id, evaluation
+         FROM activities WHERE date BETWEEN ? AND ? ORDER BY start_date_local`,
+      ).bind(a, b).all<Omit<ReviewRun, 'comments'> & { evaluation: string | null }>(),
+      c.env.DB.prepare('SELECT id, date, type, distance_m FROM plans WHERE date BETWEEN ? AND ?').bind(a, b).all<ReviewPlan>(),
+    ]);
+    const list: ReviewRun[] = runs.results.map(({ evaluation, ...r }) => {
+      let comments: string[] = [];
+      try { comments = evaluation ? (JSON.parse(evaluation).comments ?? []).slice(0, 3) : []; } catch { /* 古い形式は無視 */ }
+      return { ...r, comments, tl: trainingLoad(r.moving_time_s, r.avg_hr, lthr) };
+    });
+    return { list, plans: plans.results };
+  };
+  const span = daysSpan(from, to);
+  const prevTo = addDays(from, -1);
+  const prevFrom = addDays(prevTo, -(span - 1));
+  const [cur, prv] = await Promise.all([load(from, to), k === 'day' ? null : load(prevFrom, prevTo)]);
+  const prev = prv ? { runs: prv.list.length, km: prv.list.reduce((a, r) => a + r.distance_m, 0) / 1000 } : null;
+  return c.json(buildReview(from, to, cur.list, cur.plans, prev, k));
+});
+
+/** 直近 N 週間 (月曜始まり) の週ごとの距離と負荷。Strava の「過去12週間」グラフ用 */
+api.get('/trend', async (c) => {
+  const weeks = Math.min(26, Math.max(4, Number(c.req.query('weeks')) || 12));
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const dow = (Date.parse(today) / 86400_000 + 3) % 7; // 月曜=0
+  const thisMon = addDays(today, -Math.floor(dow));
+  const first = addDays(thisMon, -7 * (weeks - 1));
+  const lthr = (await getSettings(c.env)).coros.lthr;
+  const { results } = await c.env.DB.prepare(
+    'SELECT date, distance_m, moving_time_s, avg_hr FROM activities WHERE date >= ?',
+  ).bind(first).all<{ date: string; distance_m: number; moving_time_s: number; avg_hr: number | null }>();
+  const out = Array.from({ length: weeks }, (_, i) => ({ week: addDays(first, i * 7), km: 0, tl: 0 }));
+  for (const r of results) {
+    const i = Math.floor(daysSpan(first, r.date) - 1) / 7 | 0;
+    if (out[i]) {
+      out[i].km += r.distance_m / 1000;
+      out[i].tl += trainingLoad(r.moving_time_s, r.avg_hr, lthr);
+    }
+  }
+  return c.json(out.map((w) => ({ ...w, km: Math.round(w.km * 10) / 10 })));
+});
+
+/** 1km ごとのスプリット (Strava から取得。ペース・心拍・標高差) */
+api.get('/activities/:id/splits', async (c) => {
+  try {
+    const a = (await getActivity(c.env, Number(c.req.param('id')))) as unknown as {
+      splits_metric?: { distance: number; moving_time: number; elevation_difference: number; average_heartrate?: number }[];
+    };
+    return c.json(
+      (a.splits_metric ?? []).map((x) => ({
+        km: Math.round(x.distance) / 1000,
+        pace_s: x.distance > 0 ? Math.round((x.moving_time / x.distance) * 1000) : null,
+        elev: Math.round(x.elevation_difference ?? 0),
+        hr: x.average_heartrate ? Math.round(x.average_heartrate) : null,
+      })),
+    );
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+const daysSpan = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400_000) + 1;
+
+// ---------------------------------------------------------------- 計画の自動作成
+
+/**
+ * 直近の実績と目標レースから、レースまでの日別メニューを作る。
+ * commit が false ならプレビューだけ返し、true なら登録する。
+ */
+api.post('/plans/generate', async (c) => {
+  const b = await c.req.json<{ race_id?: number; overwrite?: boolean; commit?: boolean; from?: string }>();
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const start = isDate(b.from) ? b.from : today;
+  const race = b.race_id
+    ? await c.env.DB.prepare('SELECT * FROM races WHERE id = ?').bind(b.race_id).first<PlannerRace & { id: number }>()
+    : await c.env.DB.prepare("SELECT * FROM races WHERE date > ? AND priority IN ('A','B') ORDER BY date LIMIT 1").bind(start).first<PlannerRace & { id: number }>();
+  if (!race) return c.json({ error: '対象のレースがありません。レースを登録してください' }, 400);
+  if (race.date < start) return c.json({ error: 'レースの日付が過ぎています' }, 400);
+
+  const [{ results: others }, recent, lastWeek, lastRace, settings] = await Promise.all([
+    c.env.DB.prepare('SELECT * FROM races WHERE date >= ? AND date < ? ORDER BY date').bind(start, race.date).all<PlannerRace>(),
+    c.env.DB.prepare('SELECT COALESCE(SUM(distance_m), 0) AS m FROM activities WHERE date BETWEEN ? AND ?').bind(addDays(start, -28), addDays(start, -1)).first<{ m: number }>(),
+    c.env.DB.prepare(
+      `SELECT (SELECT COALESCE(SUM(distance_m), 0) FROM activities WHERE date BETWEEN ?1 AND ?2) AS done,
+              (SELECT COALESCE(SUM(distance_m), 0) FROM plans WHERE date BETWEEN ?1 AND ?2 AND type != 'rest') AS planned`,
+    ).bind(addDays(start, -7), addDays(start, -1)).first<{ done: number; planned: number }>(),
+    c.env.DB.prepare('SELECT date FROM races WHERE date < ? AND date >= ? ORDER BY date DESC LIMIT 1').bind(start, addDays(start, -10)).first<{ date: string }>(),
+    getSettings(c.env),
+  ]);
+  const weekly = recent && recent.m > 0 ? recent.m / 1000 / 4 : null;
+  const rows = generatePlan({
+    start,
+    race,
+    others,
+    weekly_km: weekly,
+    last_completion: lastWeek && lastWeek.planned > 0 ? lastWeek.done / lastWeek.planned : null,
+    last_race: lastRace?.date ?? null,
+    settings,
+  });
+
+  // 週ごとの距離 (月曜はじまり)
+  const weeks = new Map<string, number>();
+  for (const r of rows) weeks.set(weekStart(r.date), (weeks.get(weekStart(r.date)) ?? 0) + (r.distance_m ?? 0) / 1000);
+  const summary = {
+    race: race.name,
+    race_date: race.date,
+    from: start,
+    days: rows.length,
+    base_weekly_km: weekly == null ? null : Math.round(weekly),
+    weeks: [...weeks].map(([week, km]) => ({ week, km: Math.round(km) })),
+  };
+  if (!b.commit) return c.json({ summary, rows });
+
+  const stmts: D1PreparedStatement[] = [];
+  if (b.overwrite) {
+    stmts.push(
+      c.env.DB.prepare(
+        `DELETE FROM plans WHERE date BETWEEN ? AND ? AND id NOT IN (SELECT plan_id FROM activities WHERE plan_id IS NOT NULL)`,
+      ).bind(start, race.date),
+    );
+  }
+  const have = b.overwrite
+    ? new Set<string>()
+    : new Set((await c.env.DB.prepare('SELECT DISTINCT date FROM plans WHERE date BETWEEN ? AND ?').bind(start, race.date).all<{ date: string }>()).results.map((r) => r.date));
+  const ins = c.env.DB.prepare('INSERT INTO plans (date, type, distance_m, pace_min_s, pace_max_s, notes) VALUES (?, ?, ?, ?, ?, ?)');
+  const fresh = rows.filter((r) => !have.has(r.date));
+  for (let i = 0; i < fresh.length; i += 90) {
+    // D1 は 1 バッチあたりの件数に余裕を持たせる
+    stmts.push(...fresh.slice(i, i + 90).map((r) => ins.bind(r.date, r.type, r.distance_m, r.pace_min_s, r.pace_max_s, r.notes)));
+  }
+  if (stmts.length) await c.env.DB.batch(stmts);
+  return c.json({ summary, added: fresh.length, skipped: rows.length - fresh.length });
 });
 
 // ---------------------------------------------------------------- 天気

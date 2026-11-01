@@ -114,6 +114,14 @@ async function homeView() {
     </div>
     ${weatherCard(weather)}
     ${goalCard(settings, next)}` : ''}
+    ${(() => {
+      const l = [...acts].sort((a, b) => b.start_date_local.localeCompare(a.start_date_local))[0];
+      return l ? `<a class="card" href="#/activities/${l.id}" style="display:block;text-decoration:none;color:inherit">
+        <div class="row spread"><h2>最新ランの評価</h2>${scoreHtml(l.score)}</div>
+        <div class="muted num">${md(l.date)}(${dow(l.date)}) ${km(l.distance_m, 2)}km・${pace(l.moving_time_s / (l.distance_m / 1000))}/km${l.avg_hr ? `・${Math.round(l.avg_hr)}bpm` : ''}</div>
+        <div class="muted">タップで詳細・スプリットを見る ›</div></a>
+        <a class="card" href="#/activities?view=week" style="display:block;text-decoration:none;color:inherit"><h2>今週の振り返り ›</h2><div class="muted">日・週・月の評価はここから</div></a>` : '';
+    })()}
     <div class="card week">
       <h2>今週</h2>
       <div class="row spread num"><span>${km(thisWeek.actual_m)} / ${km(thisWeek.planned_m)} km</span><span class="muted">ポイント練 ${thisWeek.points_done}/${thisWeek.points_planned}</span></div>
@@ -246,6 +254,7 @@ async function plansView(params) {
       if (e.target.closest('a')) return;
       editPlan(plans.find((p) => p.id === Number(el.dataset.plan)), settings);
     }));
+    wireAutoPlan(view);
     view.querySelector('#bulk-toggle').onclick = () => view.querySelector('#bulk-box').classList.toggle('hidden');
     view.querySelector('#bulk-go').onclick = async () => {
       const out = view.querySelector('#bulk-out');
@@ -274,6 +283,16 @@ async function plansView(params) {
     <div class="card">
       <div class="row spread num"><span>計画 ${km(total)}km・実績 ${km(actual)}km</span><button id="copy-week">翌週へ複製</button></div>
     </div>
+    <div class="card" id="auto-card">
+      <button id="auto-toggle">🧠 実績と目標から計画を自動で作る</button>
+      <div id="auto-box" class="hidden" style="margin-top:12px">
+        <p class="muted">直近4週間の走行距離と、先週の達成度、レースの目標ペースから、レース当日までの毎日のメニューを作ります。</p>
+        <label>目標レース<select id="auto-race"></select></label>
+        <label class="row"><input type="checkbox" id="auto-over"> すでにある計画を置き換える (走った日の計画は残します)</label>
+        <div class="row"><button id="auto-preview" class="primary">プレビュー</button><button id="auto-commit" class="hidden">この計画を登録</button></div>
+        <div id="auto-out"></div>
+      </div>
+    </div>
     <div class="card">
       <button id="bulk-toggle">📋 メニューを貼り付けて登録</button>
       <div id="bulk-box" class="hidden" style="margin-top:8px">
@@ -296,6 +315,38 @@ async function plansView(params) {
           </div>
         </div>`).join('')}
     </div>`;
+}
+
+function wireAutoPlan(root) {
+  const q = (id) => root.querySelector(id);
+  q('#auto-toggle').onclick = async () => {
+    q('#auto-box').classList.toggle('hidden');
+    const sel = q('#auto-race');
+    if (sel.options.length) return;
+    const races = (await api('/races')).filter((r) => r.date >= today());
+    sel.innerHTML = races.map((r) => `<option value="${r.id}">${esc(r.name)} (${ymd(r.date)}・${esc(r.priority)})</option>`).join('') || '<option value="">先にレースを登録してください</option>';
+  };
+  const call = (commit) => api('/plans/generate', { method: 'POST', body: { race_id: Number(q('#auto-race').value) || undefined, overwrite: q('#auto-over').checked, commit } });
+  q('#auto-preview').onclick = async () => {
+    const out = q('#auto-out');
+    out.textContent = '作成中…';
+    try {
+      const r = await call(false);
+      const s = r.summary;
+      out.innerHTML = `<p><b>${esc(s.race)}</b> (${ymd(s.race_date)}) まで ${s.days} 日分${s.base_weekly_km ? `・直近の週平均 ${s.base_weekly_km}km` : ''}</p>
+        <table class="num"><tr><th>週</th><th>距離</th></tr>${s.weeks.map((w) => `<tr><td>${md(w.week)}〜</td><td>${w.km}km <span class="bar" style="display:inline-block;width:${Math.min(120, w.km * 1.3)}px;vertical-align:middle"><i style="display:block;height:100%;width:100%;background:var(--accent)"></i></span></td></tr>`).join('')}</table>
+        <details><summary>日ごとのメニュー</summary>${r.rows.map((x) => `<div class="prow"><b>${md(x.date)}(${dow(x.date)})</b> <span class="badge" data-t="${x.type}">${PLAN_LABELS[x.type]}</span> ${x.distance_m ? `${km(x.distance_m)}km` : ''}<div class="muted">${esc(x.notes)}</div></div>`).join('')}</details>`;
+      q('#auto-commit').classList.remove('hidden');
+    } catch (e) { out.innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+  };
+  q('#auto-commit').onclick = async (e) => {
+    e.target.disabled = true;
+    try {
+      const r = await call(true);
+      q('#auto-out').innerHTML = `<p>✅ ${r.added} 日分を登録しました${r.skipped ? ` (登録済みの ${r.skipped} 日は飛ばしました)` : ''}</p>`;
+      setTimeout(route, 1200);
+    } catch (err) { q('#auto-out').innerHTML = `<p class="error">${esc(err.message)}</p>`; e.target.disabled = false; }
+  };
 }
 
 async function editPlan(p, settings) {
@@ -347,9 +398,84 @@ new MutationObserver(() => dialog.open && updatePaceHint()).observe(dialog, { at
 
 // ---- 実績
 
-async function activitiesView() {
-  const acts = await api('/activities');
-  return `<div class="card"><h2>ラン一覧</h2>${activityList(acts)}</div>`;
+/** Strava 風: 日ごとの距離を丸の大きさで表示 */
+function bubbles(days, linkBase) {
+  const max = Math.max(10, ...days.map((d) => d.km));
+  return `<div class="bubbles">${days.map((d) => {
+    const size = d.km ? 26 + (d.km / max) * 34 : 6;
+    return `<a class="bub" href="#/activities?view=day&date=${d.date}"><span class="dot" style="width:${size}px;height:${size}px">${d.km ? d.km.toFixed(1) : ''}${d.runs > 1 ? `<i>${d.runs}</i>` : ''}</span><small>${dow(d.date)}</small></a>`;
+  }).join('')}</div>`;
+}
+
+/** 過去12週間の距離 (面グラフ) */
+function trendChart(rows) {
+  const W = 320, H = 110, pad = 6;
+  const max = Math.max(60, ...rows.map((r) => r.km)) * 1.1;
+  const pts = rows.map((r, i) => [pad + (i * (W - pad * 2)) / (rows.length - 1), H - pad - (r.km / max) * (H - pad * 2)]);
+  const line = pts.map((p) => p.join(',')).join(' ');
+  const last = pts[pts.length - 1];
+  return `<svg viewBox="0 0 ${W} ${H}" class="trend"><polygon points="${pad},${H - pad} ${line} ${last[0]},${H - pad}" class="area"/><polyline points="${line}" class="ln"/>${pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="${i === pts.length - 1 ? 4 : 2.5}"/>`).join('')}</svg>
+    <div class="row spread muted num"><span>${md(rows[0].week)}〜</span><span>最高 ${Math.max(...rows.map((r) => r.km)).toFixed(0)}km/週</span><span>今週 ${rows[rows.length - 1].km}km</span></div>`;
+}
+
+const REVIEW_TABS = [['list', '一覧'], ['day', '日'], ['week', '週'], ['month', '月']];
+
+function periodOf(kind, anchor) {
+  if (kind === 'day') return { from: anchor, to: anchor, label: `${ymd(anchor)}(${dow(anchor)})`, prev: addDays(anchor, -1), next: addDays(anchor, 1) };
+  if (kind === 'week') {
+    const ws = weekStart(anchor);
+    return { from: ws, to: addDays(ws, 6), label: `${ymd(ws)} 〜 ${md(addDays(ws, 6))}`, prev: addDays(ws, -7), next: addDays(ws, 7) };
+  }
+  const y = Number(anchor.slice(0, 4)), m = Number(anchor.slice(5, 7));
+  const first = `${anchor.slice(0, 7)}-01`;
+  const last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  const prev = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 10);
+  const next = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+  return { from: first, to: last, label: `${y}年${m}月`, prev, next };
+}
+
+const GRADE_NOTE = { A: '狙いどおり', B: '概ね良好', C: '要調整', D: '立て直し' };
+
+async function activitiesView(params) {
+  const kind = params?.get('view') || 'list';
+  const tabs = `<div class="seg">${REVIEW_TABS.map(([k, l]) => `<a href="#/activities${k === 'list' ? '' : `?view=${k}`}" class="${k === kind ? 'on' : ''}">${l}</a>`).join('')}</div>`;
+  if (kind === 'list') {
+    const acts = await api('/activities');
+    return `${tabs}<div class="card"><h2>ラン一覧</h2>${activityList(acts)}</div>`;
+  }
+  const anchor = params.get('date') || today();
+  const p = periodOf(kind, anchor);
+  const [r, trend] = await Promise.all([api(`/review?from=${p.from}&to=${p.to}&kind=${kind}`), kind === 'list' || kind === 'day' ? null : api('/trend?weeks=12')]);
+  const link = (d) => `#/activities?view=${kind}&date=${d}`;
+  const stat = (label, value, sub = '') => `<div><div class="muted">${label}</div><div class="stat num">${value}</div>${sub ? `<div class="muted num">${sub}</div>` : ''}</div>`;
+  const pct = r.completion == null ? '' : `${Math.round(r.completion * 100)}%`;
+  return `${tabs}
+    <div class="row spread" style="margin-bottom:8px">
+      <a class="btn" href="${link(p.prev)}">‹</a><strong>${p.label}</strong><a class="btn" href="${link(p.next)}">›</a>
+    </div>
+    <div class="card">
+      <div class="row spread"><h2>${kind === 'day' ? '日次' : kind === 'week' ? '週間' : '月間'}評価</h2>
+        ${r.grade ? `<span class="grade g${r.grade}">${r.grade}<small>${GRADE_NOTE[r.grade]}</small></span>` : ''}</div>
+      <div class="grid3">
+        ${stat('距離', `${r.km}km`, r.planned_km ? `計画 ${r.planned_km}km${pct ? `・${pct}` : ''}` : '')}
+        ${stat('回数', `${r.runs}回`, `${r.run_days}日`)}
+        ${stat('平均点', r.avg_score ?? '-', r.avg_hr ? `平均心拍 ${r.avg_hr}` : '')}
+        ${stat('平均ペース', r.avg_pace_s ? `${pace(r.avg_pace_s)}` : '-', `/km`)}
+        ${stat('最長', `${r.longest_km}km`, kind === 'month' ? `28km以上 ${r.long_runs_28}回` : '')}
+        ${stat('負荷(TL)', r.tl, kind === 'day' ? (r.tl < 40 ? '低い' : r.tl < 90 ? '適度' : '高い') : '')}
+        ${stat('ポイント練', r.quality.planned ? `${r.quality.done}/${r.quality.planned}` : '-', r.delta_km_pct != null && kind !== 'day' ? `前${kind === 'week' ? '週' : '月'}比 ${r.delta_km_pct >= 0 ? '+' : ''}${r.delta_km_pct}%` : '')}
+      </div>
+    </div>
+    ${kind === 'week' ? `<div class="card"><h2>日ごとの距離</h2>${bubbles(r.days)}</div>` : ''}
+    ${trend ? `<div class="card"><h2>過去12週間</h2>${trendChart(trend)}</div>` : ''}
+    <div class="card"><h2>コメント</h2><ul class="bullets">${r.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>
+    ${r.next.length ? `<div class="card"><h2>次にやること</h2><ul class="bullets">${r.next.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>` : ''}
+    <div class="card"><h2>ラン</h2>${r.list.length === 0 ? '<p class="muted">記録なし</p>' : `<ul class="list">${r.list.map((a) => `
+      <li><a href="#/activities/${a.id}">
+        <div class="row spread"><span>${md(a.date)}(${dow(a.date)}) ${esc(a.name)}</span>${scoreHtml(a.score)}</div>
+        <div class="muted num">${km(a.distance_m, 2)}km・${pace(a.moving_time_s / (a.distance_m / 1000))}/km${a.avg_hr ? `・${Math.round(a.avg_hr)}bpm` : ''}</div>
+        ${kind === 'day' ? a.comments.map((c) => `<div class="muted">・${esc(c)}</div>`).join('') : ''}
+      </a></li>`).join('')}</ul>`}</div>`;
 }
 
 async function activityDetailView(id) {
@@ -368,6 +494,12 @@ async function activityDetailView(id) {
       await api(`/activities/${id}`, { method: 'PUT', body: { shoe_id: e.target.value ? Number(e.target.value) : null } });
       route();
     };
+    api(`/activities/${id}/splits`).then((sp) => {
+      const box = view.querySelector('#splits');
+      if (!box || !Array.isArray(sp) || !sp.length) { if (box) box.innerHTML = '<span class="muted">取得できませんでした</span>'; return; }
+      const slow = Math.max(...sp.map((x) => x.pace_s || 0)), fast = Math.min(...sp.filter((x) => x.pace_s).map((x) => x.pace_s));
+      box.innerHTML = `<table class="num splits"><tr><th>km</th><th>ペース</th><th></th><th>標高</th><th>心拍</th></tr>${sp.map((x, i) => `<tr><td>${i + 1}</td><td>${x.pace_s ? pace(x.pace_s) : '-'}</td><td><span class="sbar" style="width:${x.pace_s ? 30 + ((slow - x.pace_s) / Math.max(1, slow - fast)) * 70 : 0}%"></span></td><td>${x.elev}</td><td>${x.hr ?? '-'}</td></tr>`).join('')}</table>`;
+    }).catch(() => {});
     view.querySelector('#reeval').onclick = async (e) => {
       e.target.disabled = true;
       await api(`/activities/${id}/reevaluate`, { method: 'POST' });
@@ -396,6 +528,7 @@ async function activityDetailView(id) {
       ${ev.pace.details.rep_paces ? `<p class="muted num">各本: ${esc(ev.pace.details.rep_paces)}</p>` : ''}
       ${zones.length ? `<p class="muted num">心拍ゾーン Z1–Z5: ${zones.map((z) => `${Math.round(z)}%`).join(' / ')}</p>` : ''}
     </div>` : ''}
+    <div class="card"><h2>スプリット</h2><div id="splits"><span class="muted">読み込み中…</span></div></div>
     <div class="card">
       <label>紐づける計画
         <select id="plan-select">
@@ -759,7 +892,7 @@ async function route() {
     view.innerHTML = '<p class="muted">読み込み中…</p>';
     const html =
       tab === 'plans' ? await plansView(params)
-      : tab === 'activities' ? (parts[1] ? await activityDetailView(parts[1]) : await activitiesView())
+      : tab === 'activities' ? (parts[1] ? await activityDetailView(parts[1]) : await activitiesView(params))
       : tab === 'races' ? await racesView()
       : tab === 'shoes' ? await shoesView()
       : tab === 'settings' ? await settingsView()
