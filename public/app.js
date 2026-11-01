@@ -181,9 +181,9 @@ async function homeView() {
 /** 等ペースで走った場合の 5km ごとの通過タイム */
 /** ペース戦略: 区間ペース (秒/km) を位置 (km) の関数で返す。どれも合計タイムは目標と同じ */
 const PACE_PLANS = {
-  even: { label: '等ペース', note: '最初から最後まで同じペース。いちばん安定します。', f: (per) => () => per },
-  negative: { label: '後半上げる', note: '前半を 4 秒/km 抑え、後半を 4 秒/km 上げる (ネガティブスプリット)。', f: (per) => (k, dist) => per + (k < dist / 2 ? 4 : -4) },
-  late: { label: '30km から勝負', note: '30km までは 3 秒/km 抑え、30km 以降で上げる。給水と脚を残す作戦。', f: (per, dist) => { const a = 3; const b = (a * 30) / (dist - 30); return (k) => (k < 30 ? per + a : per - b); } },
+  even: { label: 'イーブン', note: '最初から最後まで同じペース。いちばん安定します。', f: (per) => () => per },
+  negative: { label: 'ネガティブ', note: '前半を 4 秒/km 抑え、後半を 4 秒/km 上げます。', f: (per) => (k, dist) => per + (k < dist / 2 ? 4 : -4) },
+  active: { label: 'アクティブ', note: '前半を 4 秒/km 速く入って貯金し、後半は粘ります。', f: (per) => (k, dist) => per + (k < dist / 2 ? -4 : 4) },
 };
 function paceRows(race, mode) {
   const dist = race.distance_m / 1000;
@@ -1279,6 +1279,13 @@ async function raceDetailView(id) {
       view.querySelector('#pace-out').innerHTML = splitTable(r, mode);
       view.querySelector('#pace-note').textContent = PACE_PLANS[mode].note;
     }));
+    view.querySelectorAll('[data-gp]').forEach((b) => (b.onclick = async () => {
+      const km = r.distance_m / 1000;
+      const cur = r.goal_time_s ? r.goal_time_s / km : 256;
+      const per = b.dataset.gp === 'sub3' ? 10799 / km : Math.max(180, cur + Number(b.dataset.gp));
+      await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, goal_time_s: Math.round(per * km) } });
+      route();
+    }));
     view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
   });
   const wireChecks = () => {
@@ -1322,6 +1329,13 @@ async function raceDetailView(id) {
     </div>
     ${weather && weather.race === r.name ? weatherCard(weather) : ''}
     <div class="card"><h2>ペース表</h2>
+      <div class="gp"><span class="muted">目標ペース</span>
+        <button type="button" class="gp-b" data-gp="-5" aria-label="5秒速く">−</button>
+        <b class="num">${r.goal_time_s ? `${pace(r.goal_time_s / (r.distance_m / 1000))}/km` : '未設定'}</b>
+        <button type="button" class="gp-b" data-gp="5" aria-label="5秒遅く">＋</button>
+        <button type="button" class="chip" data-gp="sub3">サブ3</button>
+      </div>
+      ${r.goal_time_s ? `<div class="muted num" style="margin:-4px 0 10px">ゴール ${dur(r.goal_time_s)}</div>` : ''}
       ${r.goal_time_s ? `<div class="chips" style="margin-bottom:10px">${Object.entries(PACE_PLANS).map(([k, v]) => `<button type="button" class="chip ${k === 'even' ? 'on' : ''}" data-pm="${k}">${v.label}</button>`).join('')}</div>
       <p class="muted" id="pace-note" style="margin-top:0">${PACE_PLANS.even.note}</p>` : ''}
       <div id="pace-out">${splitTable(r, 'even')}</div>
@@ -1571,7 +1585,7 @@ async function editShoe(s) {
     </div>
     <label>交換目安 (km)<input name="limit_km" inputmode="numeric" value="${s.limit_km}"></label>
     <div class="grid2">
-      <label>初期距離 (km)<input name="initial_km" inputmode="decimal" value="${s.initial_km}"></label>
+      <label>走行距離 (km)<input name="total_km" inputmode="decimal" value="${s.id ? Math.round((s.total_km ?? s.initial_km) * 10) / 10 : (s.initial_km || 0)}"></label>
       <label>Strava gear ID<input name="strava_gear_id" placeholder="g12345" value="${esc(s.strava_gear_id)}"></label>
     </div>
     <div class="field"><span class="lbl">状態</span>
@@ -1595,6 +1609,11 @@ async function editShoe(s) {
   hint();
   const values = await pending;
   if (!values) return;
+  // 走行距離は Nike Run Club など正確な値をそのまま入力 → 取り込みラン分を引いて初期距離にする
+  const imported = s.id ? (s.total_km ?? 0) - (s.initial_km || 0) : 0;
+  const total = Number(values.total_km);
+  values.initial_km = Number.isFinite(total) && String(values.total_km).trim() !== '' ? Math.round((total - imported) * 10) / 10 : s.initial_km || 0;
+  delete values.total_km;
   await api(s.id ? `/shoes/${s.id}` : '/shoes', { method: s.id ? 'PUT' : 'POST', body: { ...values, retired: Number(values.retired) || 0 } });
   route();
 }

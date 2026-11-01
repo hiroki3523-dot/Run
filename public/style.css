@@ -469,3 +469,8 @@ a.linkcard { display: block; text-decoration: none; color: inherit; }
 .drow .ds { grid-column: 1 / -1; font-size: 11.5px; }
 .drow .dr { color: #3d8bff; font-weight: 700; font-size: 13px; }
 .place-res { display: grid; gap: 8px; margin-top: 10px; max-height: 40vh; overflow: auto; }
+
+.gp{display:flex;align-items:center;gap:10px;margin:2px 0 12px}
+.gp .muted{flex:1}
+.gp b{font-size:20px;min-width:92px;text-align:center}
+.gp-b{width:44px;height:44px;border-radius:14px;border:1px solid var(--line,#2a2d3a);background:var(--card2,#1b1e29);color:inherit;font-size:22px}
