@@ -4,16 +4,16 @@ import { PLAN_LABELS } from './types';
 
 type EvalType = Exclude<PlanType, 'rest'> | 'free';
 
-/** 種別ごとの重み (pace, hr, cadence, volume) */
-const WEIGHTS: Record<EvalType, [number, number, number, number]> = {
-  easy: [0.2, 0.45, 0.2, 0.15],
-  jog: [0.15, 0.5, 0.2, 0.15],
-  long: [0.3, 0.3, 0.2, 0.2],
-  m: [0.5, 0.2, 0.15, 0.15],
-  lt: [0.5, 0.2, 0.15, 0.15],
-  interval: [0.55, 0.1, 0.2, 0.15],
-  race: [0.6, 0.15, 0.25, 0],
-  free: [0.2, 0.5, 0.3, 0],
+/** 種別ごとの重み (pace, hr, cadence, volume, form)。距離(volume)は点数に入れず、実走の質だけで評価する */
+const WEIGHTS: Record<EvalType, [number, number, number, number, number]> = {
+  easy: [0.15, 0.35, 0.25, 0, 0.25],
+  jog: [0.1, 0.4, 0.25, 0, 0.25],
+  long: [0.25, 0.3, 0.2, 0, 0.25],
+  m: [0.4, 0.15, 0.2, 0, 0.25],
+  lt: [0.4, 0.15, 0.2, 0, 0.25],
+  interval: [0.45, 0.1, 0.2, 0, 0.25],
+  race: [0.5, 0.1, 0.2, 0, 0.2],
+  free: [0.2, 0.35, 0.25, 0, 0.2],
 };
 
 /** 片側評価 (速すぎだけが問題) の種別 */
@@ -121,7 +121,9 @@ function evalPace(type: EvalType, band: PaceBand | null, samples: Sample[], laps
   const avgPace = weightedMean(work.map((s) => s.pace), dts)!;
   const splits = kmSplits(work);
   const splitCv = cv(splits);
-  const consistency = splitCv == null ? null : clamp(100 - (splitCv - 0.02) * 1500);
+  // 1km ごとのばらつき。1% 以下で満点、3% で 50 点、5% で 0 点 (ジョグはもともと揺れやすいので少し緩め)
+  const slack = EASY_TYPES.includes(type) ? 0.025 : 0.01;
+  const consistency = splitCv == null ? null : clamp(100 - (splitCv - slack) * 2500);
 
   const [first, second] = halves(work);
   const p1 = weightedMean(first.map((s) => s.pace), first.map((s) => s.dt));
@@ -135,15 +137,24 @@ function evalPace(type: EvalType, band: PaceBand | null, samples: Sample[], laps
     work_km: round(work.reduce((a, s) => a + s.dt / s.pace, 0), 2),
   };
 
+  // 後半の失速 (3秒/km を超えた分) と、最後の 1km の落ち込みを減点
+  let penalty = 0;
+  if (halfDiff != null && halfDiff > 3) penalty += Math.min(25, (halfDiff - 3) * 1.5);
+  if (splits.length >= 4) {
+    const lastDrop = splits[splits.length - 1] - splits.slice(0, -1).reduce((a, b) => a + b, 0) / (splits.length - 1);
+    details.last_km_drop_s = round(lastDrop, 0);
+    if (lastDrop > 10) penalty += Math.min(10, (lastDrop - 10) * 0.5);
+  }
+
   if (!band) {
     return {
-      score: consistency == null ? null : round(consistency, 0),
+      score: consistency == null ? null : round(clamp(consistency - penalty), 0),
       summary: `平均 ${fmtPace(avgPace)}/km`,
       details,
     };
   }
 
-  const tol = 5;
+  const tol = 3;
   let inBand: number;
   if (EASY_TYPES.includes(type)) {
     inBand = weightedMean(work.map((s) => (s.pace >= band.min - tol ? 1 : 0)), dts)!;
@@ -156,9 +167,9 @@ function evalPace(type: EvalType, band: PaceBand | null, samples: Sample[], laps
   details.target = `${fmtPace(band.min)}-${fmtPace(band.max)}`;
 
   let score = inBand * 100;
-  if (consistency != null) score = score * 0.7 + consistency * 0.3;
-  // M/レースで後半 5 秒/km 以上落ちたら減点
-  if ((type === 'm' || type === 'race') && halfDiff != null && halfDiff > 5) score -= Math.min(15, halfDiff - 5);
+  // 目標帯に入っていることが前提。そのうえで刻みの安定度が低いほど減点する
+  if (consistency != null) score = score * (0.5 + 0.5 * (consistency / 100));
+  score -= penalty;
 
   return {
     score: round(clamp(score), 0),
@@ -248,7 +259,8 @@ function evalHr(
     drift = (ef(a) - ef(b)) / ef(a);
     details.drift_pct = round(drift * 100);
   }
-  const driftScore = drift == null ? null : drift <= 0.05 ? 100 : drift <= 0.1 ? 100 - (drift - 0.05) * 1000 : 30;
+  // ドリフト 2% 以下で満点、5% で 70 点、8% で 40 点、12% 以上は 10 点
+  const driftScore = drift == null ? null : drift <= 0.02 ? 100 : drift <= 0.12 ? clamp(100 - (drift - 0.02) * 1000, 10) : 10;
 
   if (!range) {
     return {
@@ -270,7 +282,7 @@ function evalHr(
   }
   details.in_range_pct = round(target * 100);
 
-  const score = driftScore == null ? target * 100 : target * 70 + driftScore * 0.3;
+  const score = driftScore == null ? target * 90 : target * 100 * (0.4 + 0.6 * (driftScore / 100));
   return {
     score: round(clamp(score), 0),
     summary: `平均 ${Math.round(avgHr)}bpm・目標域 ${Math.round(target * 100)}%${drift != null ? `・ドリフト ${round(drift * 100)}%` : ''}`,
@@ -302,13 +314,43 @@ function evalCadence(type: EvalType, samples: Sample[], laps: Lap[], settings: S
   // ゆっくり走る日はケイデンスが下がるのが自然なので目標を少し緩める
   const target = settings.target_cadence - (EASY_TYPES.includes(type) ? 6 : type === 'long' || type === 'free' ? 3 : 0);
   const deficit = target - avg;
-  let score = deficit <= 0 ? 100 : 100 - deficit * 5;
-  if (fadeSpm != null && fadeSpm > 3) score -= (fadeSpm - 3) * 5;
+  // 目標より 1spm 低いごとに 8 点減。170spm を切るとほぼ 0 点に近づく
+  let score = deficit <= 0 ? 100 : 100 - deficit * 8;
+  if (fadeSpm != null && fadeSpm > 2) score -= (fadeSpm - 2) * 8;
 
   return {
     score: round(clamp(score), 0),
     summary: `平均 ${Math.round(avg)}spm (目標 ${target})${fadeSpm != null && fadeSpm > 3 ? `・後半 -${round(fadeSpm, 0)}` : ''}`,
     details: { avg_spm: round(avg, 0), target_spm: target, fade_spm: fadeSpm == null ? null : round(fadeSpm) },
+  };
+}
+
+// ---------------------------------------------------------------- form
+
+/**
+ * フォームの安定度。ケイデンスのばらつき・歩幅(速度÷ピッチ)のばらつき・後半の歩幅の縮みを見る。
+ * 歩幅が一定でピッチも安定しているほど、ブレの少ない効率的な走りと判断する。
+ */
+function evalForm(samples: Sample[]): MetricResult {
+  const w = samples.filter((s) => s.spm && s.spm > 100 && s.t >= 120);
+  if (w.length < 30) return { score: null, summary: 'フォームデータなし', details: {} };
+  const stride = (s: Sample) => 1000 / s.pace / (s.spm! / 60); // m/歩
+  const cadCv = cv(w.map((s) => s.spm!)) ?? 0;
+  const strCv = cv(w.map(stride)) ?? 0;
+  const [a, b] = halves(w);
+  const m = (xs: Sample[]) => xs.reduce((t, s) => t + stride(s), 0) / xs.length;
+  const shrink = (m(a) - m(b)) / m(a); // 正なら後半に歩幅が縮んだ
+  const avgStride = m(w);
+
+  // ピッチ 3% 以下 / 歩幅 8% 以下で満点。超えた分だけ減点
+  let score = 100;
+  score -= Math.max(0, cadCv - 0.03) * 1000;
+  score -= Math.max(0, strCv - 0.08) * 400;
+  if (shrink > 0.02) score -= (shrink - 0.02) * 1500;
+  return {
+    score: round(clamp(score), 0),
+    summary: `歩幅 ${round(avgStride, 2)}m・ピッチのばらつき ${round(cadCv * 100)}%${shrink > 0.02 ? `・後半 歩幅 -${round(shrink * 100)}%` : ''}`,
+    details: { stride_m: round(avgStride, 2), cadence_cv_pct: round(cadCv * 100), stride_cv_pct: round(strCv * 100), stride_shrink_pct: round(shrink * 100) },
   };
 }
 
@@ -354,8 +396,9 @@ export function evaluateRun(input: ActivityInput, plan: Plan | null, settings: S
   const hr = evalHr(type, hrRange, samples, focus, settings);
   const cadence = evalCadence(type, focus, input.laps, settings);
   const volume = evalVolume(plan, input.distance_m);
+  const form = evalForm(focus);
 
-  const metrics = [pace, hr, cadence, volume];
+  const metrics = [pace, hr, cadence, volume, form];
   const weights = WEIGHTS[type];
   const present = metrics.map((m, i) => (m.score == null ? 0 : weights[i]));
   const total = weightedMean(metrics.map((m) => m.score ?? 0), present);
@@ -367,11 +410,12 @@ export function evaluateRun(input: ActivityInput, plan: Plan | null, settings: S
     hr,
     cadence,
     volume,
-    comments: buildComments(type, pace, hr, cadence, volume),
+    form,
+    comments: buildComments(type, pace, hr, cadence, volume, form),
   };
 }
 
-function buildComments(type: EvalType, pace: MetricResult, hr: MetricResult, cad: MetricResult, vol: MetricResult): string[] {
+function buildComments(type: EvalType, pace: MetricResult, hr: MetricResult, cad: MetricResult, vol: MetricResult, form: MetricResult): string[] {
   const c: string[] = [];
   const pd = pace.details;
   const hd = hr.details;
@@ -414,7 +458,16 @@ function buildComments(type: EvalType, pace: MetricResult, hr: MetricResult, cad
     if (fade != null && fade > 3) c.push(`後半にケイデンスが ${fade}spm 落ちています。疲労時のフォーム維持が課題です。`);
   }
 
-  if (vol.score != null && (vol.details.ratio_pct as number) < 85) c.push('計画距離に届いていません。');
-  if (c.length === 0) c.push('計画通りの良い練習でした。');
+  if (form.score != null) {
+    const fd = form.details;
+    if ((fd.cadence_cv_pct as number) > 5) c.push(`ピッチのばらつきが ${fd.cadence_cv_pct}% と大きめ。リズムを一定に保つ意識を。`);
+    if ((fd.stride_shrink_pct as number) > 2) c.push(`後半に歩幅が ${fd.stride_shrink_pct}% 縮んでいます。疲れでフォームが小さくなっています。`);
+  }
+  const cv = pace.details.split_cv_pct as number | null | undefined;
+  if (cv != null && cv > (EASY_TYPES.includes(type) ? 4 : 2.5)) c.push(`1km ごとのペースのばらつきが ${cv}%。一定のリズムで刻めていません。`);
+  const lastDrop = pace.details.last_km_drop_s as number | undefined;
+  if (lastDrop != null && lastDrop > 10) c.push(`最後の 1km が平均より ${lastDrop}秒/km 遅い。最後まで保つ力が課題です。`);
+  if (vol.score != null && (vol.details.ratio_pct as number) < 85) c.push('計画距離に届いていません (参考)。');
+  if (c.length === 0) c.push('ペース・心拍・ピッチ・歩幅とも安定。目立った減点はありません。');
   return c;
 }

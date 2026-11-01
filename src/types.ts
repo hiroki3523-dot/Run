@@ -137,5 +137,7 @@ export interface Evaluation {
   hr: MetricResult;
   cadence: MetricResult;
   volume: MetricResult;
+  /** フォームの安定度 (歩幅・ピッチ)。古い評価には無い */
+  form?: MetricResult;
   comments: string[];
 }

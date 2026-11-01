@@ -467,7 +467,7 @@ api.get('/strava/subscription', async (c) => c.json(await viewSubscription(c.env
 /** 過去データの取り込み。開始すると 1 分ごとの cron が自動で進める */
 api.post('/strava/backfill/start', async (c) => {
   const d = Number(c.req.query('days'));
-  return c.json(await startBackfill(c.env, Number.isFinite(d) && d > 0 ? d : null));
+  return c.json(await startBackfill(c.env, Number.isFinite(d) && d > 0 ? d : null, c.req.query('force') === '1'));
 });
 api.get('/strava/backfill/status', async (c) => {
   const db = await c.env.DB.prepare('SELECT COUNT(*) AS count, MIN(date) AS oldest, MAX(date) AS newest FROM activities').first();

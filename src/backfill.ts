@@ -25,6 +25,8 @@ export interface BackfillState {
   last_error?: string;
   /** 今の区間が終わったあとに続けて取り込む開始位置 (epoch 秒) */
   then?: number[];
+  /** 取り込み済みでも評価し直す (評価基準を変えたとき用) */
+  force?: boolean;
 }
 
 /** 区間の終わりに達したら、次の区間の開始位置を返す。なければ null (全部終了) */
@@ -45,7 +47,7 @@ const epoch = (iso: string) => Math.floor(Date.parse(iso) / 1000);
 export const nextQuarter = (now: number) => Math.floor(now / 900) * 900 + 900;
 
 /** after 以降のランを最大 BATCH 件取り込む。取り込み済みは飛ばす。 */
-export async function backfillBatch(env: Env, after: number): Promise<BatchResult> {
+export async function backfillBatch(env: Env, after: number, force = false): Promise<BatchResult> {
   let list;
   try {
     list = (await listActivities(env, after, 1, PAGE)).sort((a, b) => a.start_date.localeCompare(b.start_date));
@@ -57,7 +59,7 @@ export async function backfillBatch(env: Env, after: number): Promise<BatchResul
 
   const runs = list.filter((a) => RUN_TYPES.includes(a.sport_type));
   const have = new Set<number>();
-  if (runs.length > 0) {
+  if (runs.length > 0 && !force) {
     const marks = runs.map(() => '?').join(',');
     const { results } = await env.DB.prepare(`SELECT id FROM activities WHERE id IN (${marks})`)
       .bind(...runs.map((r) => r.id))
@@ -99,7 +101,7 @@ const save = (env: Env, st: BackfillState) => kvSet(env, 'backfill', JSON.string
 const RECENT_DAYS = 30;
 
 /** 取り込みを開始する。days が null なら全期間。直近 30 日を先に取り込み、そのあと古い順に進める。 */
-export async function startBackfill(env: Env, days: number | null): Promise<BackfillState> {
+export async function startBackfill(env: Env, days: number | null, force = false): Promise<BackfillState> {
   const now = Math.floor(Date.now() / 1000);
   const from = days == null ? 0 : now - days * 86400;
   const recent = now - RECENT_DAYS * 86400;
@@ -111,6 +113,7 @@ export async function startBackfill(env: Env, days: number | null): Promise<Back
     skipped: 0,
     started: new Date().toISOString(),
     errors: 0,
+    force,
   };
   await save(env, st);
   return st;
@@ -129,7 +132,7 @@ export async function backfillStep(env: Env): Promise<void> {
   if (st.pause_until && now < st.pause_until) return;
 
   try {
-    const r = await backfillBatch(env, st.after);
+    const r = await backfillBatch(env, st.after, !!st.force);
     st.imported += r.imported.length;
     st.skipped += r.skipped;
     st.errors = 0;
