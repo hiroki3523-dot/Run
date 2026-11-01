@@ -486,10 +486,37 @@ function dedupeIfNeeded(list) {
   api('/plans/dedupe', { method: 'POST' }).catch(() => {});
 }
 
+const STEP_SHORT = { warmup: 'アップ', work: 'メイン', rest: '休憩', cooldown: 'ダウン', interval: 'インターバル' };
+const parseSteps = (p) => {
+  try { const v = typeof p.steps === 'string' ? JSON.parse(p.steps) : p.steps; return Array.isArray(v) ? v : []; } catch { return []; }
+};
+const paceRange = (t) => { const b = bandOf(t); return `${pace(Math.round(b[0]))}–${pace(Math.round(b[1]))}`; };
+/** ステップ付きの計画を、色つきの行で見せる (長い文章にしない) */
+function stepRows(steps) {
+  return `<div class="stp">${steps.map((sp) => {
+    const kc = KIND_COLOR[sp.kind] || '#8a8f9c';
+    if (sp.kind === 'interval') {
+      return `<div class="stp-r" style="--kc:${kc}"><i></i><span class="stp-n">インターバル<small>レスト ${fmtTarget(sp.rest)}</small></span><span class="num stp-d">${fmtTarget(sp.work)}×${sp.reps}</span><span class="num stp-p">${paceRange(sp.work)}</span></div>`;
+    }
+    return `<div class="stp-r" style="--kc:${kc}"><i></i><span class="stp-n">${STEP_SHORT[sp.kind]}</span><span class="num stp-d">${fmtTarget(sp)}</span><span class="num stp-p">${sp.kind === 'rest' ? '' : paceRange(sp)}</span></div>`;
+  }).join('')}</div>`;
+}
+/** 以前は「ステップの要約 / メモ」を notes に入れていた。いまはメモだけを残す */
+function cleanNotes(notes, steps) {
+  const n = notes || '';
+  if (!steps.length || !n) return n;
+  const parts = n.split(' / ');
+  if (parts.length > 1 && /→/.test(parts[0])) return parts.slice(1).join(' / ');
+  if (/→/.test(n) && /^(アップ|ウォームアップ|トレーニング|インターバル|休憩|クールダウン|\d)/.test(n)) return '';
+  return n;
+}
+
 function planLine(p, hideActual = false) {
-  const target = p.type === 'rest' ? '' : [p.distance_m ? `${km(p.distance_m)}km` : '', p.pace_min_s ? `${pace(p.pace_min_s)}-${pace(p.pace_max_s)}` : '', p.hr_max ? `≤${p.hr_max}bpm` : ''].filter(Boolean).join(' ');
+  const steps = parseSteps(p);
+  const target = p.type === 'rest' ? '' : [p.distance_m ? `${km(p.distance_m)}km` : '', steps.length ? '' : p.pace_min_s ? `${pace(p.pace_min_s)}-${pace(p.pace_max_s)}` : '', p.hr_max ? `≤${p.hr_max}bpm` : ''].filter(Boolean).join(' ');
+  const memo = cleanNotes(p.notes, steps);
   return `<div class="plan-item" data-plan="${p.id}">
-    <div><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type]}</span> <span class="num">${target}</span>${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}${shoeLine(p, hideActual)}</div>
+    <div class="pl-main"><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type]}</span> <span class="num pl-t">${target}</span>${steps.length ? stepRows(steps) : ''}${memo ? `<div class="muted pl-memo">${esc(memo)}</div>` : ''}${shoeLine(p, hideActual)}</div>
     <div class="num">${p.activity_id && !hideActual ? `<a class="actual-mini" href="#/activities/${p.activity_id}"><span class="muted">実績</span> ${km(p.actual_distance_m)}km${p.activity_count > 1 ? `<span class="muted">(${p.activity_count}本)</span>` : ''} ${scoreHtml(p.score)}</a>` : ''}</div>
   </div>`;
 }
@@ -530,41 +557,44 @@ async function plansView(params) {
   SHOES = shoes;
   dedupeIfNeeded(plansRaw);
   const plans = uniqPlans(plansRaw);
-  /** 同じ日に走ったワークアウトは 1 つのメニューとして合算して表示する */
+  /** 同じ日に走ったワークアウトは 1 つのメニューとして見せる。アップ・メイン・ダウンの内訳つき */
+  const ROLE = { warmup: 'アップ', work: 'メイン', cooldown: 'ダウン' };
   const actLine = (list) => {
     if (!list.length) return '';
-    const main = [...list].sort((a, b) => b.distance_m - a.distance_m)[0];
-    const dist = list.reduce((x, a) => x + a.distance_m, 0), time = list.reduce((x, a) => x + a.moving_time_s, 0);
-    const hrs = list.filter((a) => a.avg_hr);
-    const hr = hrs.length ? hrs.reduce((x, a) => x + a.avg_hr * a.moving_time_s, 0) / hrs.reduce((x, a) => x + a.moving_time_s, 0) : null;
-    return `<a class="actual" href="#/activities/${main.id}"><span>実績 ${km(dist, 1)}km ${pace(time / (dist / 1000))}/km${hr ? ` ${Math.round(hr)}bpm` : ''}${list.length > 1 ? ` <span class="muted">(${list.length}本をまとめて)</span>` : ''}</span>${scoreHtml(main.score)}</a>`;
+    const byTime = [...list].sort((a, b) => (a.start_date_local || '').localeCompare(b.start_date_local || ''));
+    const main = list.find((a) => a.role === 'work') || [...list].sort((a, b) => b.distance_m - a.distance_m)[0];
+    const dist = list.reduce((x, a) => x + a.distance_m, 0);
+    const row = (a) => `<div class="ar"><span class="ar-n">${ROLE[a.role] || '走行'}</span><span class="num">${km(a.distance_m, 1)}km</span><span class="num">${pace(a.moving_time_s / (a.distance_m / 1000))}</span><span class="num muted">${a.avg_hr ? `${Math.round(a.avg_hr)}bpm` : ''}</span></div>`;
+    return `<a class="act" href="#/activities/${main.id}"><div class="row spread"><b class="num">実績 ${km(dist, 1)}km</b>${scoreHtml(main.score)}</div>${list.length > 1 || main.role ? `<div class="ars">${byTime.map(row).join('')}</div>` : `<div class="num muted">${pace(main.moving_time_s / (main.distance_m / 1000))}/km${main.avg_hr ? `・${Math.round(main.avg_hr)}bpm` : ''}</div>`}</a>`;
   };
-  /** 1 日ぶんの 計画 と 実績 の差 */
+  /** 1 日ぶんの 計画 と 実績 の差 (短いチップで) */
   const dayDiff = (d, dayPlans, dayActs) => {
     const runPlans = dayPlans.filter((p) => p.type !== 'rest');
     const planned = runPlans.reduce((a, p) => a + (p.distance_m || 0), 0);
     const done = dayActs.reduce((a, r) => a + r.distance_m, 0);
     const past = d < today();
+    const chip = (cls, text) => `<span class="dchip ${cls}">${text}</span>`;
     if (runPlans.length === 0) {
-      return dayPlans.length && done > 0 ? `<div class="diff over">休養日に ${km(done, 1)}km 走りました</div>` : '';
+      return dayPlans.length && done > 0 ? `<div class="dchips">${chip('over', `休養日に ${km(done, 1)}km 走りました`)}</div>` : '';
     }
-    if (done === 0) return past ? '<div class="diff gap">未実施</div>' : '';
+    if (done === 0) return past ? `<div class="dchips">${chip('gap', '未実施')}</div>` : '';
     const diff = done - planned;
     const rate = planned ? Math.abs(diff) / planned : 0;
-    const cls = !planned || rate <= 0.1 ? 'ok' : diff < 0 ? 'gap' : 'over';
-    let paceNote = '';
-    if (runPlans.length === 1 && dayActs.length === 1) {
+    const chips = [];
+    if (planned) chips.push(chip(rate <= 0.1 ? 'ok' : diff < 0 ? 'gap' : 'over', `距離 ${diff >= 0 ? '+' : '−'}${km(Math.abs(diff), 1)}km`));
+    if (runPlans.length === 1) {
       const p = runPlans[0];
+      const mainAct = dayActs.find((a) => a.role === 'work') || (dayActs.length === 1 ? dayActs[0] : null);
       const band = p.pace_min_s ? { min: p.pace_min_s, max: p.pace_max_s } : settings.paces?.[p.type];
-      const avg = dayActs[0].moving_time_s / (dayActs[0].distance_m / 1000);
-      if (band) {
-        paceNote = avg < band.min - 1 ? ` ・平均ペースは目安より ${Math.round(band.min - avg)}秒/km 速い`
-          : avg > band.max + 1 ? ` ・平均ペースは目安より ${Math.round(avg - band.max)}秒/km 遅い`
-          : ' ・平均ペースは目安の範囲内';
+      if (mainAct && band) {
+        const avg = mainAct.moving_time_s / (mainAct.distance_m / 1000);
+        const lab = parseSteps(p).length ? 'メインのペース' : 'ペース';
+        chips.push(avg < band.min - 3 ? chip('over', `${lab} ${Math.round(band.min - avg)}秒 速い`)
+          : avg > band.max + 3 ? chip('gap', `${lab} ${Math.round(avg - band.max)}秒 遅い`)
+          : chip('ok', `${lab} 範囲内`));
       }
     }
-    const sign = diff >= 0 ? '+' : '−';
-    return `<div class="diff ${cls}">差 ${sign}${km(Math.abs(diff), 1)}km${planned ? ` (計画 ${km(planned, 1)}km → 実績 ${km(done, 1)}km)` : ''}${paceNote}</div>`;
+    return chips.length ? `<div class="dchips">${chips.join('')}</div>` : '';
   };
   const days = [...Array(7)].map((_, i) => addDays(ws, i));
   const t = today();
@@ -924,8 +954,7 @@ function editPlan(p, settings) {
     };
     try { st.steps = p.steps ? JSON.parse(p.steps) : []; } catch { st.steps = []; }
     if (st.steps.length) {
-      const sum = stepsSummary(st.steps);
-      st.notes = (p.notes || '').startsWith(sum) ? (p.notes || '').slice(sum.length).replace(/^ \/ /, '') : p.notes || '';
+      st.notes = cleanNotes(p.notes, st.steps);
     }
     if (!p.id && st.km == null) st.km = PLAN_DEFAULT_KM[st.type] ?? null;
     PACES = settings.paces;
@@ -1022,7 +1051,7 @@ function editPlan(p, settings) {
       if (!sp) return listHtml();
       const kindRow = sp.kind === 'interval' ? '' : row('kind', 'ステップ', STEP_KINDS[sp.kind], `<div class="chips">${['warmup', 'work', 'rest', 'cooldown'].map((k) => chip('data-skind', k, STEP_KINDS[k], sp.kind === k)).join('')}</div>`);
       const body = sp.kind === 'interval'
-        ? `${row('reps', '本数', `${sp.reps}本`, `<div class="slide"><input type="range" data-rng="reps" min="1" max="20" step="1" value="${sp.reps}"></div>`)}
+        ? `${row('reps', '本数', `${sp.reps}本`, `<button type="button" class="wk-pick" data-wheel="reps">${sp.reps}本<small>タップして指定</small></button><div class="slide"><input type="range" data-rng="reps" min="1" max="20" step="1" value="${sp.reps}"></div>`)}
            <div class="wk-sub">走る</div><div class="wk-group">${targetRows(sp, 'work', i)}</div>
            <div class="wk-sub">休憩</div><div class="wk-group">${targetRows(sp, 'rest', i)}</div>`
         : `<div class="wk-group">${kindRow}</div><div class="wk-group">${targetRows(sp, '', i)}</div>`;
@@ -1077,7 +1106,6 @@ function editPlan(p, settings) {
         // 評価で使えるように、各ステップのペース範囲を確定して保存する
         const freeze = (t) => { if (!(t.pmin && t.pmax)) { const bd = bandOf(t); t.pmin = Math.round(bd[0]); t.pmax = Math.round(bd[1]); } };
         st.steps.forEach((sp) => { if (sp.kind === 'interval') { freeze(sp.work); freeze(sp.rest); } else freeze(sp); });
-        st.notes = [stepsSummary(st.steps), st.notes].filter(Boolean).join(' / ');
       }
       const body = {
         steps: st.steps.length ? st.steps : null,
@@ -1107,7 +1135,10 @@ function editPlan(p, settings) {
       if (d.act === 'del') { if (confirm('削除しますか？')) { await api(`/plans/${p.id}`, { method: 'DELETE' }); close(null); route(); } return; }
       if (d.wheel) {
         const [k, part = ''] = d.wheel.split(':');
-        if (k === 'km') {
+        if (k === 'reps') {
+          const r = await wheelPick('本数', [{ items: range(1, 30), value: st.steps[scr.i].reps, unit: '本' }]);
+          if (r) st.steps[scr.i].reps = r[0];
+        } else if (k === 'km') {
           const m = await pickDist('距離', Math.round((st.km ?? 10) * 1000));
           if (m != null) { st.km = m / 1000; if (!st.steps.length) st.pmin = st.pmin; }
         } else {
@@ -1122,7 +1153,12 @@ function editPlan(p, settings) {
           }
         }
       } else if (d.date) st.date = d.date;
-      else if (d.type) { st.type = d.type; if (!st.steps.length) { st.km = d.type === 'rest' ? null : (PLAN_DEFAULT_KM[d.type] ?? st.km); st.pmin = st.pmax = null; } }
+      else if (d.type) {
+        st.type = d.type;
+        const PRE = { m: 'Mペース走', lt: 'LT走', interval: 'インターバル' };
+        // M走・LT走・インターバルは、アップ → メイン → ダウン の形から組む (本数・距離・ペース・レストを設定できる)
+        if (PRE[d.type] && !st.steps.length) st.steps = STEP_PRESETS[PRE[d.type]]();
+        if (!st.steps.length) { st.km = d.type === 'rest' ? null : (PLAN_DEFAULT_KM[d.type] ?? st.km); st.pmin = st.pmax = null; } }
       else if (d.preset) st.steps = STEP_PRESETS[d.preset]();
       else if (d.addAt != null) { scr = { name: 'add', at: Number(d.addAt) }; }
       else if (d.kind) { st.steps.splice(scr.at, 0, mkStep[d.kind]()); scr = { name: 'step', i: scr.at }; openRow = null; }
@@ -1456,7 +1492,7 @@ async function activityDetailView(id) {
   return `
     <div class="card hd">
       <div class="row spread"><h2>${esc(a.name)}</h2><a class="muted" href="https://www.strava.com/activities/${a.id}" target="_blank" rel="noopener">Strava ↗</a></div>
-      <div class="muted">${a.start_date_local.slice(0, 16).replace('T', ' ')}</div>
+      <div class="muted">${a.start_date_local.slice(0, 16).replace('T', ' ')}${ev?.role ? `<span class="role">${{ warmup: 'アップ', work: 'メイン', cooldown: 'ダウン' }[ev.role]}</span>` : ''}</div>
       <div class="row spread hd-main"><div class="num"><span class="hd-km">${km(a.distance_m, 2)}</span><span class="hd-u">km</span></div>
         <div style="text-align:right"><div class="muted">総合</div><div class="big">${scoreHtml(a.score)}</div></div></div>
       <div class="stats num">
@@ -1492,7 +1528,7 @@ async function activityDetailView(id) {
     ${sib.length > 1 ? `<div class="card"><h2>この日のラン (${sib.length}本)</h2>
       <p class="muted" style="margin-top:0">アップ・本体・ダウンなど、同じ日のランは 1 つのメニューとして見ます</p>
       <div class="num" style="margin:8px 0"><span class="big">${km(sumD, 2)}</span> km・${dur(sumT)}・${pace(sumT / (sumD / 1000))}/km</div>
-      <ul class="list">${sib.map((r) => `<li class="${r.id === a.id ? 'cur' : ''}"><a href="#/activities/${r.id}"><div class="row spread"><span>${r.start_date_local.slice(11, 16)} ${esc(r.name)}${r.id === a.id ? ' <span class="badge">いま見ているラン</span>' : ''}</span>${scoreHtml(r.score)}</div><div class="muted num">${km(r.distance_m, 2)}km・${pace(r.moving_time_s / (r.distance_m / 1000))}/km${r.avg_hr ? `・${Math.round(r.avg_hr)}bpm` : ''}</div></a></li>`).join('')}</ul></div>` : ''}
+      <ul class="list">${sib.map((r) => `<li class="${r.id === a.id ? 'cur' : ''}"><a href="#/activities/${r.id}"><div class="row spread"><span>${r.start_date_local.slice(11, 16)} ${esc(r.name)}${r.role ? `<span class="role">${{ warmup: 'アップ', work: 'メイン', cooldown: 'ダウン' }[r.role]}</span>` : ''}${r.id === a.id ? ' <span class="badge">いま見ているラン</span>' : ''}</span>${scoreHtml(r.score)}</div><div class="muted num">${km(r.distance_m, 2)}km・${pace(r.moving_time_s / (r.distance_m / 1000))}/km${r.avg_hr ? `・${Math.round(r.avg_hr)}bpm` : ''}</div></a></li>`).join('')}</ul></div>` : ''}
     ${(() => {
       const cur = shoes.find((x) => x.id === a.shoe_id);
       return `<div class="card shoe-card"><div class="row spread"><h2>${cur ? esc(cur.name) : 'シューズを追加'}</h2><button type="button" class="chip" id="shoe-open">${cur ? '変更' : '選ぶ'}</button></div>

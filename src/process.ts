@@ -1,5 +1,5 @@
 import { pickShoe, type ShoeRow } from './shoes';
-import { evaluateRun, resolveTargets } from './evaluate';
+import { evaluateRun, resolveTargets, stepRole } from './evaluate';
 import { addDays, daysBetween, fmtDuration, fmtKm, fmtPace, jstDate, weekStart } from './format';
 import { notify } from './notify';
 import { getSettings } from './settings';
@@ -38,18 +38,25 @@ export async function ingestActivity(env: Env, id: number, opts: IngestOptions =
     const bigger = await env.DB.prepare('SELECT 1 AS x FROM activities WHERE plan_id = ? AND id != ? AND distance_m > ? LIMIT 1')
       .bind(plan.id, id, act.distance)
       .first();
-    if (bigger && act.distance < plan.distance_m * 0.5) evalPlan = null;
+    if (bigger && act.distance < plan.distance_m * 0.5 && !plan.steps) evalPlan = null;
   }
 
   const [streams, settings] = await Promise.all([getStreams(env, id), getSettings(env)]);
   // 同じ日に続けて走った前のラン (アップなど) の距離。ステップの位置合わせに使う
   const offsetM = evalPlan?.steps ? await precedingDistance(env, id, date, act.start_date_local) : 0;
-  const evaluation = evaluateRun(
-    { distance_m: act.distance, moving_time_s: act.moving_time, laps: act.laps ?? [], streams },
-    evalPlan,
-    settings,
-    { offset_m: offsetM },
-  );
+  const input = { distance_m: act.distance, moving_time_s: act.moving_time, laps: act.laps ?? [], streams };
+  // アップ・メイン・ダウンに分けたメニューでは、このランがどれにあたるかを位置から決める
+  const rr = evalPlan?.steps ? stepRole(evalPlan, settings, offsetM, act.distance) : null;
+  let evaluation;
+  if (rr && rr.role !== 'work') {
+    // アップ・ダウンは、その区間のペース帯を目安に「楽に走れたか」で見る
+    const light = { ...evalPlan!, type: 'jog' as const, distance_m: null, steps: null, hr_max: null, pace_min_s: rr.band.min, pace_max_s: rr.band.max };
+    evaluation = evaluateRun(input, light, settings);
+    evaluation.comments.unshift(`${rr.role === 'warmup' ? 'アップ' : 'ダウン'}として評価しました (メインの点数には入りません)。`);
+  } else {
+    evaluation = evaluateRun(input, evalPlan, settings, { offset_m: offsetM });
+  }
+  if (rr) evaluation.role = rr.role;
   const shoeId = act.gear_id ? await ensureShoe(env, act) : null;
 
   await env.DB.prepare(
@@ -215,7 +222,9 @@ export async function morningBriefing(env: Env, today = jstDate()) {
     if (band) parts.push(`${fmtPace(band.min)}-${fmtPace(band.max)}/km`);
     if (hrRange) parts.push(p.type === 'interval' ? `心拍 ${hrRange.min}+` : `心拍 ≤${hrRange.max}`);
     lines.push(parts.join(' '));
-    if (p.notes) lines.push(`  ${p.notes}`);
+    const st = stepsLine(p);
+    if (st) lines.push(`  ${st}`);
+    if (p.notes && !(st && p.notes.includes(' → '))) lines.push(`  ${p.notes}`);
   }
 
   const ws = weekStart(today);
@@ -281,4 +290,18 @@ export async function morningBriefing(env: Env, today = jstDate()) {
 
 export async function sendMorning(env: Env) {
   await notify(env, await morningBriefing(env));
+}
+
+/** ステップ付きの計画を 1 行にする (通知用): アップ 5km → メイン 12km 4:30-4:35 → ダウン 1km */
+function stepsLine(p: Plan): string {
+  if (!p.steps) return '';
+  let steps: Array<Record<string, any>>;
+  try { steps = typeof p.steps === 'string' ? JSON.parse(p.steps) : (p.steps as any); } catch { return ''; }
+  if (!Array.isArray(steps) || !steps.length) return '';
+  const tgt = (t: any) => (t.by === 'time' ? fmtDuration(t.value) : `${fmtKm(t.value)}km`);
+  const rng = (t: any) => (t.pmin && t.pmax ? ` ${fmtPace(t.pmin)}-${fmtPace(t.pmax)}` : '');
+  const NAME: Record<string, string> = { warmup: 'アップ', work: 'メイン', rest: '休憩', cooldown: 'ダウン' };
+  return steps
+    .map((sp) => (sp.kind === 'interval' ? `${tgt(sp.work)}×${sp.reps}${rng(sp.work)} (レスト ${tgt(sp.rest)})` : `${NAME[sp.kind] ?? ''} ${tgt(sp)}${sp.kind === 'work' ? rng(sp) : ''}`))
+    .join(' → ');
 }

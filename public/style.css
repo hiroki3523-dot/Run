@@ -590,3 +590,24 @@ table.lap .sbar { height: 8px; }
 .wk-pick.inline { display: inline-block; width: auto; margin: 0 0 8px; padding: 8px 18px; }
 .wk-pick2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .sheet.wheel { z-index: 10000; }
+
+/* 計画のステップ表示 */
+.pl-main { min-width: 0; flex: 1; }
+.pl-t { font-weight: 600; }
+.stp { display: grid; gap: 2px; margin: 8px 0 2px; }
+.stp-r { display: grid; grid-template-columns: 10px 1fr auto auto; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
+.stp-r i { width: 4px; height: 18px; border-radius: 2px; background: var(--kc); }
+.stp-n { font-weight: 600; }
+.stp-n small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
+.stp-d { text-align: right; }
+.stp-p { color: var(--muted); font-size: 12px; min-width: 76px; text-align: right; }
+.pl-memo { margin-top: 4px; font-size: 12.5px; }
+/* 予実 */
+a.act { display: block; margin-top: 8px; padding: 10px 12px; border-radius: 14px; background: var(--accent-soft); color: var(--text); text-decoration: none; font-size: 13.5px; }
+.ars { display: grid; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.ar { display: grid; grid-template-columns: 48px 1fr 1fr 1fr; gap: 6px; font-size: 12.5px; }
+.ar-n { color: var(--muted); }
+.dchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.dchip { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--btn-bg); font-variant-numeric: tabular-nums; }
+.dchip.ok { color: var(--good); } .dchip.gap { color: var(--c-m); } .dchip.over { color: var(--bad); }
+.role { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin-left: 6px; font-weight: 600; }
