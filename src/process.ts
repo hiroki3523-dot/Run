@@ -74,8 +74,11 @@ export async function ingestActivity(env: Env, id: number, opts: IngestOptions =
   if (shoeId) await checkShoeLimit(env, shoeId);
 
   if (opts.notify && !existing?.notified_at) {
-    await notify(env, runNotification(env, act, plan, evaluation));
-    await env.DB.prepare('UPDATE activities SET notified_at = ? WHERE id = ?').bind(new Date().toISOString(), id).run();
+    const results = await notify(env, runNotification(env, act, plan, evaluation));
+    // 送れなかったときは「通知済み」にしない (後の update イベントでやり直せる)
+    if (results.some((r) => r.ok)) {
+      await env.DB.prepare('UPDATE activities SET notified_at = ? WHERE id = ?').bind(new Date().toISOString(), id).run();
+    }
   }
 }
 

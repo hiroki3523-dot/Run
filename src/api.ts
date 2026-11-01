@@ -3,7 +3,9 @@ import { addDays, weekStart } from './format';
 import { ingestActivity, morningBriefing, SHOE_TOTAL_SQL } from './process';
 import { notify } from './notify';
 import { getSettings, saveSettings } from './settings';
-import { createSubscription, getAthleteId, listActivities, RUN_TYPES, viewSubscription } from './strava';
+import { getBackfill, startBackfill, stopBackfill } from './backfill';
+import { calendarSig } from './calendar';
+import { createSubscription, getAthleteId, viewSubscription } from './strava';
 import { PLAN_TYPES, type Env, type Plan, type Settings } from './types';
 
 export const api = new Hono<{ Bindings: Env }>();
@@ -15,7 +17,15 @@ const num = (v: unknown) => (v === '' || v == null ? null : Number.isFinite(Numb
 
 api.get('/status', async (c) => {
   const athlete = await getAthleteId(c.env);
-  return c.json({ strava_connected: athlete != null, athlete_id: athlete, ntfy_topic_set: !!c.env.NTFY_TOPIC });
+  const sig = await calendarSig(c.env);
+  return c.json({
+    strava_connected: athlete != null,
+    athlete_id: athlete,
+    ntfy_topic_set: !!c.env.NTFY_TOPIC,
+    bark_set: !!c.env.BARK_KEY,
+    backfill: await getBackfill(c.env),
+    calendar_url: `${c.env.APP_URL.replace(/\/$/, '')}/cal/${sig}/sub3.ics`,
+  });
 });
 
 api.get('/settings', async (c) => c.json(await getSettings(c.env)));
@@ -103,6 +113,31 @@ api.put('/plans/:id', async (c) => {
 api.delete('/plans/:id', async (c) => {
   await c.env.DB.prepare('DELETE FROM plans WHERE id = ?').bind(c.req.param('id')).run();
   return c.body(null, 204);
+});
+
+/** 計画をまとめて登録する (JSON 配列)。replace=true なら対象期間の既存計画を先に消す */
+api.post('/plans/bulk', async (c) => {
+  const body = await c.req.json<{ plans?: Record<string, unknown>[]; replace?: boolean } | Record<string, unknown>[]>();
+  const list = Array.isArray(body) ? body : body.plans;
+  const replace = !Array.isArray(body) && !!body.replace;
+  if (!Array.isArray(list) || list.length === 0) return c.json({ error: '計画の配列が必要です' }, 400);
+  if (list.length > 400) return c.json({ error: '一度に登録できるのは 400 件までです' }, 400);
+  const rows = list.map((b, i) => {
+    try {
+      return planValues(b);
+    } catch {
+      throw new Error(`${i + 1} 件目: date (YYYY-MM-DD) と type (${PLAN_TYPES.join('/')}) が正しくありません`);
+    }
+  });
+  const stmts: D1PreparedStatement[] = [];
+  if (replace) {
+    const dates = rows.map((r) => r[0] as string).sort();
+    stmts.push(c.env.DB.prepare('DELETE FROM plans WHERE date BETWEEN ? AND ?').bind(dates[0], dates[dates.length - 1]));
+  }
+  const ins = c.env.DB.prepare('INSERT INTO plans (date, type, distance_m, pace_min_s, pace_max_s, hr_max, notes) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  rows.forEach((r) => stmts.push(ins.bind(...r)));
+  await c.env.DB.batch(stmts);
+  return c.json({ imported: rows.length, replaced: replace });
 });
 
 /** 週の計画を別の週へ複製する */
@@ -254,33 +289,25 @@ api.delete('/shoes/:id', async (c) => {
 api.post('/strava/subscribe', async (c) => c.json(await createSubscription(c.env)));
 api.get('/strava/subscription', async (c) => c.json(await viewSubscription(c.env)));
 
-/**
- * 過去のランを取り込む。Workers のサブリクエスト上限があるため 1 回 15 件まで。
- * レスポンスの next_after を渡して繰り返し呼ぶ。
- */
-api.post('/strava/backfill', async (c) => {
-  const after = Number(c.req.query('after') ?? Math.floor(Date.now() / 1000) - 30 * 86400);
-  const list = (await listActivities(c.env, after, 1, 30)).sort((a, b) => a.start_date.localeCompare(b.start_date));
-  const runs = list.filter((a) => RUN_TYPES.includes(a.sport_type)).slice(0, 15);
-  for (const r of runs) await ingestActivity(c.env, r.id);
-  const last = runs[runs.length - 1];
-  return c.json({
-    imported: runs.map((r) => r.id),
-    next_after: last ? Math.floor(Date.parse(last.start_date) / 1000) + 1 : null,
-  });
+/** 過去データの取り込み。開始すると 1 分ごとの cron が自動で進める */
+api.post('/strava/backfill/start', async (c) => {
+  const d = Number(c.req.query('days'));
+  return c.json(await startBackfill(c.env, Number.isFinite(d) && d > 0 ? d : null));
 });
+api.get('/strava/backfill/status', async (c) => c.json(await getBackfill(c.env)));
+api.post('/strava/backfill/stop', async (c) => (await stopBackfill(c.env), c.json(await getBackfill(c.env))));
 
 // ---------------------------------------------------------------- 通知テスト
 
 api.post('/notify/test', async (c) => {
-  await notify(c.env, { title: 'テスト通知', message: 'sub3-runner から届きました 🏃', tags: ['tada'] });
-  return c.json({ ok: true });
+  const results = await notify(c.env, { title: 'テスト通知', message: 'sub3-runner から届きました 🏃', tags: ['tada'] });
+  return c.json({ ok: results.length > 0 && results.some((r) => r.ok), results });
 });
 
 api.post('/notify/morning', async (c) => {
   const b = await morningBriefing(c.env);
-  await notify(c.env, b);
-  return c.json(b);
+  const results = await notify(c.env, b);
+  return c.json({ ...b, results });
 });
 
 api.onError((err, c) => {

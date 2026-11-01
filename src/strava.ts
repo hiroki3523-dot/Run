@@ -73,8 +73,17 @@ async function accessToken(env: Env): Promise<string> {
   return t.access_token;
 }
 
+/** Strava の利用上限 (15 分 100 回 / 1 日 1,000 回) に達した */
+export class RateLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RateLimitError';
+  }
+}
+
 async function get<T>(env: Env, path: string): Promise<T> {
   const res = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${await accessToken(env)}` } });
+  if (res.status === 429) throw new RateLimitError(`Strava の利用上限に達しました (${path})`);
   if (!res.ok) throw new Error(`Strava GET ${path} ${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -113,6 +122,8 @@ export async function getStreams(env: Env, id: number): Promise<Streams | null> 
       cadence: raw.cadence?.data,
     };
   } catch (e) {
+    // 上限に達した場合は streams なしで保存せず、呼び出し元に伝えて後でやり直す
+    if (e instanceof RateLimitError) throw e;
     console.warn('streams unavailable', id, e);
     return null;
   }

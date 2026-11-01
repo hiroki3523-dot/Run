@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import { api } from './api';
+import { backfillStep } from './backfill';
+import { buildIcs, calendarSig, type CalRace } from './calendar';
 import { deleteActivity, ingestActivity, sendMorning } from './process';
 import { kvGet, kvSet } from './settings';
 import { authorizeUrl, exchangeCode, getAthleteId } from './strava';
-import type { Env } from './types';
+import type { Env, Plan } from './types';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -67,6 +69,19 @@ app.get('/auth/strava/callback', async (c) => {
   return c.redirect('/#/settings');
 });
 
+// ---------------------------------------------------------------- カレンダー購読 (署名付き URL)
+
+app.get('/cal/:sig/sub3.ics', async (c) => {
+  if (!safeEqual(c.req.param('sig'), await calendarSig(c.env))) return c.text('not found', 404);
+  const [plans, races] = await Promise.all([
+    c.env.DB.prepare('SELECT * FROM plans ORDER BY date, id').all<Plan>(),
+    c.env.DB.prepare('SELECT * FROM races ORDER BY date').all<CalRace>(),
+  ]);
+  return new Response(buildIcs(plans.results, races.results), {
+    headers: { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-cache' },
+  });
+});
+
 // ---------------------------------------------------------------- API (要トークン)
 
 app.use('/api/*', async (c, next) => {
@@ -83,7 +98,9 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(sendMorning(env));
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    // 毎分の cron は過去データ取り込みの続き、朝の cron は今日のメニュー通知
+    if (event.cron === '* * * * *') ctx.waitUntil(backfillStep(env).catch((e) => console.error('backfill step failed', e)));
+    else ctx.waitUntil(sendMorning(env));
   },
 } satisfies ExportedHandler<Env>;
