@@ -482,3 +482,15 @@ a.linkcard { display: block; text-decoration: none; color: inherit; }
 .shoe-km small{color:var(--muted);font-size:12px}
 .shoe-row .chev{color:var(--text);opacity:.7}
 .shoe-body .bar{height:8px;margin:0 0 6px}
+.sheet{position:fixed;inset:0;z-index:60;display:flex;align-items:flex-end}
+.sheet-bg{position:absolute;inset:0;background:rgb(8 10 20 / .55);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+.sheet-body{position:relative;width:100%;background:var(--surface);border-radius:26px 26px 0 0;padding:22px 0 calc(20px + env(safe-area-inset-bottom));animation:sheetUp .22s ease-out}
+@keyframes sheetUp{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+.sheet-body h2{text-align:center;margin:0 0 14px}
+.sheet-row{display:flex;gap:12px;overflow-x:auto;padding:4px 16px 14px;scroll-snap-type:x mandatory}
+.sh-card{flex:0 0 150px;scroll-snap-align:start;display:flex;flex-direction:column;gap:6px;text-align:left;padding:10px;border-radius:18px;border:2px solid transparent;background:var(--bg);color:inherit}
+.sh-card.on{border-color:var(--accent,#5b5bff)}
+.sh-card .shoe-img.big{height:96px}
+.sh-card b{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sheet-close{display:block;margin:4px auto 0;min-height:48px;padding:0 28px;border-radius:14px}
+.shoe-card .shoe-img.big{height:150px;margin:8px 0}

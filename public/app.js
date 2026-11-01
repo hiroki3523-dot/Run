@@ -1161,9 +1161,23 @@ async function activityDetailView(id) {
       try { await api(`/activities/${id}`, { method: 'PUT', body: { plan_id: v ? Number(v) : null } }); } catch (e) { alert(e.message); }
       route();
     }));
-    view.querySelector('#shoe-select').onchange = async (e) => {
-      await api(`/activities/${id}`, { method: 'PUT', body: { shoe_id: e.target.value ? Number(e.target.value) : null } });
-      route();
+    view.querySelector('#shoe-open').onclick = () => {
+      const list = shoes.filter((x) => x.retired !== 1);
+      const sheet = document.createElement('div');
+      sheet.className = 'sheet';
+      sheet.innerHTML = `<div class="sheet-bg"></div><div class="sheet-body"><h2>マイ シューズ</h2>
+        <div class="sheet-row">${list.map((x) => `<button type="button" class="sh-card ${a.shoe_id === x.id ? 'on' : ''}" data-sh="${x.id}"><div class="shoe-img big">${x.image ? `<img src="${x.image}" alt="">` : '<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div><b>${esc(x.name)}</b><span class="muted num">${Math.round(x.total_km)}km</span></button>`).join('')}
+        <button type="button" class="sh-card ${a.shoe_id == null ? 'on' : ''}" data-sh=""><div class="shoe-img big muted">なし</div><b>選ばない</b></button></div>
+        <button type="button" class="sheet-close">閉じる</button></div>`;
+      document.body.appendChild(sheet);
+      const close = () => sheet.remove();
+      sheet.querySelector('.sheet-bg').onclick = close;
+      sheet.querySelector('.sheet-close').onclick = close;
+      sheet.querySelectorAll('[data-sh]').forEach((b) => (b.onclick = async () => {
+        close();
+        try { await api(`/activities/${id}`, { method: 'PUT', body: { shoe_id: b.dataset.sh ? Number(b.dataset.sh) : null } }); } catch (e) { alert(e.message); }
+        route();
+      }));
     };
     api(`/activities/${id}/splits`).then((sp) => {
       const box = view.querySelector('#splits');
@@ -1209,6 +1223,12 @@ async function activityDetailView(id) {
       <p class="muted" style="margin-top:0">アップ・本体・ダウンなど、同じ日のランは 1 つのメニューとして見ます</p>
       <div class="num" style="margin:8px 0"><span class="big">${km(sumD, 2)}</span> km・${dur(sumT)}・${pace(sumT / (sumD / 1000))}/km</div>
       <ul class="list">${sib.map((r) => `<li class="${r.id === a.id ? 'cur' : ''}"><a href="#/activities/${r.id}"><div class="row spread"><span>${r.start_date_local.slice(11, 16)} ${esc(r.name)}${r.id === a.id ? ' <span class="badge">いま見ているラン</span>' : ''}</span>${scoreHtml(r.score)}</div><div class="muted num">${km(r.distance_m, 2)}km・${pace(r.moving_time_s / (r.distance_m / 1000))}/km${r.avg_hr ? `・${Math.round(r.avg_hr)}bpm` : ''}</div></a></li>`).join('')}</ul></div>` : ''}
+    ${(() => {
+      const cur = shoes.find((x) => x.id === a.shoe_id);
+      return `<div class="card shoe-card"><div class="row spread"><h2>${cur ? esc(cur.name) : 'シューズを追加'}</h2><button type="button" class="chip" id="shoe-open">${cur ? '変更' : '選ぶ'}</button></div>
+      ${cur ? `<div class="shoe-img big">${cur.image ? `<img src="${cur.image}" alt="">` : '<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div><div class="muted num">累計 ${Math.round(cur.total_km)}km / ${cur.limit_km}km</div>` : '<p class="muted" style="margin:0">このランで履いたシューズを選びます。</p>'}
+      </div>`;
+    })()}
     <div class="card"><h2>スプリット</h2><div id="splitchart"></div><div id="splits"><span class="muted">読み込み中…</span></div></div>
     <div class="card">
       <h2>この練習のメニュー</h2>
@@ -1217,12 +1237,6 @@ async function activityDetailView(id) {
         ${uPlans.filter((p) => p.type !== 'rest').map((p) => `<button type="button" class="choice ${a.plan_id === p.id ? 'on' : ''}" data-pc="${p.id}"><b>${planName(p)}</b><small>${md(p.date)}の計画${p.notes ? '・' + esc(p.notes) : ''}</small></button>`).join('')}
         <button type="button" class="choice ${a.plan_id == null ? 'on' : ''}" data-pc=""><b>メニューなし (フリーラン)</b><small>計画とは比べず、単独で評価します</small></button>
       </div>
-      <label>シューズ
-        <select id="shoe-select">
-          <option value="">なし</option>
-          ${shoes.map((s) => `<option value="${s.id}" ${a.shoe_id === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
-        </select>
-      </label>
       <button id="reeval">再評価</button>
     </div>`;
 }
