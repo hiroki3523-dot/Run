@@ -481,6 +481,13 @@ async function settingsView() {
       if (!confirm('Strava の全期間を取り込みます。アプリを閉じても自動で進みます。開始しますか？')) return 'キャンセル';
       return bfText(await api('/strava/backfill/start', { method: 'POST' }));
     });
+    run('#reset-settings', async () => {
+      if (!confirm('ペース帯・心拍の基準を COROS 基準に戻します。よろしいですか？')) return 'キャンセル';
+      await api('/settings/reset', { method: 'POST' });
+      cachedSettings = null;
+      setTimeout(route, 600);
+      return '✅ COROS 基準に戻しました';
+    });
     run('#seed', async () => {
       const r = await api('/seed', { method: 'POST' });
       return `✅ レース ${r.races} 件・計画 ${r.plans} 件を登録しました (登録済みの日付は飛ばします)`;
@@ -557,6 +564,22 @@ async function settingsView() {
       <p class="muted">ntfy: ${status.ntfy_topic_set ? '設定済み' : '未設定'}・Bark: ${status.bark_set ? '設定済み' : '未設定'}</p>
       <div class="row"><button id="test-notify">テスト通知</button><button id="morning">朝の通知を今すぐ送る</button></div>
     </div>
+    ${settings.coros ? `<div class="card">
+      <h2>COROS の基準 (${esc(settings.coros.updated)})</h2>
+      <div class="grid2 num">
+        <div><div class="muted">ランニングレベル</div><div class="big" style="font-size:32px">${settings.coros.running_level}</div></div>
+        <div><div class="muted">VO2max</div><div class="big" style="font-size:32px">${settings.coros.vo2max}</div></div>
+      </div>
+      <table style="margin-top:8px">
+        <tr><td>閾値ペース / 心拍</td><td class="num">${pace(settings.coros.lt_pace_s)}/km・${settings.coros.lthr}bpm</td></tr>
+        <tr><td>有酸素</td><td class="num">${pace(settings.coros.zones_s.aerobic[0])}〜${pace(settings.coros.zones_s.aerobic[1])}</td></tr>
+        <tr><td>乳酸閾値</td><td class="num">${pace(settings.coros.zones_s.threshold[0])}〜${pace(settings.coros.zones_s.threshold[1])}</td></tr>
+        <tr><td>スピード持久力</td><td class="num">${pace(settings.coros.zones_s.speed[0])}〜${pace(settings.coros.zones_s.speed[1])}</td></tr>
+        <tr><td>予測 5km / 10km</td><td class="num">${dur(settings.coros.predicted_s['5k'])} / ${dur(settings.coros.predicted_s['10k'])}</td></tr>
+        <tr><td>予測 ハーフ / フル</td><td class="num">${dur(settings.coros.predicted_s.half)} / ${dur(settings.coros.predicted_s.full)}</td></tr>
+      </table>
+      <div class="row" style="margin-top:12px"><button id="reset-settings">評価の基準を COROS 基準に戻す</button></div>
+    </div>` : ''}
     <form class="card" id="settings-form">
       <h2>評価の基準</h2>
       <div class="grid2">
