@@ -241,25 +241,38 @@ async function monthGoalCard(t) {
   const suggest = Math.round(planned / 10) * 10;
   setTimeout(() => {
     const set = async (v) => { await api(`/goals/${month}`, { method: 'PUT', body: { km: v } }); route(); };
-    view.querySelectorAll('[data-mg]').forEach((b) => (b.onclick = () => set(Math.max(0, (goal.km || 0) + Number(b.dataset.mg)))));
-    const sg = view.querySelector('#mg-suggest'); if (sg) sg.onclick = () => set(suggest || 200);
+    const change = async () => {
+      const presets = [...new Set([60, 80, 100, 120, 150, 200, 250, 300, ...(suggest ? [suggest] : [])])].sort((a, b) => a - b);
+      const pending = openDialog(`<h2>${Number(month.slice(5))}月の目標</h2>
+        <p class="muted" style="margin-top:0">今月 ${actual.toFixed(0)}km 走りました${suggest ? `。計画の合計は ${suggest}km` : ''}。</p>
+        <div class="chips" id="mg-chips">${presets.map((v) => `<button type="button" class="chip ${goal.km === v ? 'on' : ''}" data-v="${v}">${v}km</button>`).join('')}</div>
+        <label>km<input name="km" inputmode="numeric" value="${goal.km ?? ''}"></label>`);
+      dialogForm.querySelectorAll('[data-v]').forEach((b) => (b.onclick = () => {
+        dialogForm.querySelector('[name=km]').value = b.dataset.v;
+        dialogForm.querySelectorAll('[data-v]').forEach((x) => x.classList.toggle('on', x === b));
+      }));
+      const v = await pending;
+      const km = v && Number(v.km);
+      if (km > 0) await set(Math.round(km));
+    };
+    view.querySelectorAll('[data-mg-edit]').forEach((b) => (b.onclick = change));
   });
   const daysLeft = lastD - Number(t.slice(8)) + 1;
   if (goal.km == null) {
     return `<div class="card"><h2>${Number(month.slice(5))}月の目標</h2><p class="muted" style="margin-top:0">今月の走行距離の目標を決めておくと、毎日の進み具合が分かります。</p>
       <p class="num">今月ここまで <b>${actual.toFixed(1)}km</b>${planned ? `・計画の合計 ${Math.round(planned)}km` : ''}</p>
-      <button id="mg-suggest" class="primary wide">${suggest ? `計画に合わせて ${suggest}km に設定` : '200km に設定'}</button></div>`;
+      <button type="button" data-mg-edit class="primary wide">目標を決める</button></div>`;
   }
   const ratio = goal.km ? Math.min(1, actual / goal.km) : 0;
   const left = Math.max(0, goal.km - actual);
   // 月の経過に対して、どれだけ進んでいるか
   const expected = goal.km * ((Number(t.slice(8)) - 1) / lastD);
   const ahead = actual - expected;
-  return `<div class="card"><div class="row spread"><h2>${Number(month.slice(5))}月の目標</h2><b class="num">${goal.km}km</b></div>
+  return `<div class="card"><div class="row spread"><h2>${Number(month.slice(5))}月の目標</h2><button type="button" class="chip" data-mg-edit>${goal.km}km ›</button></div>
     <div class="row spread num" style="margin:6px 0"><span><b>${actual.toFixed(1)}</b> km 走った</span><span class="muted">残り ${left.toFixed(0)}km</span></div>
     <div class="bar mg"><div style="width:${ratio * 100}%"></div><i style="left:${Math.min(100, (expected / goal.km) * 100)}%"></i></div>
-    <p class="muted" style="margin:8px 0 0">${left <= 0 ? '目標を達成しました。' : `あと${daysLeft}日で 1 日平均 ${(left / daysLeft).toFixed(1)}km。ペース配分の目安 (縦線) より ${ahead >= 0 ? `${ahead.toFixed(0)}km 先行` : `${(-ahead).toFixed(0)}km 遅れ`}。`}</p>
-    <div class="chips mini" style="margin-top:10px"><button type="button" class="chip" data-mg="-50">−50</button><button type="button" class="chip" data-mg="-10">−10</button><button type="button" class="chip" data-mg="10">+10</button><button type="button" class="chip" data-mg="50">+50</button></div></div>`;
+    <p class="muted" style="margin:8px 0 0">${left <= 0 ? '目標を達成しました。' : `あと${daysLeft}日・1日平均 ${(left / daysLeft).toFixed(1)}km (目安より ${ahead >= 0 ? `${ahead.toFixed(0)}km 先行` : `${(-ahead).toFixed(0)}km 遅れ`})`}</p>
+</div>`;
 }
 
 /** 天気コード (WMO) → 線画アイコン。絵文字は使わない */
