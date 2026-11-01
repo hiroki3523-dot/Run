@@ -3,7 +3,7 @@ import { addDays, weekStart } from './format';
 import { ingestActivity, morningBriefing, SHOE_TOTAL_SQL } from './process';
 import { notify } from './notify';
 import { seedInitial } from './seed';
-import { raceWeather, weatherAdvice } from './weather';
+import { weatherDays, raceWeather, weatherAdvice } from './weather';
 import { generatePlan, type PlannerRace } from './planner';
 import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
 import { getActivity } from './strava';
@@ -376,6 +376,16 @@ api.post('/plans/generate', async (c) => {
 });
 
 // ---------------------------------------------------------------- 天気
+
+/** 過去 7 日〜先 15 日の天気 (予定表・ホーム用) */
+api.get('/weather/week', async (c) => {
+  try {
+    return c.json(await weatherDays());
+  } catch (e) {
+    console.error('weather week failed', e);
+    return c.json(null);
+  }
+});
 
 /** 次のレース (16 日以内) の当日予報 */
 api.get('/race-weather', async (c) => {

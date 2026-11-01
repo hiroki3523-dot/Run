@@ -53,6 +53,8 @@ export interface Review {
   prev: PeriodTotals | null;
   delta_km_pct: number | null;
   grade: 'A' | 'B' | 'C' | 'D' | null;
+  /** 等級の内訳 (平均点 − 距離のずれ − ポイント練習の未実施 = 評価点) */
+  grade_calc: { avg: number; dist_penalty: number; quality_penalty: number; pts: number } | null;
   comments: string[];
   next: string[];
   list: ReviewRun[];
@@ -130,11 +132,14 @@ export function buildReview(
   if (next.length === 0 && runs.length > 0) next.push('この調子で計画どおりに進める。');
 
   let grade: Review['grade'] = null;
+  let gradeCalc: Review['grade_calc'] = null;
   if (runs.length > 0) {
-    let pts = avgScore ?? 70;
-    if (completion != null) pts -= Math.min(30, Math.abs(1 - completion) * 60);
-    if (quality.planned > 0) pts -= (1 - quality.done / quality.planned) * 15;
+    const avg = avgScore ?? 70;
+    const distPenalty = completion != null ? Math.min(30, Math.abs(1 - completion) * 60) : 0;
+    const qualityPenalty = quality.planned > 0 ? (1 - quality.done / quality.planned) * 15 : 0;
+    const pts = avg - distPenalty - qualityPenalty;
     grade = pts >= 85 ? 'A' : pts >= 70 ? 'B' : pts >= 55 ? 'C' : 'D';
+    gradeCalc = { avg: Math.round(avg), dist_penalty: Math.round(distPenalty), quality_penalty: Math.round(qualityPenalty), pts: Math.round(pts) };
   }
 
   const days: Review['days'] = [];
@@ -164,6 +169,7 @@ export function buildReview(
     prev,
     delta_km_pct: delta == null ? null : Math.round(delta),
     grade,
+    grade_calc: gradeCalc,
     comments,
     next,
     list: [...runs].sort((a, b) => (a.date < b.date ? 1 : -1)),
