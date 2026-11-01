@@ -31,6 +31,7 @@ const addDays = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x
 const weekStart = (d) => { const w = new Date(`${d}T00:00:00Z`).getUTCDay(); return addDays(d, w === 0 ? -6 : 1 - w); };
 const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400e3);
 const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+const ymd = (d) => `${d.slice(0, 4)}/${md(d)}`;
 const dow = (d) => DOW[new Date(`${d}T00:00:00Z`).getUTCDay()];
 const scoreCls = (s) => (s == null ? '' : s >= 80 ? 'good' : s >= 60 ? 'mid' : 'bad');
 const scoreHtml = (s) => `<span class="score ${scoreCls(s)}">${s ?? '-'}</span>`;
@@ -147,7 +148,7 @@ function activityList(acts) {
   if (acts.length === 0) return '<p class="muted">まだありません</p>';
   return `<ul class="list">${acts.map((a) => `
     <li><a href="#/activities/${a.id}">
-      <div class="row spread"><span>${md(a.date)}(${dow(a.date)}) ${esc(a.name)}</span>${scoreHtml(a.score)}</div>
+      <div class="row spread"><span>${ymd(a.date)}(${dow(a.date)}) ${esc(a.name)}</span>${scoreHtml(a.score)}</div>
       <div class="muted num">${a.plan_type ? PLAN_LABELS[a.plan_type] : 'フリー'}・${km(a.distance_m, 2)}km・${pace(a.moving_time_s / (a.distance_m / 1000))}/km${a.avg_hr ? `・${Math.round(a.avg_hr)}bpm` : ''}${a.avg_cadence_spm ? `・${Math.round(a.avg_cadence_spm)}spm` : ''}</div>
     </a></li>`).join('')}</ul>`;
 }
@@ -156,12 +157,17 @@ function activityList(acts) {
 
 async function plansView(params) {
   const ws = weekStart(params.get('week') || today());
-  const plans = await api(`/plans?from=${ws}&to=${addDays(ws, 6)}`);
-  const settings = await api('/settings');
+  const [plans, weekActs, settings] = await Promise.all([
+    api(`/plans?from=${ws}&to=${addDays(ws, 6)}`),
+    api(`/activities?from=${ws}&to=${addDays(ws, 6)}`),
+    api('/settings'),
+  ]);
+  const linkedIds = new Set(plans.map((p) => p.activity_id).filter(Boolean));
+  const actLine = (a) => `<a class="actual" href="#/activities/${a.id}"><span>実績 ${km(a.distance_m, 1)}km ${pace(a.moving_time_s / (a.distance_m / 1000))}/km${a.avg_hr ? ` ${Math.round(a.avg_hr)}bpm` : ''}</span>${scoreHtml(a.score)}</a>`;
   const days = [...Array(7)].map((_, i) => addDays(ws, i));
   const t = today();
   const total = plans.reduce((a, p) => a + (p.distance_m || 0), 0);
-  const actual = plans.reduce((a, p) => a + (p.actual_distance_m || 0), 0);
+  const actual = weekActs.reduce((a, r) => a + (r.distance_m || 0), 0);
 
   setTimeout(() => {
     view.querySelectorAll('[data-add]').forEach((b) => (b.onclick = () => editPlan({ date: b.dataset.add }, settings)));
@@ -213,6 +219,7 @@ async function plansView(params) {
           <div><strong>${md(d)}</strong><div class="muted">${dow(d)}</div></div>
           <div>
             ${plans.filter((p) => p.date === d).map(planLine).join('')}
+            ${weekActs.filter((a) => a.date === d && !linkedIds.has(a.id)).map(actLine).join('')}
             <button data-add="${d}" style="margin-top:4px;font-size:12px">＋ 追加</button>
           </div>
         </div>`).join('')}
@@ -408,18 +415,63 @@ async function shoesView() {
     <p class="muted">Strava でギアを設定して走ると自動で登録・加算されます。</p>
     <div class="card"><ul class="list">${shoes.map((s) => {
       const ratio = s.total_km / s.limit_km;
-      return `<li data-shoe="${s.id}" style="cursor:pointer;${s.retired ? 'opacity:.5' : ''}">
-        <div class="row spread"><span>${esc(s.name)} <span class="badge">${PURPOSE_LABELS[s.purpose] ?? s.purpose}</span>${s.retired ? ' <span class="muted">引退</span>' : ''}</span>
+      return `<li data-shoe="${s.id}" class="shoe-row" style="cursor:pointer;${s.retired ? 'opacity:.5' : ''}">
+        <div class="shoe-img">${s.image ? `<img src="${s.image}" alt="">` : '👟'}</div>
+        <div class="shoe-body"><div class="row spread"><span>${esc(s.name)} <span class="badge">${PURPOSE_LABELS[s.purpose] ?? s.purpose}</span>${s.retired ? ' <span class="muted">引退</span>' : ''}</span>
         <span class="num">${s.total_km.toFixed(0)} / ${s.limit_km}km</span></div>
-        <div class="bar ${ratio >= 1 ? 'over' : ratio >= 0.9 ? 'warn' : ''}"><div style="width:${Math.min(100, ratio * 100)}%"></div></div>
+        <div class="bar ${ratio >= 1 ? 'over' : ratio >= 0.9 ? 'warn' : ''}"><div style="width:${Math.min(100, ratio * 100)}%"></div></div></div>
       </li>`;
     }).join('') || '<li class="muted">未登録</li>'}</ul></div>`;
 }
 
+/** 写真を選ぶと 320px 以内の JPEG に縮小して data URL にする */
+function resizeImage(file, max = 320) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const r = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * r);
+      c.height = Math.round(img.height * r);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+      URL.revokeObjectURL(img.src);
+    };
+    img.onerror = () => reject(new Error('画像を読み込めませんでした'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function wireShoePhoto() {
+  const q = (id) => dialogForm.querySelector(id);
+  const set = (url) => {
+    q('#shoe-image').value = url;
+    q('#shoe-preview').innerHTML = url ? `<img src="${url}" alt="">` : '👟';
+  };
+  q('#shoe-file').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (f) try { set(await resizeImage(f)); } catch (err) { alert(err.message); }
+  };
+  q('#shoe-clear').onclick = () => set('');
+  q('#shoe-search').onclick = () => {
+    const name = dialogForm.querySelector('[name=name]').value || 'running shoes';
+    q('#shoe-search').href = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(name + ' シューズ')}`;
+  };
+}
+
 async function editShoe(s) {
-  const values = await openDialog(`
+  const pending = openDialog(`
     <h2>${s.id ? 'シューズを編集' : 'シューズを追加'}</h2>
     <label>名称<input name="name" value="${esc(s.name)}" required></label>
+    <div class="shoe-photo">
+      <div class="shoe-img big" id="shoe-preview">${s.image ? `<img src="${s.image}" alt="">` : '👟'}</div>
+      <div class="row">
+        <label class="btn" style="margin:0">写真を選ぶ<input type="file" id="shoe-file" accept="image/*" hidden></label>
+        <a class="btn" id="shoe-search" target="_blank" rel="noopener">画像を探す</a>
+        <button type="button" id="shoe-clear" class="danger">削除</button>
+      </div>
+      <input type="hidden" name="image" id="shoe-image" value="${s.image ? esc(s.image) : ''}">
+    </div>
     <div class="grid2">
       <label>用途<select name="purpose">${Object.entries(PURPOSE_LABELS).map(([k, v]) => `<option value="${k}" ${s.purpose === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label>交換目安 (km)<input name="limit_km" inputmode="numeric" value="${s.limit_km}"></label>
@@ -431,6 +483,8 @@ async function editShoe(s) {
     <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="retired" style="width:auto" ${s.retired ? 'checked' : ''}> 引退済み</label>`,
     s.id ? { onDelete: async () => { await api(`/shoes/${s.id}`, { method: 'DELETE' }); route(); } } : {},
   );
+  wireShoePhoto();
+  const values = await pending;
   if (!values) return;
   await api(s.id ? `/shoes/${s.id}` : '/shoes', { method: s.id ? 'PUT' : 'POST', body: { ...values, retired: !!values.retired } });
   route();
