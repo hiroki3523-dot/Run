@@ -390,3 +390,26 @@ li.cur { background: var(--accent-soft); border-radius: 12px; }
 .gmark.m-goal .glabel, .gmark.m-goal2 .glabel { top: 0; }
 .glabel b { font-size: 13px; color: var(--text); }
 .gend { position: absolute; left: 0; right: 0; bottom: -8px; display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); }
+/* ---- シューズ */
+ul.shoes { list-style: none; margin: 0; padding: 0; }
+.shoe-item { padding: 14px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.shoe-item:last-child { border-bottom: none; }
+.shoe-item.off .shoe-row { opacity: .55; }
+.seg3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.seg3 button { min-height: 40px; padding: 6px 4px; font-size: 13px; }
+.seg3 button.on { background: linear-gradient(135deg, #2b3dff, #7a5cff); border-color: transparent; color: #fff; }
+.tiny { font-size: 12px; margin-top: 6px; }
+.shoe-rec .why { font-size: 11.5px; margin-top: 1px; }
+details.card summary { cursor: pointer; font-weight: 700; min-height: 36px; display: flex; align-items: center; }
+
+.shoe-item { position: relative; overflow: hidden; touch-action: pan-y; }
+.shoe-fg { position: relative; background: var(--surface); will-change: transform; }
+.shoe-bg { position: absolute; inset: 0; display: flex; justify-content: space-between; align-items: center; padding: 0 18px; font-weight: 700; font-size: 14px; color: #fff; }
+.shoe-bg .bg-r { opacity: 0; } .shoe-bg .bg-l { opacity: 0; }
+.shoe-item.peek-r .shoe-bg { background: #7a5cff; } .shoe-item.peek-r .bg-r { opacity: 1; }
+.shoe-item.peek-l .shoe-bg { background: #e63946; } .shoe-item.peek-l .bg-l { opacity: 1; }
+.shoe-item.arm-r .shoe-bg { background: #16b57a; } .shoe-item.arm-l .shoe-bg { background: #b3202c; }
+.chips.mini { gap: 6px; margin-top: 10px; }
+.chips.mini .chip { min-height: 34px; padding: 5px 11px; font-size: 12.5px; }
+.shoe-item { padding: 0; }
+.shoe-fg { padding: 14px 0; }
