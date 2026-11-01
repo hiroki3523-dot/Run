@@ -816,6 +816,58 @@ const REFS = { easy: { label: 'E', zone: 1 }, m: { label: 'M', zone: 3 }, lt: { 
 const bandOf = (t) => (t.pmin && t.pmax ? [t.pmin, t.pmax] : t.ref && PACES?.[t.ref] ? [PACES[t.ref].min, PACES[t.ref].max] : ZONES[t.zone].pace);
 const bandMid = (t) => (bandOf(t)[0] + bandOf(t)[1]) / 2;
 const intensityLabel = (t) => (t.pmin && t.pmax ? `${pace(t.pmin)}〜${pace(t.pmax)}` : t.ref ? REFS[t.ref].label : ZONES[t.zone].short);
+
+/** ホイール式の数値選択 (COROS と同じ。上下にスクロールして合わせる)。cols: [{items:[{v,label}], value, unit}] */
+function wheelPick(title, cols) {
+  return new Promise((resolve) => {
+    const H = 44;
+    const el = document.createElement('div');
+    el.className = 'sheet wheel';
+    el.innerHTML = `<div class="sheet-bg"></div><div class="sheet-body"><div class="row spread" style="margin-bottom:6px"><button type="button" class="chip" data-w="no">キャンセル</button><b>${title}</b><button type="button" class="chip on" data-w="ok">決定</button></div>
+      <div class="wh-cols">${cols.map((c, ci) => `<div class="wh-col"><div class="wh-list" data-ci="${ci}"><div style="height:${H * 2}px"></div>${c.items.map((it) => `<div class="wh-it" style="height:${H}px">${it.label}</div>`).join('')}<div style="height:${H * 2}px"></div></div>${c.unit ? `<span class="wh-u">${c.unit}</span>` : ''}</div>`).join('')}<div class="wh-sel"></div></div></div>`;
+    document.body.appendChild(el);
+    const lists = [...el.querySelectorAll('.wh-list')];
+    lists.forEach((l, ci) => {
+      const idx = Math.max(0, cols[ci].items.findIndex((it) => it.v === cols[ci].value));
+      l.scrollTop = idx * H;
+    });
+    const done = (ok) => {
+      const out = ok ? lists.map((l, ci) => cols[ci].items[Math.min(cols[ci].items.length - 1, Math.max(0, Math.round(l.scrollTop / H)))].v) : null;
+      el.remove();
+      resolve(out);
+    };
+    el.querySelector('.sheet-bg').onclick = () => done(false);
+    el.querySelector('[data-w="no"]').onclick = () => done(false);
+    el.querySelector('[data-w="ok"]').onclick = () => done(true);
+  });
+}
+const range = (a, b, f = (x) => String(x)) => Array.from({ length: b - a + 1 }, (_, i) => ({ v: a + i, label: f(a + i) }));
+/** 距離 (m) を km と 0.05km 刻みのホイールで選ぶ */
+async function pickDist(title, m) {
+  const km = Math.floor(m / 1000), q = Math.round((m - km * 1000) / 50);
+  const r = await wheelPick(title, [
+    { items: range(0, 42), value: km, unit: '.' },
+    { items: range(0, 19, (x) => String(x * 5).padStart(2, '0')), value: Math.min(19, q), unit: 'km' },
+  ]);
+  return r ? Math.max(100, r[0] * 1000 + r[1] * 50) : null;
+}
+/** 時間 (秒) を 分 / 秒 のホイールで選ぶ */
+async function pickTime(title, sec, maxMin = 120) {
+  const r = await wheelPick(title, [
+    { items: range(0, maxMin), value: Math.floor(sec / 60), unit: '分' },
+    { items: range(0, 59, (x) => String(x).padStart(2, '0')), value: Math.round(sec % 60), unit: '秒' },
+  ]);
+  return r ? Math.max(10, r[0] * 60 + r[1]) : null;
+}
+/** ペース (秒/km) を 分:秒 のホイールで選ぶ */
+async function pickPace(title, sec) {
+  const r = await wheelPick(title, [
+    { items: range(2, 9), value: Math.floor(sec / 60), unit: ':' },
+    { items: range(0, 59, (x) => String(x).padStart(2, '0')), value: Math.round(sec % 60), unit: '/km' },
+  ]);
+  return r ? r[0] * 60 + r[1] : null;
+}
+
 const fmtTarget = (t) => (t.by === 'dist' ? (t.value >= 1000 ? `${+(t.value / 1000).toFixed(2)}km` : `${t.value}m`) : pace(t.value));
 const targetM = (t) => (t.by === 'dist' ? t.value : (t.value / bandMid(t)) * 1000);
 const stepM = (sp) => (sp.kind === 'interval' ? sp.reps * (targetM(sp.work) + targetM(sp.rest)) : targetM(sp));
@@ -926,7 +978,7 @@ function editPlan(p, settings) {
           </div>
           <div class="step-total num">合計 約 ${(stepsTotalM(st.steps) / 1000).toFixed(1)}km</div>` : `
           <div class="wk-card">
-            <div class="field"><span class="lbl">距離</span><div class="slide"><b class="num" id="km-out">${(st.km ?? 10).toFixed(1)} <small>km</small></b><input type="range" data-rng="km" min="3" max="42" step="0.5" value="${st.km ?? 10}"></div></div>
+            <div class="field"><span class="lbl">距離</span><div class="slide"><button type="button" class="wk-pick inline" id="km-out" data-wheel="km">${(st.km ?? 10).toFixed(1)} <small>km</small></button><input type="range" data-rng="km" min="3" max="42" step="0.5" value="${st.km ?? 10}"></div></div>
             <div class="field"><span class="lbl">ペース</span><div class="slide"><b class="num" id="pace-out">${shown}</b><input type="range" data-rng="pace" min="-30" max="30" step="5" value="${poff}"></div>
               <p class="muted zone-note" style="margin:2px 0 0">左へ速く、右へ遅く。真ん中が標準です。</p></div>
           </div>
@@ -952,16 +1004,16 @@ function editPlan(p, settings) {
       const k = (s) => `${part}:${s}`;
       const rows = [
         row(k('by'), '目標タイプ', t.by === 'dist' ? '距離' : '時間', `<div class="chips">${chip('data-sby', `${part}:dist`, '距離', t.by === 'dist')}${chip('data-sby', `${part}:time`, '時間', t.by === 'time')}</div>`),
-        row(k('val'), '目標', fmtTarget(t), `<div class="slide"><input type="range" data-rng="sval:${part}" ${t.by === 'dist' ? `min="0.1" max="30" step="0.1" value="${(t.value / 1000).toFixed(1)}"` : `min="30" max="3600" step="30" value="${t.value}"`}></div>`),
+        row(k('val'), '目標', fmtTarget(t), `<button type="button" class="wk-pick" data-wheel="val:${part}">${fmtTarget(t)}<small>タップして細かく指定</small></button><div class="slide"><input type="range" data-rng="sval:${part}" ${t.by === 'dist' ? `min="0.5" max="30" step="0.5" value="${Math.round(t.value / 500) / 2}"` : `min="30" max="3600" step="30" value="${t.value}"`}></div>`),
       ];
       if (!(sp.kind === 'rest' || (sp.kind === 'interval' && part === 'rest'))) {
         const b = bandOf(t);
         rows.push(row(k('pace'), 'ペース範囲', paceText(t), `
           <div class="chips">${Object.entries(REFS).map(([r, R]) => chip('data-sref', `${part}:${r}`, `${R.label}ペース`, t.ref === r && !(t.pmin && t.pmax))).join('')}</div>
           <div class="chips">${ZONES.map((Z, z) => chip('data-szone', `${part}:${z}`, Z.short, !t.ref && !(t.pmin && t.pmax) && t.zone === z)).join('')}</div>
-          <div class="slide pr-range"><span class="lbl">速い側 / 遅い側 (1秒ずつ)</span>
-            <input type="range" data-rng="spmin:${part}" min="170" max="480" step="1" value="${Math.round(b[0])}" aria-label="速い側">
-            <input type="range" data-rng="spmax:${part}" min="170" max="480" step="1" value="${Math.round(b[1])}" aria-label="遅い側"></div>`));
+          <div class="slide pr-range"><div class="wk-pick2"><button type="button" class="wk-pick" data-wheel="pmin:${part}"><small>速い側</small>${pace(Math.round(b[0]))}</button><button type="button" class="wk-pick" data-wheel="pmax:${part}"><small>遅い側</small>${pace(Math.round(b[1]))}</button></div><span class="lbl">ざっくり動かす (5秒ずつ)</span>
+            <input type="range" data-rng="spmin:${part}" min="170" max="480" step="5" value="${Math.round(b[0])}" aria-label="速い側">
+            <input type="range" data-rng="spmax:${part}" min="170" max="480" step="5" value="${Math.round(b[1])}" aria-label="遅い側"></div>`));
       }
       return rows.join('');
     };
@@ -1053,7 +1105,23 @@ function editPlan(p, settings) {
       if (d.act === 'save') return save();
       if (d.act === 'list') { scr = { name: 'list' }; openRow = null; return render(); }
       if (d.act === 'del') { if (confirm('削除しますか？')) { await api(`/plans/${p.id}`, { method: 'DELETE' }); close(null); route(); } return; }
-      if (d.date) st.date = d.date;
+      if (d.wheel) {
+        const [k, part = ''] = d.wheel.split(':');
+        if (k === 'km') {
+          const m = await pickDist('距離', Math.round((st.km ?? 10) * 1000));
+          if (m != null) { st.km = m / 1000; if (!st.steps.length) st.pmin = st.pmin; }
+        } else {
+          const tt = partOf(st.steps[scr.i], part);
+          if (k === 'val') {
+            const v = tt.by === 'dist' ? await pickDist('目標の距離', tt.value) : await pickTime('目標の時間', tt.value);
+            if (v != null) tt.value = v;
+          } else {
+            const [lo, hi] = bandOf(tt);
+            const v = await pickPace(k === 'pmin' ? '速い側のペース' : '遅い側のペース', k === 'pmin' ? lo : hi);
+            if (v != null) { let a = k === 'pmin' ? v : lo, b = k === 'pmax' ? v : hi; if (a > b) { if (k === 'pmin') b = a; else a = b; } tt.pmin = Math.round(a); tt.pmax = Math.round(b); tt.ref = null; }
+          }
+        }
+      } else if (d.date) st.date = d.date;
       else if (d.type) { st.type = d.type; if (!st.steps.length) { st.km = d.type === 'rest' ? null : (PLAN_DEFAULT_KM[d.type] ?? st.km); st.pmin = st.pmax = null; } }
       else if (d.preset) st.steps = STEP_PRESETS[d.preset]();
       else if (d.addAt != null) { scr = { name: 'add', at: Number(d.addAt) }; }
@@ -1239,6 +1307,75 @@ function splitChart(sp) {
       ${paceLine}${hrLine}${dots}</svg></div>`;
 }
 
+
+const PACE_ZONES = [['リカバリー', '#8fa3d9'], ['有酸素持久力', '#2fb7c9'], ['有酸素パワー', '#16b57a'], ['乳酸閾値', '#ffb800'], ['無酸素持久力', '#ff8a1f'], ['無酸素パワー', '#e63946']];
+const mmss = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+
+/** COROS 風の面グラフ。vals と d(km) は同じ長さ。invert=true は小さいほど上 (ペース) */
+function areaChart(vals, d, total, o) {
+  const pts = vals.map((v, i) => ({ v, x: d[i] })).filter((p) => p.v != null);
+  if (pts.length < 3) return '';
+  const W = 340, H = 140, L = 42, R = 8, T = 10, B = 22;
+  const sorted = pts.map((p) => p.v).sort((a, b) => a - b);
+  let lo = sorted[Math.floor(sorted.length * 0.02)], hi = sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.98) - 1)];
+  if (o.min != null) lo = Math.min(lo, o.min);
+  if (hi - lo < (o.minSpan || 4)) { const m = (hi + lo) / 2; lo = m - (o.minSpan || 4) / 2; hi = m + (o.minSpan || 4) / 2; }
+  const padv = (hi - lo) * 0.12; lo -= padv; hi += padv;
+  const clamp = (v) => Math.min(hi, Math.max(lo, v));
+  const X = (x) => L + (x / Math.max(0.1, total)) * (W - L - R);
+  const Y = (v) => { const r = (clamp(v) - lo) / (hi - lo); return T + (o.invert ? r : 1 - r) * (H - T - B); };
+  const line = pts.map((p) => `${X(p.x).toFixed(1)},${Y(p.v).toFixed(1)}`);
+  const base = H - B;
+  const area = `M${X(pts[0].x).toFixed(1)},${base} L${line.join(' L')} L${X(pts[pts.length - 1].x).toFixed(1)},${base} Z`;
+  const ticks = [0, 1, 2].map((k) => lo + ((hi - lo) * (k + 0.5)) / 3);
+  const fmt = o.fmt || ((v) => Math.round(v));
+  const yl = ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" class="gl"/><text x="${L - 6}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end">${fmt(v)}</text>`).join('');
+  const step = total > 14 ? 5 : total > 7 ? 2 : 1;
+  let xl = '';
+  for (let k = step; k < total; k += step) xl += `<text x="${X(k).toFixed(1)}" y="${H - 6}" text-anchor="middle">${k}km</text>`;
+  const avg = o.avg != null ? `<line x1="${L}" x2="${W - R}" y1="${Y(o.avg).toFixed(1)}" y2="${Y(o.avg).toFixed(1)}" class="avgl"/>` : '';
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" class="achart" role="img" aria-label="${o.label || ''}"><g class="ax">${yl}${xl}</g>
+    <path d="${area}" fill="${o.color}" fill-opacity=".28"/><polyline points="${line.join(' ')}" fill="none" stroke="${o.color}" stroke-width="1.6" stroke-linejoin="round"/>${avg}</svg>`;
+}
+
+/** ゾーンの表 (名前・範囲・割合の棒・時間) */
+function zoneTable(names, ranges, secs) {
+  const tot = secs.reduce((a, b) => a + b, 0) || 1;
+  return `<div class="ztab">${secs.map((sec, i) => {
+    const pc = Math.round((sec / tot) * 100);
+    return `<div class="zt-row"><span class="zt-n">${names[i][0]}</span><span class="zt-r num">${ranges[i]}</span><span class="zt-b"><i style="width:${Math.max(pc, pc ? 3 : 0)}%;background:${names[i][1]}"></i></span><span class="zt-p num">${pc}%</span><span class="zt-t num">${mmss(sec)}</span></div>`;
+  }).reverse().join('')}</div>`;
+}
+
+function seriesCards(sr) {
+  const tk = sr.dist_m / 1000;
+  const pb = sr.pace_bounds, hb = sr.hr_bounds;
+  const pr = [`>${pace(pb[0])}`, ...[1, 2, 3, 4].map((i) => `${pace(pb[i] + 1)}–${pace(pb[i - 1])}`), `<${pace(pb[4])}`];
+  const hr = [`<${hb[0]}`, ...[1, 2, 3, 4].map((i) => `${hb[i - 1]}–${hb[i] - 1}`), `>${hb[4] - 1}`];
+  const head = (title, a, b) => `<div class="row spread ch-h"><h2>${title}</h2><div class="ch-s num">${a || ''}${b ? `<br>${b}` : ''}</div></div>`;
+  const out = [];
+  out.push(`<div class="card ch">${head('ペース', sr.fast_km_s ? `最速(1km) <b>${pace(sr.fast_km_s)}</b>` : '', sr.avg.pace ? `平均 <b>${pace(sr.avg.pace)}</b>` : '')}
+    ${areaChart(sr.pace, sr.d, tk, { color: '#f4b400', invert: true, fmt: (v) => pace(Math.round(v)), avg: sr.avg.pace, minSpan: 20, label: 'ペース' })}
+    ${zoneTable(PACE_ZONES, pr, sr.pace_zone_s)}</div>`);
+  if (sr.hr.some((v) => v)) out.push(`<div class="card ch">${head('心拍数 (bpm)', sr.max.hr ? `最大 <b>${sr.max.hr}</b>` : '', sr.avg.hr ? `平均 <b>${sr.avg.hr}</b>` : '')}
+    ${areaChart(sr.hr, sr.d, tk, { color: '#ff4f7b', avg: sr.avg.hr, minSpan: 20, label: '心拍' })}
+    ${zoneTable(PACE_ZONES, hr, sr.hr_zone_s)}</div>`);
+  if (sr.cad.some((v) => v)) out.push(`<div class="card ch">${head('ピッチ (spm)', sr.max.cad ? `最大 <b>${sr.max.cad}</b>` : '', sr.avg.cad ? `平均 <b>${sr.avg.cad}</b>` : '')}
+    ${areaChart(sr.cad, sr.d, tk, { color: '#ff8a1f', avg: sr.avg.cad, minSpan: 16, label: 'ピッチ' })}</div>`);
+  if (sr.stride.some((v) => v)) out.push(`<div class="card ch">${head('ストライド (cm)', '', sr.avg.stride ? `平均 <b>${sr.avg.stride}</b>` : '')}
+    ${areaChart(sr.stride, sr.d, tk, { color: '#7a5cff', avg: sr.avg.stride, minSpan: 20, label: 'ストライド' })}</div>`);
+  if (sr.alt.some((v) => v != null)) out.push(`<div class="card ch">${head('標高 (m)', sr.alt_max != null ? `最大 <b>${sr.alt_max}</b> ・ 最小 <b>${sr.alt_min}</b>` : '', sr.elev_gain != null ? `上昇 <b>${Math.round(sr.elev_gain)}</b> ・ 下降 <b>${sr.elev_loss ?? '-'}</b>` : '')}
+    ${areaChart(sr.alt, sr.d, tk, { color: '#2fb7c9', minSpan: 12, label: '標高' })}</div>`);
+  return out.join('');
+}
+
+/** ラップ詳細 (1km ごと) */
+function lapTable(sp) {
+  const ps = sp.filter((x) => x.pace_s).map((x) => x.pace_s);
+  const slow = Math.max(...ps), fast = Math.min(...ps);
+  return `<table class="num lap"><tr><th>km</th><th>距離</th><th>時間</th><th>ペース</th><th></th><th>心拍</th></tr>${sp.map((x, i) => `<tr class="${x.pace_s === fast ? 'best' : ''}"><td>${i + 1}</td><td>${x.km.toFixed(2)}</td><td>${x.time_s ? mmss(x.time_s) : '-'}</td><td><b>${x.pace_s ? pace(x.pace_s) : '-'}</b></td><td><span class="sbar" style="width:${x.pace_s ? 25 + ((slow - x.pace_s) / Math.max(1, slow - fast)) * 75 : 0}%"></span></td><td>${x.hr ?? '-'}</td></tr>`).join('')}</table>`;
+}
+
 async function activityDetailView(id) {
   const [a, shoes] = await Promise.all([api(`/activities/${id}`), api('/shoes')]);
   const plans = await api(`/plans?from=${a.date}&to=${a.date}`);
@@ -1290,10 +1427,18 @@ async function activityDetailView(id) {
     api(`/activities/${id}/splits`).then((sp) => {
       const box = view.querySelector('#splits');
       if (!box || !Array.isArray(sp) || !sp.length) { if (box) box.innerHTML = '<span class="muted">取得できませんでした</span>'; return; }
-      const slow = Math.max(...sp.map((x) => x.pace_s || 0)), fast = Math.min(...sp.filter((x) => x.pace_s).map((x) => x.pace_s));
-      view.querySelector('#splitchart').innerHTML = splitChart(sp);
-      box.innerHTML = `<table class="num splits"><tr><th>km</th><th>ペース</th><th></th><th>標高</th><th>心拍</th></tr>${sp.map((x, i) => `<tr><td>${i + 1}</td><td>${x.pace_s ? pace(x.pace_s) : '-'}</td><td><span class="sbar" style="width:${x.pace_s ? 30 + ((slow - x.pace_s) / Math.max(1, slow - fast)) * 70 : 0}%"></span></td><td>${x.elev}</td><td>${x.hr ?? '-'}</td></tr>`).join('')}</table>`;
+      box.innerHTML = lapTable(sp);
     }).catch(() => {});
+    api(`/activities/${id}/series`).then((sr) => {
+      const box = view.querySelector('#series');
+      if (!box || !sr || sr.error) { if (box) box.innerHTML = ''; return; }
+      box.innerHTML = seriesCards(sr);
+      const set = (k, v) => { const el = view.querySelector(`#${k}`); if (el && v != null) el.textContent = v; };
+      set('st-fast', sr.fast_km_s ? pace(sr.fast_km_s) : null);
+      set('st-elev', sr.elev_gain != null ? `${Math.round(sr.elev_gain)}` : null);
+      set('st-cad', sr.avg.cad ? `${sr.avg.cad}` : null);
+      set('st-cal', sr.calories ? `${Math.round(sr.calories)}` : null);
+    }).catch(() => { const box = view.querySelector('#series'); if (box) box.innerHTML = ''; });
     view.querySelector('#reeval').onclick = async (e) => {
       e.target.disabled = true;
       await api(`/activities/${id}/reevaluate`, { method: 'POST' });
@@ -1309,12 +1454,20 @@ async function activityDetailView(id) {
   const uPlans = uniqPlans(plans);
 
   return `
-    <div class="card">
+    <div class="card hd">
       <div class="row spread"><h2>${esc(a.name)}</h2><a class="muted" href="https://www.strava.com/activities/${a.id}" target="_blank" rel="noopener">Strava ↗</a></div>
       <div class="muted">${a.start_date_local.slice(0, 16).replace('T', ' ')}</div>
-      <div class="row spread" style="margin-top:8px">
-        <div class="num"><span class="big">${km(a.distance_m, 2)}</span> km<br>${dur(a.moving_time_s)}・${pace(a.moving_time_s / (a.distance_m / 1000))}/km</div>
-        <div style="text-align:right"><div class="muted">総合</div><div class="big">${scoreHtml(a.score)}</div></div>
+      <div class="row spread hd-main"><div class="num"><span class="hd-km">${km(a.distance_m, 2)}</span><span class="hd-u">km</span></div>
+        <div style="text-align:right"><div class="muted">総合</div><div class="big">${scoreHtml(a.score)}</div></div></div>
+      <div class="stats num">
+        <div><b>${dur(a.moving_time_s)}</b><span>運動時間</span></div>
+        <div><b>${pace(a.moving_time_s / (a.distance_m / 1000))}<small>/km</small></b><span>平均ペース</span></div>
+        <div><b>${a.avg_hr ? Math.round(a.avg_hr) : '-'}<small>bpm</small></b><span>平均心拍</span></div>
+        <div><b id="st-fast">-</b><span>最速 (1km)</span></div>
+        <div><b>${a.max_hr ? Math.round(a.max_hr) : '-'}<small>bpm</small></b><span>最大心拍</span></div>
+        <div><b><span id="st-elev">-</span><small>m</small></b><span>累積上昇</span></div>
+        <div><b id="st-cad">${a.avg_cadence_spm ? Math.round(a.avg_cadence_spm * 2) : '-'}</b><span>ピッチ spm</span></div>
+        <div><b id="st-cal">-</b><span>カロリー kcal</span></div>
       </div>
     </div>
     ${ev && W && a.score != null && a.score < 85 ? (() => {
@@ -1346,7 +1499,8 @@ async function activityDetailView(id) {
       ${cur ? `<div class="shoe-img big">${cur.image ? `<img src="${cur.image}" alt="">` : '<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div><div class="muted num">累計 ${Math.round(cur.total_km)}km / ${cur.limit_km}km</div>` : '<p class="muted" style="margin:0">このランで履いたシューズを選びます。</p>'}
       </div>`;
     })()}
-    <div class="card"><h2>スプリット</h2><div id="splitchart"></div><div id="splits"><span class="muted">読み込み中…</span></div></div>
+    <div id="series"><div class="card"><span class="muted">グラフを読み込み中…</span></div></div>
+    <div class="card"><h2>ラップ詳細</h2><div id="splits"><span class="muted">読み込み中…</span></div></div>
     <div class="card">
       <h2>この練習のメニュー</h2>
       <p class="muted" style="margin-top:0">${a.plan ? `いまは「${md(a.date)} ${planName(a.plan)}」として評価しています` : 'いまはメニューなし (フリーラン) として評価しています'}。別のメニューに変えるときは下から選んでください。同じ日のランはまとめて変わります。</p>

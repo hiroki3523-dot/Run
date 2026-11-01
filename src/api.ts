@@ -8,7 +8,7 @@ import { weatherDays, raceWeather, weatherAdvice } from './weather';
 import { DEFAULT_PLACE, forecast, searchPlaces } from './forecast';
 import { generatePlan, type PlannerRace } from './planner';
 import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
-import { getActivity } from './strava';
+import { getActivity, getSeries } from './strava';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
 import { getBackfill, startBackfill, stopBackfill } from './backfill';
@@ -283,11 +283,29 @@ api.get('/activities/:id/splits', async (c) => {
     return c.json(
       (a.splits_metric ?? []).map((x) => ({
         km: Math.round(x.distance) / 1000,
+        time_s: Math.round(x.moving_time),
         pace_s: x.distance > 0 ? Math.round((x.moving_time / x.distance) * 1000) : null,
         elev: Math.round(x.elevation_difference ?? 0),
         hr: x.average_heartrate ? Math.round(x.average_heartrate) : null,
       })),
     );
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 502);
+  }
+});
+
+/** 実績詳細のグラフ用の時系列 (ペース・心拍・ピッチ・ストライド・標高) とゾーン分布 */
+api.get('/activities/:id/series', async (c) => {
+  try {
+    const st = await getSettings(c.env);
+    const lt = st.coros.lt_pace_s;
+    // COROS と同じ境界: 閾値ペース 4:07 → 5:45 / 4:46 / 4:26 / 4:02 / 3:42
+    const paceBounds = [lt * 1.397, lt * 1.154, lt * 1.073, lt * 0.98, lt * 0.899].map(Math.round);
+    const l = st.coros.lthr;
+    const hrBounds = [0.8, 0.9, 0.95, 1.017, 1.057].map((r) => Math.round(l * r));
+    const s = await getSeries(c.env, Number(c.req.param('id')), paceBounds, hrBounds);
+    if (!s) return c.json({ error: 'データがありません' }, 404);
+    return c.json({ ...s, pace_bounds: paceBounds, hr_bounds: hrBounds });
   } catch (e) {
     return c.json({ error: (e as Error).message }, 502);
   }
