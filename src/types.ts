@@ -161,6 +161,10 @@ export interface Evaluation {
   volume: MetricResult;
   /** フォームの安定度 (歩幅・ピッチ)。古い評価には無い */
   form?: MetricResult;
+  /** 総合点の内訳 (各指標の重み %。データのある指標だけで合計 100) */
+  weights?: { pace: number; hr: number; cadence: number; form: number };
+  /** ロング走の本番ペース区間を評価したとき、その距離 (km) */
+  section_km?: number;
   comments: string[];
   /** 次に意識すること (数字つき・最大3つ) */
   focus?: string[];

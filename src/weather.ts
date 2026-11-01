@@ -12,12 +12,45 @@ const CITIES: [keyword: string, name: string, lat: number, lon: number][] = [
 export interface RaceWeather {
   place: string;
   date: string;
+  code: number;
   tmax: number;
   tmin: number;
   precip_pct: number | null;
   wind_max: number;
   /** スタート後 (9〜13 時) の時間帯別 */
   hours: { h: number; temp: number; humidity: number | null; precip_pct: number | null; wind: number }[];
+}
+
+export interface DayWeather { date: string; code: number; tmax: number; tmin: number; precip_pct: number | null; wind_max: number }
+
+/** 1 週間 (過去 7 日 + 先 15 日) の天気。自宅の近くの都市 (既定は福岡) */
+export async function weatherDays(cityName = '福岡'): Promise<{ place: string; days: DayWeather[] } | null> {
+  const city = CITIES.find((c) => c[0] === cityName) ?? CITIES[0];
+  const q = new URLSearchParams({
+    latitude: String(city[2]),
+    longitude: String(city[3]),
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max',
+    timezone: 'Asia/Tokyo',
+    wind_speed_unit: 'ms',
+    past_days: '7',
+    forecast_days: '16',
+  });
+  const res = await fetch(`https://api.open-meteo.com/v1/forecast?${q}`, { cf: { cacheTtl: 1800, cacheEverything: true } } as RequestInit);
+  if (!res.ok) return null;
+  const j = (await res.json()) as { daily?: Record<string, (number | string | null)[]> };
+  const d = j.daily;
+  if (!d?.time) return null;
+  return {
+    place: city[1],
+    days: d.time.map((t, i) => ({
+      date: String(t),
+      code: Number(d.weather_code?.[i] ?? 0),
+      tmax: Number(d.temperature_2m_max?.[i]),
+      tmin: Number(d.temperature_2m_min?.[i]),
+      precip_pct: d.precipitation_probability_max?.[i] == null ? null : Number(d.precipitation_probability_max[i]),
+      wind_max: Number(d.wind_speed_10m_max?.[i]),
+    })),
+  };
 }
 
 export function cityFor(raceName: string) {
@@ -30,7 +63,7 @@ export async function raceWeather(raceName: string, date: string): Promise<RaceW
   const q = new URLSearchParams({
     latitude: String(city[2]),
     longitude: String(city[3]),
-    daily: 'temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max',
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max',
     hourly: 'temperature_2m,relative_humidity_2m,precipitation_probability,wind_speed_10m',
     timezone: 'Asia/Tokyo',
     wind_speed_unit: 'ms',
@@ -60,6 +93,7 @@ export async function raceWeather(raceName: string, date: string): Promise<RaceW
   return {
     place: city[1],
     date,
+    code: Number(d.weather_code?.[di] ?? 0),
     tmax: Number(d.temperature_2m_max?.[di]),
     tmin: Number(d.temperature_2m_min?.[di]),
     precip_pct: d.precipitation_probability_max?.[di] == null ? null : Number(d.precipitation_probability_max[di]),

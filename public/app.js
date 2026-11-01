@@ -119,18 +119,21 @@ function openDialog(html, { onDelete } = {}) {
 async function homeView() {
   const t = today();
   const ws = weekStart(t);
-  const [plans, acts, races, summary, status, settings, weather] = await Promise.all([
+  const [plans, acts, races, status, settings, weather, wxWeek] = await Promise.all([
     api(`/plans?from=${ws}&to=${addDays(ws, 6)}`),
     api(`/activities?from=${addDays(t, -14)}&to=${t}`),
     api('/races'),
-    api(`/summary?from=${addDays(ws, -7 * 7)}&to=${addDays(ws, 6)}`),
     api('/status'),
     api('/settings'),
     api('/race-weather').catch(() => null),
+    loadWx(),
   ]);
   dedupeIfNeeded(plans);
   const todays = uniqPlans(plans.filter((p) => p.date === t));
   const next = races.find((r) => r.date >= t);
+  // 6 週間前から、次のレースの週まで (最大 14 週先)。過去は実績、先は計画
+  const endDay = next && next.date <= addDays(ws, 7 * 14) ? next.date : addDays(ws, 6);
+  const summary = await api(`/summary?from=${addDays(ws, -7 * 6)}&to=${endDay}`);
   const thisWeek = summary.find((w) => w.week === ws) || { planned_m: 0, actual_m: 0, points_planned: 0, points_done: 0 };
 
   return `
@@ -139,6 +142,7 @@ async function homeView() {
       <div class="row spread"><h2>今日 ${md(t)}(${dow(t)})</h2><a href="#/plans" class="muted">計画を編集</a></div>
       ${todays.length === 0 ? '<p class="muted">メニュー未登録</p>' : todays.map(planLine).join('')}
     </div>
+    ${wxWeek ? weekWxCard(t, wxWeek.place) : ''}
     ${next ? `
     <div class="card hero">
       <div class="row spread"><h2>${esc(next.name)}</h2><span class="badge">${esc(next.priority)}</span></div>
@@ -146,7 +150,7 @@ async function homeView() {
         <div><span class="big">${daysBetween(t, next.date)}</span> 日</div>
         <div class="muted num">${md(next.date)}・${km(next.distance_m)}km${next.goal_time_s ? `<br>目標 ${dur(next.goal_time_s)} (${pace(next.goal_time_s / (next.distance_m / 1000))}/km)` : ''}</div>
       </div>
-      ${next.goal_time_s ? splitTable(next) : ''}
+      <a class="herolink" href="#/races/${next.id}">ペース表・準備物チェック ›</a>
     </div>
     ${weatherCard(weather)}
     ${goalCard(settings, next)}` : ''}
@@ -158,13 +162,14 @@ async function homeView() {
         <div class="muted">タップで詳細・スプリットを見る ›</div></a>
         <a class="card" href="#/activities?view=week" style="display:block;text-decoration:none;color:inherit"><h2>今週の振り返り ›</h2><div class="muted">日・週・月の評価はここから</div></a>` : '';
     })()}
+    ${await monthGoalCard(t)}
     <div class="card week">
       <h2>今週</h2>
       <div class="row spread num"><span>${km(thisWeek.actual_m)} / ${km(thisWeek.planned_m)} km</span><span class="muted">ポイント練 ${thisWeek.points_done}/${thisWeek.points_planned}</span></div>
       <div class="bar"><div style="width:${Math.min(100, thisWeek.planned_m ? (thisWeek.actual_m / thisWeek.planned_m) * 100 : 0)}%"></div></div>
     </div>
     <div class="card">
-      <h2>週間距離 (点線=計画)</h2>
+      <h2>週間距離${next ? `と、${esc(next.name)}まで` : ''}</h2>
       ${weeklyChart(summary)}
     </div>
     <div class="card">
@@ -174,14 +179,136 @@ async function homeView() {
 }
 
 /** 等ペースで走った場合の 5km ごとの通過タイム */
-function splitTable(race) {
-  const per = race.goal_time_s / (race.distance_m / 1000);
+/** ペース戦略: 区間ペース (秒/km) を位置 (km) の関数で返す。どれも合計タイムは目標と同じ */
+const PACE_PLANS = {
+  even: { label: '等ペース', note: '最初から最後まで同じペース。いちばん安定します。', f: (per) => () => per },
+  negative: { label: '後半上げる', note: '前半を 4 秒/km 抑え、後半を 4 秒/km 上げる (ネガティブスプリット)。', f: (per) => (k, dist) => per + (k < dist / 2 ? 4 : -4) },
+  late: { label: '30km から勝負', note: '30km までは 3 秒/km 抑え、30km 以降で上げる。給水と脚を残す作戦。', f: (per, dist) => { const a = 3; const b = (a * 30) / (dist - 30); return (k) => (k < 30 ? per + a : per - b); } },
+};
+function paceRows(race, mode) {
+  const dist = race.distance_m / 1000;
+  const per = race.goal_time_s / dist;
+  const f = (PACE_PLANS[mode] || PACE_PLANS.even).f(per, dist);
+  // 1km ずつ積み上げ、最後の端数 (0.195km) も足して、ゴールが目標タイムになるよう微調整
+  let t = 0;
+  const at = new Map();
+  const marks = [];
+  for (let k = 5; k < dist; k += 5) marks.push(k);
+  if (dist > 21.1 && dist < 21.2 + 21) marks.push(dist / 2);
+  marks.sort((x, y) => x - y);
+  let pos = 0;
+  const raw = (to) => { let tt = 0; for (let k = 0; k < to; ) { const step = Math.min(1, to - k); tt += f(k + step / 2, dist) * step; k += step; } return tt; };
+  const scale = race.goal_time_s / raw(dist);
   const rows = [];
-  for (let k = 5; k < race.distance_m / 1000; k += 5) rows.push([`${k}km`, per * k]);
-  rows.push([`${km(race.distance_m, 1)}km`, race.goal_time_s]);
-  return `<details class="splits"><summary>ペース表 (等ペース ${pace(per)}/km)</summary>
-    <div class="split-grid num">${rows.map(([l, t]) => `<span>${l}</span><b>${dur(t)}</b>`).join('')}</div>
-    <p class="muted">30km までは目標ペースを守り、残りで上げるのが基本です。</p></details>`;
+  let prevT = 0, prevK = 0;
+  for (const k of [...marks, dist]) {
+    const tt = raw(k) * scale;
+    const lapPace = (tt - prevT) / (k - prevK);
+    rows.push({ k, t: tt, lap: lapPace, half: Math.abs(k - dist / 2) < 0.01 && dist > 40, fin: k === dist });
+    prevT = tt; prevK = k;
+  }
+  return rows;
+}
+function splitTable(race, mode = 'even') {
+  if (!race.goal_time_s) return '<p class="muted">目標タイムを設定すると、ペース表が出ます。</p>';
+  const rows = paceRows(race, mode);
+  const paces = rows.map((r) => r.lap);
+  const fast = Math.min(...paces), slow = Math.max(...paces);
+  const w = (p) => (slow - fast < 1 ? 78 : 62 + ((slow - p) / (slow - fast)) * 38);
+  return `<div class="ptable">
+    <div class="ph"><span>地点</span><span>通過</span><span>この区間のペース</span></div>
+    ${rows.map((r) => `<div class="pr ${r.half ? 'half' : ''} ${r.fin ? 'fin' : ''}">
+      <span class="pk">${r.fin ? 'ゴール' : r.half ? 'ハーフ' : `${Math.round(r.k)}km`}</span>
+      <b class="num">${dur(r.t)}</b>
+      <span class="pbar"><i style="width:${w(r.lap)}%"></i><em class="num">${pace(r.lap)}</em></span>
+    </div>`).join('')}
+  </div>`;
+}
+
+/** 今月の目標距離。目標が未設定なら、計画の合計を提案する */
+async function monthGoalCard(t) {
+  const month = t.slice(0, 7);
+  const first = `${month}-01`;
+  const lastD = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+  const last = `${month}-${String(lastD).padStart(2, '0')}`;
+  const [goal, plans, acts] = await Promise.all([
+    api(`/goals/${month}`).catch(() => ({ km: null })),
+    api(`/plans?from=${first}&to=${last}`).catch(() => []),
+    api(`/activities?from=${first}&to=${last}`).catch(() => []),
+  ]);
+  const actual = acts.reduce((a, r) => a + r.distance_m, 0) / 1000;
+  const planned = uniqPlans(plans).filter((p) => p.type !== 'rest').reduce((a, p) => a + (p.distance_m || 0), 0) / 1000;
+  const suggest = Math.round(planned / 10) * 10;
+  setTimeout(() => {
+    const set = async (v) => { await api(`/goals/${month}`, { method: 'PUT', body: { km: v } }); route(); };
+    view.querySelectorAll('[data-mg]').forEach((b) => (b.onclick = () => set(Math.max(0, (goal.km || 0) + Number(b.dataset.mg)))));
+    const sg = view.querySelector('#mg-suggest'); if (sg) sg.onclick = () => set(suggest || 200);
+  });
+  const daysLeft = lastD - Number(t.slice(8)) + 1;
+  if (goal.km == null) {
+    return `<div class="card"><h2>${Number(month.slice(5))}月の目標</h2><p class="muted" style="margin-top:0">今月の走行距離の目標を決めておくと、毎日の進み具合が分かります。</p>
+      <p class="num">今月ここまで <b>${actual.toFixed(1)}km</b>${planned ? `・計画の合計 ${Math.round(planned)}km` : ''}</p>
+      <button id="mg-suggest" class="primary wide">${suggest ? `計画に合わせて ${suggest}km に設定` : '200km に設定'}</button></div>`;
+  }
+  const ratio = goal.km ? Math.min(1, actual / goal.km) : 0;
+  const left = Math.max(0, goal.km - actual);
+  // 月の経過に対して、どれだけ進んでいるか
+  const expected = goal.km * ((Number(t.slice(8)) - 1) / lastD);
+  const ahead = actual - expected;
+  return `<div class="card"><div class="row spread"><h2>${Number(month.slice(5))}月の目標</h2><b class="num">${goal.km}km</b></div>
+    <div class="row spread num" style="margin:6px 0"><span><b>${actual.toFixed(1)}</b> km 走った</span><span class="muted">残り ${left.toFixed(0)}km</span></div>
+    <div class="bar mg"><div style="width:${ratio * 100}%"></div><i style="left:${Math.min(100, (expected / goal.km) * 100)}%"></i></div>
+    <p class="muted" style="margin:8px 0 0">${left <= 0 ? '目標を達成しました。' : `あと${daysLeft}日で 1 日平均 ${(left / daysLeft).toFixed(1)}km。ペース配分の目安 (縦線) より ${ahead >= 0 ? `${ahead.toFixed(0)}km 先行` : `${(-ahead).toFixed(0)}km 遅れ`}。`}</p>
+    <div class="chips mini" style="margin-top:10px"><button type="button" class="chip" data-mg="-50">−50</button><button type="button" class="chip" data-mg="-10">−10</button><button type="button" class="chip" data-mg="10">+10</button><button type="button" class="chip" data-mg="50">+50</button></div></div>`;
+}
+
+/** 天気コード (WMO) → 線画アイコン。絵文字は使わない */
+function wxKind(code) {
+  if (code === 0) return ['sun', '晴れ'];
+  if (code <= 2) return ['partly', '晴れ時々くもり'];
+  if (code === 3) return ['cloud', 'くもり'];
+  if (code === 45 || code === 48) return ['fog', '霧'];
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return ['rain', '雨'];
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return ['snow', '雪'];
+  if (code >= 95) return ['thunder', '雷雨'];
+  return ['cloud', 'くもり'];
+}
+const WX_PATH = {
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  partly: '<circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.2M2.2 4.2l.9.9M1.5 10h1.2M13.8 4.2l-.9.9"/><path d="M8.5 20h9a4 4 0 0 0 .4-8 5.5 5.5 0 0 0-10.4 1.5A3.3 3.3 0 0 0 8.5 20z"/>',
+  cloud: '<path d="M7 19h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.5 1.6A3.3 3.3 0 0 0 7 19z"/>',
+  fog: '<path d="M7 14h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.5 1.6A3.3 3.3 0 0 0 7 14z"/><path d="M5 18h14M8 21h8"/>',
+  rain: '<path d="M7 15h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.5 1.6A3.3 3.3 0 0 0 7 15z"/><path d="M8 18l-1 3M12 18l-1 3M16 18l-1 3"/>',
+  snow: '<path d="M7 15h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.5 1.6A3.3 3.3 0 0 0 7 15z"/><path d="M8 18v.01M12 19v.01M16 18v.01M10 21v.01M14 21v.01"/>',
+  thunder: '<path d="M7 14h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.5 1.6A3.3 3.3 0 0 0 7 14z"/><path d="M12 14l-2 4h3l-2 4"/>',
+};
+const WX_COLOR = { sun: '#ffb800', partly: '#ffb800', cloud: '#98a0b3', fog: '#98a0b3', rain: '#3d8bff', snow: '#8fd3ff', thunder: '#ff8a1f' };
+const wxIcon = (code, size = 24) => {
+  const [k, label] = wxKind(code);
+  return `<svg class="wx" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="${WX_COLOR[k]}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${label}">${WX_PATH[k]}</svg>`;
+};
+let WX = {};
+const loadWx = async () => {
+  try {
+    const w = await api('/weather/week');
+    WX = Object.fromEntries((w?.days || []).map((d) => [d.date, d]));
+    return w;
+  } catch { return null; }
+};
+/** 1 日ぶんの天気 (アイコン・気温・降水確率) */
+const wxDay = (d) => {
+  const w = WX[d];
+  if (!w) return '';
+  return `<div class="wxday">${wxIcon(w.code, 22)}<span class="num">${Math.round(w.tmax)}<small>/${Math.round(w.tmin)}℃</small></span>${w.precip_pct != null && w.precip_pct >= 30 ? `<span class="rain num">${w.precip_pct}%</span>` : ''}</div>`;
+};
+
+function weekWxCard(from, place) {
+  const days = [...Array(7)].map((_, i) => addDays(from, i));
+  return `<div class="card"><div class="row spread"><h2>週間天気</h2><span class="muted">${esc(place)}</span></div>
+    <div class="wxweek">${days.map((d) => {
+      const w = WX[d];
+      return `<div class="${d === from ? 'today' : ''}"><div class="muted">${dow(d)}</div>${w ? wxIcon(w.code, 26) : '<span class="muted">-</span>'}<b class="num">${w ? Math.round(w.tmax) : '-'}</b><span class="muted num">${w ? Math.round(w.tmin) : ''}</span><span class="rain num">${w && w.precip_pct != null && w.precip_pct >= 30 ? w.precip_pct + '%' : ''}</span></div>`;
+    }).join('')}</div></div>`;
 }
 
 function weatherCard(w) {
@@ -189,26 +316,35 @@ function weatherCard(w) {
   const hrs = w.hours.map((h) => `<div><div class="muted">${h.h}時</div><b>${Math.round(h.temp)}℃</b><div class="muted">${h.humidity ?? '-'}%</div></div>`).join('');
   return `<div class="card">
     <div class="row spread"><h2>${esc(w.race)}の天気 (${w.place})</h2><span class="muted num">${md(w.date)}</span></div>
+    <div class="row" style="gap:10px;align-items:center">${w.code != null ? wxIcon(w.code, 34) + `<b>${wxKind(w.code)[1]}</b>` : ''}</div>
     <div class="num" style="font-size:20px">${Math.round(w.tmin)}〜${Math.round(w.tmax)}℃ <span class="muted" style="font-size:13px">降水${w.precip_pct ?? '-'}%・風${w.wind_max.toFixed(0)}m/s</span></div>
     <div class="hours num">${hrs}</div>
     <p style="margin:8px 0 0">${esc(w.advice)}</p>
   </div>`;
 }
 
-/** COROS の予測タイムと目標の差 */
+/** 目標タイムまでの距離。サブ3・レース目標・COROS 予測を 1 本の時間軸に並べる */
 function goalCard(settings, next) {
   const c = settings?.coros;
   if (!c || !next) return '';
   const full = c.predicted_s.full;
-  const rows = [['サブ3 (3:00:00)', 10800]];
-  if (next.goal_time_s && next.goal_time_s !== 10800) rows.unshift([`${next.name} 目標`, next.goal_time_s]);
-  const line = ([label, goal]) => {
-    const d = full - goal;
-    return `<div class="row spread"><span>${esc(label)} ${dur(goal)}</span><b class="num ${d <= 0 ? 'ok' : 'gap'}">${d <= 0 ? `予測より ${dur(-d)} 余裕` : `あと ${dur(d)} 短縮`}</b></div>`;
-  };
+  const marks = [{ k: 'sub3', label: 'サブ3', v: 10800, cls: 'm-goal' }];
+  if (next.goal_time_s && next.goal_time_s !== 10800) marks.push({ k: 'goal', label: `${next.name}の目標`, v: next.goal_time_s, cls: 'm-goal2' });
+  marks.push({ k: 'pred', label: 'COROS予測', v: full, cls: 'm-pred' });
+  const vals = marks.map((m) => m.v);
+  const lo = Math.min(...vals) - 300, hi = Math.max(...vals) + 300;
+  const pos = (v) => ((hi - v) / (hi - lo)) * 100; // 左ほど遅く、右ほど速い
+  const gap = (g) => { const d = full - g; return d <= 0 ? `予測のほうが ${dur(-d)} 速い` : `あと ${dur(d)} 縮めたい`; };
+  const target = marks.find((m) => m.k === 'goal') || marks[0];
+  const rows = marks.filter((m) => m.k !== 'pred');
   return `<div class="card">
-    <h2>目標までの距離 (COROS 予測 ${dur(full)})</h2>
-    <div class="goal-rows">${rows.map(line).join('')}</div>
+    <h2>目標までの距離</h2>
+    <div class="gauge" aria-label="目標タイムとCOROS予測の位置">
+      <div class="gtrack"><i style="left:${Math.min(pos(full), pos(target.v))}%;width:${Math.abs(pos(full) - pos(target.v))}%" class="${full <= target.v ? 'ok' : 'gap'}"></i></div>
+      ${marks.map((m) => `<div class="gmark ${m.cls}" style="left:${pos(m.v)}%"><span class="gdot"></span><span class="glabel">${esc(m.label)}<b class="num">${dur(m.v)}</b></span></div>`).join('')}
+      <div class="gend"><span>遅い</span><span>速い</span></div>
+    </div>
+    <div class="goal-rows">${rows.map((m) => `<div class="row spread"><span>${esc(m.label)} ${dur(m.v)}</span><b class="num ${full <= m.v ? 'ok' : 'gap'}">${gap(m.v)}</b></div>`).join('')}</div>
     <p class="muted">予測は理想条件での値です。本番は暑さや補給で数分遅くなるのが普通です。</p>
   </div>`;
 }
@@ -277,6 +413,7 @@ async function plansView(params) {
     api(`/activities?from=${ws}&to=${addDays(ws, 6)}`),
     api('/settings'),
     api('/shoes').catch(() => []),
+    loadWx(),
   ]);
   SHOES = shoes;
   dedupeIfNeeded(plansRaw);
@@ -372,7 +509,7 @@ async function plansView(params) {
         const dp = plans.filter((p) => p.date === d);
         return `
         <div class="week-day ${d === t ? 'today' : ''}" data-day="${d}">
-          <div class="daycol">${dp.length ? '<span class="grip" data-grip="' + d + '" aria-label="ドラッグして入れ替え">⠿</span>' : '<span class="grip off"></span>'}<div><strong>${md(d)}</strong><div class="muted">${dow(d)}</div>${dayTag(d)}</div></div>
+          <div class="daycol">${dp.length ? '<span class="grip" data-grip="' + d + '" aria-label="ドラッグして入れ替え">⠿</span>' : '<span class="grip off"></span>'}<div><strong>${md(d)}</strong><div class="muted">${dow(d)}</div>${wxDay(d)}${dayTag(d)}</div></div>
           <div>
             ${dp.map((p) => planLine(p, true)).join('')}
             ${actLine(weekActs.filter((a) => a.date === d))}
@@ -832,7 +969,12 @@ async function activitiesView(params) {
     </div>
     <div class="card">
       <div class="row spread"><h2>${kind === 'day' ? '日次' : kind === 'week' ? '週間' : '月間'}評価</h2>
-        ${r.grade ? `<span class="grade g${r.grade}">${r.grade}<small>${GRADE_NOTE[r.grade]}</small></span>` : ''}</div>
+        ${r.grade ? `<span class="grade g${r.grade}">${r.grade}<small>${GRADE_NOTE[r.grade]}${r.grade_calc ? `・${r.grade_calc.pts}点` : ''}</small></span>` : ''}</div>
+      ${r.grade ? `<details class="how"><summary>${r.grade} とは？ (等級の決まり方)</summary>
+        <p class="muted" style="margin-top:0">${kind === 'day' ? '今日' : kind === 'week' ? '今週' : '今月'}の「走りの質」と「計画どおりに走れたか」を 1 つの点数にして、4 段階に分けています。</p>
+        ${r.grade_calc ? `<table class="how-t"><tr><td>平均点 (各ランの評価)</td><td class="num">${r.grade_calc.avg}</td></tr><tr><td>距離が計画とずれた分</td><td class="num">−${r.grade_calc.dist_penalty}</td></tr><tr><td>ポイント練習を抜いた分</td><td class="num">−${r.grade_calc.quality_penalty}</td></tr><tr><td><b>等級の点数</b></td><td class="num"><b>${r.grade_calc.pts}</b></td></tr></table>` : ''}
+        <p class="muted"><b>A</b> 85点以上 狙いどおり / <b>B</b> 70〜84 概ね良好 / <b>C</b> 55〜69 要調整 / <b>D</b> 55未満 立て直し</p>
+        <p class="muted">距離のずれは、計画の ±10% を超えるほど減点 (最大 30)。ポイント練習は、計画した回数のうち走れなかった割合で最大 15 点を引きます。</p></details>` : ''}
       <div class="grid3">
         ${stat('距離', `${r.km}km`, r.planned_km ? `計画 ${r.planned_km}km${pct ? `・${pct}` : ''}` : '')}
         ${stat('回数', `${r.runs}回`, `${r.run_days}日`)}
@@ -894,7 +1036,22 @@ async function activityDetailView(id) {
   const [a, shoes] = await Promise.all([api(`/activities/${id}`), api('/shoes')]);
   const plans = await api(`/plans?from=${a.date}&to=${a.date}`);
   const ev = a.evaluation;
-  const metric = (name, m) => `<div class="metric"><span>${name}</span>${scoreHtml(m?.score)}<span class="muted">${esc(m?.summary)}</span></div>`;
+  const metric = (name, m, w) => `<div class="metric"><span>${name}${w ? `<small class="wt">配点 ${w}%</small>` : ''}</span>${scoreHtml(m?.score)}<span class="muted">${esc(m?.summary)}</span></div>`;
+  const W = ev?.weights;
+  const HOW = {
+    pace: ['ペース', '計画のペース帯に入って走れた距離の割合と、帯からはみ出した秒数。1kmごとの安定、後半の失速も見ます。帯からの平均のはみ出しが0秒で満点、1秒/kmごとに約7点減ります。'],
+    hr: ['心拍', '目標の心拍域に収まっていたか。一定ペースの練習では、後半に心拍が上がる「ドリフト」(2%以内なら満点) も見ます。'],
+    cadence: ['ケイデンス', '目標ピッチとの差と、後半の落ち込み。目標より1spm低いごとに約8点減ります。'],
+    form: ['フォーム', '歩幅とピッチのばらつき、後半に歩幅が縮んでいないか。'],
+  };
+  const howCard = (ev) => {
+    if (!W) return '';
+    const rows = ['pace', 'hr', 'cadence', 'form'].filter((k) => W[k] > 0 && ev[k]?.score != null).map((k) => `<tr><td><b>${HOW[k][0]}</b><div class="muted">${HOW[k][1]}</div></td><td class="num">${ev[k].score}</td><td class="num">${W[k]}%</td></tr>`).join('');
+    return `<details class="how"><summary>この点数のつけ方</summary>
+      <p class="muted">総合点は、上の各指標の点数を「配点」で重みづけした平均です。${ev.type === 'free' ? 'メニューが無いので、単独の走りの質(安定・心拍・ピッチ・フォーム)で採点します。' : `${esc(PLAN_LABELS[ev.type])}は、この練習の目的に合わせて配点を変えています。`}距離が計画に届かなくても点数は下がりません (評価は走りの質だけ)。</p>
+      <table class="how-t"><tr><th>指標</th><th>点</th><th>配点</th></tr>${rows}</table>
+      <p class="muted">目安: 90点以上 とても良い / 75点以上 良い / 60点以上 合格 / 60点未満 見直しが必要。</p></details>`;
+  };
 
   setTimeout(() => {
     view.querySelectorAll('[data-pc]').forEach((b) => (b.onclick = async () => {
@@ -942,7 +1099,8 @@ async function activityDetailView(id) {
     ${ev ? `
     <div class="card">
       <h2>評価 <span class="badge" data-t="${ev.type}">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></h2>
-      ${metric('ペース', ev.pace)}${metric('心拍', ev.hr)}${metric('ケイデンス', ev.cadence)}${ev.form ? metric('フォーム', ev.form) : ''}
+      ${metric('ペース', ev.pace, W?.pace)}${metric('心拍', ev.hr, W?.hr)}${metric('ケイデンス', ev.cadence, W?.cadence)}${ev.form ? metric('フォーム', ev.form, W?.form) : ''}
+      ${howCard(ev)}
       <ul class="bullets">${ev.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
       ${ev.focus?.length ? `<h3 class="sub">次に意識すること</h3><ul class="bullets focus">${ev.focus.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
       ${ev.pace.details.rep_paces ? `<p class="muted num">各本: ${esc(ev.pace.details.rep_paces)}</p>` : ''}
@@ -972,18 +1130,128 @@ async function activityDetailView(id) {
 
 // ---- レース
 
+const CHECK_CATS = { prep: '前日までに', morning: '当日の朝', start: 'スタート前', after: 'ゴール後', other: 'その他 (追加分)' };
+const CHECK_ITEMS = [
+  ['prep', 'p1', '参加案内・ゼッケン引換証・本人確認'],
+  ['prep', 'p2', '本番用シューズ (慣らし済み) と替えの靴下'],
+  ['prep', 'p3', 'ウェア上下・ゼッケンを留める安全ピン'],
+  ['prep', 'p4', '防寒 (捨てるウェア・ポンチョ・手袋)'],
+  ['prep', 'p5', 'GPSウォッチを充電・ペース表を設定'],
+  ['prep', 'p6', 'ジェルなど補給食 (本数を決めて)'],
+  ['prep', 'p7', '塩・電解質タブレット'],
+  ['prep', 'p8', 'ワセリン・絆創膏 (擦れ止め)'],
+  ['prep', 'p9', 'キャップ・サングラス'],
+  ['prep', 'p10', '会場・スタート時間・荷物預けの場所を確認'],
+  ['prep', 'p11', '天気予報を見て、ウェアを最終決定'],
+  ['prep', 'p12', '前日は炭水化物中心の食事・早めに就寝'],
+  ['morning', 'm1', 'スタートの 2〜3 時間前に朝食 (消化のよいもの)'],
+  ['morning', 'm2', '水分をとる・トイレを済ませる'],
+  ['morning', 'm3', '荷物を預ける'],
+  ['morning', 'm4', '軽いジョグと動的ストレッチ'],
+  ['start', 's1', 'GPSの電波をつかむ'],
+  ['start', 's2', 'スタート 15 分前に整列・ジェル 1 本目の時間を決める'],
+  ['start', 's3', '捨てウェアを脱ぐタイミングを決める'],
+  ['after', 'a1', '防寒着に着替え、すぐ補給 (水分・糖質・塩分)'],
+  ['after', 'a2', '記録を確認し、Strava に反映'],
+];
+
+async function raceDetailView(id) {
+  const [races, state, weather] = await Promise.all([
+    api('/races'),
+    api(`/checklist/${id}`).catch(() => ({ checked: [], custom: [] })),
+    api('/race-weather').catch(() => null),
+  ]);
+  const r = races.find((x) => x.id === Number(id));
+  if (!r) return '<div class="card error">レースが見つかりません</div>';
+  let mode = 'even';
+  const t = today();
+  const items = [...CHECK_ITEMS.map(([cat, iid, text]) => ({ cat, id: iid, text })), ...(state.custom || [])];
+  const done = () => items.filter((x) => state.checked.includes(x.id)).length;
+  const save = () => api(`/checklist/${id}`, { method: 'PUT', body: state }).catch(() => {});
+
+  const drawChecks = () => {
+    const box = view.querySelector('#checks');
+    if (!box) return;
+    box.innerHTML = Object.entries(CHECK_CATS).map(([cat, label]) => {
+      const list = items.filter((x) => x.cat === cat);
+      if (!list.length) return '';
+      return `<div class="ck-group"><div class="ck-title">${label} <span class="muted num">${list.filter((x) => state.checked.includes(x.id)).length}/${list.length}</span></div>
+        ${list.map((x) => `<label class="ck ${state.checked.includes(x.id) ? 'on' : ''}"><input type="checkbox" data-ck="${x.id}" ${state.checked.includes(x.id) ? 'checked' : ''}><span class="box"></span><span class="ck-text">${esc(x.text)}</span>${x.cat === 'other' ? `<button type="button" class="ck-del" data-del="${x.id}" aria-label="削除">×</button>` : ''}</label>`).join('')}</div>`;
+    }).join('');
+    view.querySelector('#ck-prog').textContent = `${done()} / ${items.length}`;
+    view.querySelector('#ck-bar').style.width = `${(done() / items.length) * 100}%`;
+  };
+  setTimeout(() => {
+    drawChecks();
+    view.querySelector('#checks').addEventListener('change', (e) => {
+      const id2 = e.target.dataset.ck;
+      if (!id2) return;
+      state.checked = e.target.checked ? [...state.checked, id2] : state.checked.filter((x) => x !== id2);
+      drawChecks(); save();
+    });
+    view.querySelector('#checks').addEventListener('click', (e) => {
+      const d = e.target.closest('[data-del]');
+      if (!d) return;
+      e.preventDefault();
+      state.custom = state.custom.filter((x) => x.id !== d.dataset.del);
+      state.checked = state.checked.filter((x) => x !== d.dataset.del);
+      items.splice(0, items.length, ...CHECK_ITEMS.map(([cat, iid, text]) => ({ cat, id: iid, text })), ...state.custom);
+      drawChecks(); save();
+    });
+    view.querySelector('#ck-add').onsubmit = (e) => {
+      e.preventDefault();
+      const inp = view.querySelector('#ck-new');
+      const text = inp.value.trim();
+      if (!text) return;
+      const it = { id: `c${Date.now().toString(36)}`, cat: 'other', text };
+      state.custom = [...(state.custom || []), it];
+      items.push(it);
+      inp.value = '';
+      drawChecks(); save();
+    };
+    view.querySelectorAll('[data-pm]').forEach((b) => (b.onclick = () => {
+      mode = b.dataset.pm;
+      view.querySelectorAll('[data-pm]').forEach((x) => x.classList.toggle('on', x === b));
+      view.querySelector('#pace-out').innerHTML = splitTable(r, mode);
+      view.querySelector('#pace-note').textContent = PACE_PLANS[mode].note;
+    }));
+    view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
+  });
+  const dleft = r.date >= t ? daysBetween(t, r.date) : null;
+  return `
+    <div class="card hero">
+      <div class="row spread"><h2>${esc(r.name)}</h2><span class="badge">${esc(r.priority)}</span></div>
+      <div class="row spread">
+        <div>${dleft != null ? `<span class="big">${dleft}</span> 日` : '<span class="muted">終了</span>'}</div>
+        <div class="muted num">${md(r.date)}・${km(r.distance_m)}km${r.goal_time_s ? `<br>目標 ${dur(r.goal_time_s)} (${pace(r.goal_time_s / (r.distance_m / 1000))}/km)` : ''}</div>
+      </div>
+    </div>
+    ${weather && weather.race === r.name ? weatherCard(weather) : ''}
+    <div class="card"><h2>ペース表</h2>
+      ${r.goal_time_s ? `<div class="chips" style="margin-bottom:10px">${Object.entries(PACE_PLANS).map(([k, v]) => `<button type="button" class="chip ${k === 'even' ? 'on' : ''}" data-pm="${k}">${v.label}</button>`).join('')}</div>
+      <p class="muted" id="pace-note" style="margin-top:0">${PACE_PLANS.even.note}</p>` : ''}
+      <div id="pace-out">${splitTable(r, 'even')}</div>
+    </div>
+    <div class="card"><div class="row spread"><h2>準備物チェックリスト</h2><b class="num" id="ck-prog"></b></div>
+      <div class="bar" style="margin:6px 0 14px"><div id="ck-bar" style="width:0"></div></div>
+      <div id="checks"></div>
+      <form id="ck-add" class="row" style="margin-top:14px;gap:8px"><input id="ck-new" placeholder="持ち物を追加 (例: 梅干し)" style="flex:1" maxlength="60"><button class="primary">追加</button></form>
+    </div>
+    <button id="edit-race" class="wide">レースの情報を編集</button>`;
+}
+
 async function racesView() {
   const races = await api('/races');
   const t = today();
   setTimeout(() => {
     view.querySelector('#add-race').onclick = () => editRace({ priority: 'A', distance_m: 42195 });
-    view.querySelectorAll('[data-race]').forEach((el) => (el.onclick = () => editRace(races.find((r) => r.id === Number(el.dataset.race)))));
+    view.querySelectorAll('[data-race]').forEach((el) => (el.onclick = () => (location.hash = `#/races/${el.dataset.race}`)));
   });
   const row = (r) => {
     const goalPace = r.goal_time_s ? pace(r.goal_time_s / (r.distance_m / 1000)) : null;
     const diff = r.goal_time_s && r.result_time_s ? r.result_time_s - r.goal_time_s : null;
     return `<li data-race="${r.id}" style="cursor:pointer">
-      <div class="row spread"><span><span class="badge">${esc(r.priority)}</span> ${esc(r.name)}</span><span class="muted num">${r.date}</span></div>
+      <div class="row spread"><span><span class="badge">${esc(r.priority)}</span> ${esc(r.name)}</span><span class="muted num">${r.date} ›</span></div>
       <div class="muted num">${km(r.distance_m, 3)}km・目標 ${dur(r.goal_time_s)}${goalPace ? ` (${goalPace}/km)` : ''}${r.date >= t ? `・あと${daysBetween(t, r.date)}日` : ''}</div>
       ${r.result_time_s ? `<div class="num">結果 <strong>${dur(r.result_time_s)}</strong>${diff != null ? ` <span class="score ${diff <= 0 ? 'good' : 'bad'}">${diff <= 0 ? '-' : '+'}${dur(Math.abs(diff))}</span>` : ''}${r.activity_id ? ` <a href="#/activities/${r.activity_id}">記録</a>` : ''}</div>` : ''}
     </li>`;
@@ -1441,7 +1709,7 @@ async function route() {
     const html =
       tab === 'plans' ? await plansView(params)
       : tab === 'activities' ? (parts[1] ? await activityDetailView(parts[1]) : await activitiesView(params))
-      : tab === 'races' ? await racesView()
+      : tab === 'races' ? (parts[1] ? await raceDetailView(parts[1]) : await racesView())
       : tab === 'shoes' ? await shoesView()
       : tab === 'settings' ? await settingsView()
       : await homeView();

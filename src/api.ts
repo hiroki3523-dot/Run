@@ -4,11 +4,11 @@ import { addDays, weekStart } from './format';
 import { ingestActivity, morningBriefing, SHOE_TOTAL_SQL } from './process';
 import { notify } from './notify';
 import { seedInitial } from './seed';
-import { raceWeather, weatherAdvice } from './weather';
+import { weatherDays, raceWeather, weatherAdvice } from './weather';
 import { generatePlan, type PlannerRace } from './planner';
 import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
 import { getActivity } from './strava';
-import { getSettings, saveSettings } from './settings';
+import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
 import { getBackfill, startBackfill, stopBackfill } from './backfill';
 import { calendarSig } from './calendar';
@@ -377,6 +377,50 @@ api.post('/plans/generate', async (c) => {
 });
 
 // ---------------------------------------------------------------- 天気
+
+// ---------------------------------------------------------------- 準備物チェックリスト・月間目標 (kv に保存)
+
+api.get('/checklist/:race', async (c) => {
+  const raw = await kvGet(c.env, `checklist:${Number(c.req.param('race'))}`);
+  return c.json(raw ? JSON.parse(raw) : { checked: [], custom: [] });
+});
+
+api.put('/checklist/:race', async (c) => {
+  const b = await c.req.json<{ checked?: string[]; custom?: { id: string; cat: string; text: string }[] }>();
+  const clean = {
+    checked: [...new Set((b.checked ?? []).map(String))].slice(0, 200),
+    custom: (b.custom ?? []).slice(0, 40).map((x) => ({ id: String(x.id).slice(0, 40), cat: String(x.cat || 'other').slice(0, 20), text: String(x.text).slice(0, 60) })).filter((x) => x.text),
+  };
+  await kvSet(c.env, `checklist:${Number(c.req.param('race'))}`, JSON.stringify(clean));
+  return c.json(clean);
+});
+
+/** 月間の走行距離の目標 (month は YYYY-MM) */
+api.get('/goals/:month', async (c) => {
+  const m = c.req.param('month');
+  if (!/^\d{4}-\d{2}$/.test(m)) return c.json({ error: 'month は YYYY-MM' }, 400);
+  const raw = await kvGet(c.env, `goal:${m}`);
+  return c.json(raw ? JSON.parse(raw) : { km: null });
+});
+
+api.put('/goals/:month', async (c) => {
+  const m = c.req.param('month');
+  if (!/^\d{4}-\d{2}$/.test(m)) return c.json({ error: 'month は YYYY-MM' }, 400);
+  const b = await c.req.json<{ km?: number | null }>();
+  const km = b.km == null ? null : Math.min(1000, Math.max(0, Math.round(Number(b.km) || 0)));
+  await kvSet(c.env, `goal:${m}`, JSON.stringify({ km }));
+  return c.json({ km });
+});
+
+/** 過去 7 日〜先 15 日の天気 (予定表・ホーム用) */
+api.get('/weather/week', async (c) => {
+  try {
+    return c.json(await weatherDays());
+  } catch (e) {
+    console.error('weather week failed', e);
+    return c.json(null);
+  }
+});
 
 /** 次のレース (16 日以内) の当日予報 */
 api.get('/race-weather', async (c) => {
