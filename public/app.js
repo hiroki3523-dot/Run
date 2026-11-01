@@ -1477,6 +1477,19 @@ function shoeAdvice(shoes, race) {
 
 const STATUS = [[0, '使用中'], [2, '予備'], [1, '引退']];
 
+// Nike Run Club のマイシューズ (2026-11-01 時点)。[名前, km, 使用中か]。末尾が「…」の名前は前方一致
+const NRC_SHOES = [
+  ['EVO SL EXO', 167.7, 1], ['ボメロプラス2', 766.5, 1], ['ヴェイパーフライ ブラ…', 57.72, 1], ['アルファフライ3 no2', 51.41, 1],
+  ['ボメロ18 007', 142.7, 1], ['ヴェイパーフライ4', 79.48, 1], ['ストラクチャー26', 267.5, 1], ['ズームフライ6 no.2', 288.0, 1],
+  ['ボメロプラスブラック', 388.1, 1], ['ズームフライ6', 593.0, 1], ['ボメロ18 black2', 684.2, 1], ['ペガサス40', 236.7, 1],
+  ['アルファフライ3', 0, 1], ['ボメロプラス', 971.7, 0], ['ボメロ18', 859.7, 0], ['ボメロ18 black', 552.0, 0],
+  ['インフィニティラン4', 491.7, 0], ['インヴィンシブル3', 777.8, 0], ['Cloud monster', 76.52, 0], ['エアマックス', 84.75, 0],
+];
+const normName = (x) => String(x || '').normalize('NFKC').toLowerCase().replace(/[\s　]+/g, '');
+function nrcOf(shoe) {
+  const n = normName(shoe.name);
+  return NRC_SHOES.find(([nm]) => !nm.endsWith('…') && normName(nm) === n) || NRC_SHOES.find(([nm]) => nm.endsWith('…') && n.startsWith(normName(nm.slice(0, -1))));
+}
 async function putShoe(s, patch) {
   await api(`/shoes/${s.id}`, { method: 'PUT', body: { ...s, ...patch } });
 }
@@ -1485,6 +1498,8 @@ async function shoesView() {
   const [shoes, races] = await Promise.all([api('/shoes'), api('/races').catch(() => [])]);
   const nextRace = races.filter((r) => r.date >= today() && ['A', 'B'].includes(r.priority)).sort((a, b) => a.date.localeCompare(b.date))[0];
   const advice = shoeAdvice(shoes, nextRace);
+  // NRC と距離・状態が違うシューズ (合わせたら表示は消える)
+  const nrcDiff = shoes.map((x) => ({ s: x, n: nrcOf(x) })).filter(({ s: x, n }) => n && (Math.abs(x.total_km - n[1]) > 0.5 || (n[2] && x.retired === 1)));
   const guesses = shoes.filter((x) => !x.retired && guessPurposes(x.name) && purposesOf(x.purpose).join() !== guessPurposes(x.name).join());
   setTimeout(() => {
     view.querySelector('#add-shoe').onclick = () => editShoe({ purpose: 'easy', limit_km: 700, initial_km: 0 });
@@ -1542,6 +1557,17 @@ async function shoesView() {
       await putShoe(s, { retired: Number(b.dataset.st) });
       route();
     }));
+    const nb = view.querySelector('#nrc-sync');
+    if (nb) nb.onclick = async () => {
+      const lines = nrcDiff.map(({ s: x, n }) => `${x.name}: ${x.total_km.toFixed(1)} → ${n[1]}km${n[2] && x.retired === 1 ? ' (使用中に戻す)' : ''}`);
+      if (!confirm(`NRC の距離に合わせます:\n${lines.join('\n')}`)) return;
+      nb.disabled = true;
+      for (const { s: x, n } of nrcDiff) {
+        const imported = x.total_km - (x.initial_km || 0);
+        await putShoe(x, { initial_km: Math.round((n[1] - imported) * 100) / 100, ...(n[2] && x.retired === 1 ? { retired: 0 } : {}) });
+      }
+      route();
+    };
     const g = view.querySelector('#guess');
     if (g) g.onclick = async () => {
       if (!confirm(`名前から用途を推定して設定します:\n${guesses.map((x) => `${x.name} → ${guessPurposes(x.name).map((p) => PURPOSE_LABELS[p]).join('・')}`).join('\n')}\n(あとで各シューズから直せます)`)) return;
@@ -1561,7 +1587,8 @@ async function shoesView() {
         <div class="shoe-body"><b class="shoe-name">${esc(s.name)}</b>
         <div class="shoe-km num">${s.total_km.toFixed(1)}<small> / ${s.limit_km}KM</small></div>
         <div class="bar ${ratio >= 1 ? 'over' : ratio >= 0.9 ? 'warn' : ''}"><div style="width:${Math.min(100, ratio * 100)}%"></div></div>
-        <div class="muted tiny">${purposeText(s)}</div></div>
+        <div class="muted tiny">${purposeText(s)}</div>
+        ${s.retired === 1 ? `<button type="button" class="chip" data-st="0" data-sid="${s.id}" style="margin-top:6px">使用中に戻す</button>` : ''}</div>
         <svg class="chev" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
       </div>
       </div>
@@ -1571,6 +1598,7 @@ async function shoesView() {
   return `
     <div class="row spread" style="margin-bottom:8px"><h2>シューズ</h2><button class="primary" id="add-shoe">＋ 追加</button></div>
     ${advice.length ? `<div class="card"><ul class="advice">${advice.map((a) => `<li class="${a.tone}">${a.text}</li>`).join('')}</ul></div>` : ''}
+    ${nrcDiff.length ? `<div class="card"><p style="margin:0 0 10px"><b>NRC と距離が違うシューズ ${nrcDiff.length}足</b></p><button id="nrc-sync" class="primary wide">NRC の距離に合わせる</button></div>` : ''}
     ${guesses.length ? `<div class="card"><p class="muted" style="margin-top:0">名前から、用途を自動で設定できます (${guesses.length}足)。</p><button id="guess" class="primary wide">用途をまとめて設定</button></div>` : ''}
     <div class="card"><ul class="list shoes">${active.map(row).join('') || '<li class="muted">使用中のシューズはありません</li>'}</ul></div>
     ${rest.length ? `<h3 class="sub" style="margin:18px 4px 6px">予備・引退 (${rest.length}足)</h3><div class="card"><ul class="list shoes">${rest.map(row).join('')}</ul></div>` : ''}
