@@ -96,7 +96,7 @@ export function buildIcs(plans: Plan[], races: CalRace[], now: Date = new Date()
     'PRODID:-//sub3-runner//JA',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    'X-WR-CALNAME:Sub3 Runner',
+    'X-WR-CALNAME:STRIDE',
     'X-WR-TIMEZONE:Asia/Tokyo',
     'REFRESH-INTERVAL;VALUE=DURATION:PT1H',
     'X-PUBLISHED-TTL:PT1H',

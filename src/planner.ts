@@ -22,6 +22,8 @@ export interface PlannerInput {
   /** start の直前 (10 日以内) に出たレースの日付 */
   last_race: string | null;
   settings: Settings;
+  /** start が週の途中のとき、その週にすでに走った分 (残りの週メニューを作り直す用) */
+  week_done?: { km: number; points: number; long: boolean };
 }
 
 export interface PlanRow {
@@ -63,6 +65,7 @@ export function generatePlan(input: PlannerInput): PlanRow[] {
 
   const raceDays = new Map<string, PlannerRace>([[end, race], ...others.map((o) => [o.date, o] as [string, PlannerRace])]);
   const rows: PlanRow[] = [];
+  const pending = new Map<string, { date: string; vol: number; weeksOut: number; w: number }[]>();
   const firstBuildDay = input.last_race ? addDays(input.last_race, 7) : start;
 
   for (let d = start; d <= end; d = addDays(d, 1)) {
@@ -104,58 +107,132 @@ export function generatePlan(input: PlannerInput): PlanRow[] {
     if (weeksOut === 2) vol = Math.min(vol, base * 0.85);
     if (weeksOut === 1) vol = Math.min(vol, base * 0.7);
     if (firstBuildDay > start && w === 0) vol *= 0.8;
-    rows.push(buildDay(d, vol, weeksOut, w, { mp, mpTxt, ltTxt, settings }));
+    const key = weekStartOf(d);
+    const g = pending.get(key) ?? [];
+    g.push({ date: d, vol, weeksOut, w });
+    pending.set(key, g);
   }
-  return rows;
+  let first = true;
+  for (const [key, days] of [...pending].sort(([a], [b]) => a.localeCompare(b))) {
+    const done = first && input.week_done && days[0].date > key ? input.week_done : undefined;
+    first = false;
+    rows.push(...buildWeek(days, { mp, mpTxt, ltTxt, settings, done }));
+  }
+  return rows.sort((a, b) => a.date.localeCompare(b.date));
 
   function jog(date: string, k: number, notes: string): PlanRow {
     return { date, type: 'jog', distance_m: m(k), pace_min_s: 330, pace_max_s: 345, notes };
   }
 }
 
-function buildDay(
-  d: string, vol: number, weeksOut: number, w: number,
-  c: { mp: number; mpTxt: string; ltTxt: string; settings: Settings },
-): PlanRow {
+/** 月曜はじまりの週の開始日 */
+function weekStartOf(d: string): string {
   const dow = dayOfWeek(d);
-  const speed = c.settings.paces.interval;
-  const row = (type: PlanType, k: number, notes: string, band?: [number, number]): PlanRow => ({
-    date: d, type, distance_m: m(k), pace_min_s: band?.[0] ?? null, pace_max_s: band?.[1] ?? null, notes,
-  });
-  switch (dow) {
-    case 1: return rest(d, '休養');
-    case 2: return row('easy', km(Math.max(6, vol * 0.13)), 'Easy。心拍を上げずに楽に (5:00〜5:45/km)');
-    case 3: {
-      const lt = weeksOut <= 8 || w % 2 === 0;
-      const k = km(Math.max(8, vol * 0.17));
-      if (lt) {
-        const rep = k >= 12 ? 3 : 2;
-        return row('lt', k, `LT走: アップ3km + 閾値 ${c.ltTxt}/km 前後 ${rep}km×2 (間2分ジョグ) + ダウン2km`, [c.settings.paces.lt.min, c.settings.paces.lt.max]);
-      }
-      const n = Math.max(5, Math.min(8, Math.round(k - 5)));
-      return row('interval', k, `インターバル: アップ3km + 1km×${n} (${fmtPace(speed.min)}〜${fmtPace(speed.max)}/km、間400mジョグ) + ダウン2km`, [speed.min, speed.max]);
-    }
-    case 4: return row('easy', km(Math.max(6, vol * 0.12)), 'Easy。脚の張りを確認しながら (5:00〜5:45/km)');
-    case 5: return vol >= 70 ? row('jog', 5, 'ジョグ5km (疲労抜き)', [330, 345]) : rest(d, '休養 (ハムのケア・補強)');
-    case 6: {
-      if (weeksOut <= 12) {
-        const k = km(Math.max(10, vol * 0.2));
-        const body = Math.max(5, Math.round(k - 6));
-        return row('m', k, `Mペース走: アップ3km + 目標ペース ${c.mpTxt}/km を ${body}km + ダウン3km`, [Math.round(c.mp - 3), Math.round(c.mp + 3)]);
-      }
-      return row('easy', km(Math.max(8, vol * 0.15)), 'Easy。流し100m×4 を入れる');
-    }
-    default: {
-      const peak = weeksOut >= 3 && weeksOut <= 6;
-      let k = vol * (peak ? 0.42 : 0.34);
-      if (weeksOut === 2) k = Math.min(k, 24);
-      if (weeksOut === 1) k = Math.min(k, 18);
-      k = km(Math.min(peak ? 32 : 28, Math.max(16, k)));
-      const mpPart = weeksOut <= 8 && weeksOut >= 2 ? Math.max(6, Math.round(k * 0.45)) : 0;
-      const notes = mpPart
-        ? `ロング走 ${k}km: 前半はゆっくり、後半 ${mpPart}km を目標ペース ${c.mpTxt}/km。本番の靴・ジェル・朝食の予行`
-        : `ロング走 ${k}km: 5:00〜5:20/km で一定。後半に疲れが出ても形を崩さない`;
-      return row('long', k, notes);
-    }
+  return addDays(d, -((dow + 6) % 7));
+}
+const monIndex = (d: string) => (dayOfWeek(d) + 6) % 7; // 月=0 … 日=6
+
+interface WeekCtx {
+  mp: number; mpTxt: string; ltTxt: string; settings: Settings;
+  done?: { km: number; points: number; long: boolean };
+}
+
+/**
+ * 1 週間ぶんの役割を決める。
+ * 休養日・予定ありの日を除いた「走れる日」に、ロング走 → ポイント練習 → Easy の順で割り当てる。
+ */
+function buildWeek(days: { date: string; vol: number; weeksOut: number; w: number }[], c: WeekCtx): PlanRow[] {
+  const prefs = c.settings.plan_prefs;
+  const { weeksOut, w } = days[0];
+  let vol = days[0].vol;
+  if (c.done) vol = Math.max(vol * 0.3, vol - c.done.km);
+  const out: PlanRow[] = [];
+  const open: string[] = [];
+  for (const { date } of days) {
+    if (prefs.blocked.includes(date)) out.push(rest(date, '休養 (予定があり走れない日)'));
+    else if (prefs.rest_days.includes(dayOfWeek(date))) out.push(rest(date, '休養日'));
+    else open.push(date);
   }
+  if (open.length === 0) return out;
+
+  // ロング走: 希望の曜日。使えなければ一番近い走れる日
+  const hard: string[] = [];
+  let longDay: string | null = null;
+  if (prefs.long_per_week > 0 && !(c.done?.long)) {
+    const want = (prefs.long_day + 6) % 7;
+    longDay = [...open].sort((a, b) => Math.abs(monIndex(a) - want) - Math.abs(monIndex(b) - want) || monIndex(b) - monIndex(a))[0];
+    hard.push(longDay);
+  }
+  // ポイント練習: すでにある硬い日からできるだけ離す。同点なら水・土・火・木の順
+  const PREF = [2, 5, 1, 3, 0, 4, 6];
+  let nPoints = Math.min(3, Math.max(0, prefs.points_per_week));
+  if (weeksOut <= 1) nPoints = Math.min(nPoints, 2);
+  if (c.done) nPoints = Math.max(0, nPoints - c.done.points);
+  const points: string[] = [];
+  while (points.length < nPoints) {
+    const cand = open.filter((d) => !hard.includes(d) && !points.includes(d));
+    if (cand.length === 0) break;
+    const score = (d: string) => {
+      const gap = Math.min(3, ...[...hard, ...points].map((x) => Math.abs(monIndex(x) - monIndex(d))));
+      return gap * 10 + (7 - PREF.indexOf(monIndex(d)));
+    };
+    cand.sort((a, b) => score(b) - score(a));
+    points.push(cand[0]);
+  }
+  points.sort();
+
+  // 種別: 最初は LT/インターバル、最後は M ペース走 (本番に近い時期)
+  const A: PlanType = weeksOut <= 8 || w % 2 === 0 ? 'lt' : 'interval';
+  const B: PlanType = weeksOut <= 12 ? 'm' : A === 'lt' ? 'interval' : 'lt';
+  const Cc: PlanType = A === 'lt' ? 'interval' : 'lt';
+  const seq: PlanType[] = points.length === 1 ? [w % 2 === 0 ? A : B] : points.length === 2 ? [A, B] : [A, Cc, B];
+
+  const rowFor = (d: string, type: PlanType): PlanRow => qualityRow(d, type, vol, c);
+  const longRow = longDay ? longRunRow(longDay, vol, weeksOut, c) : null;
+  const pointRows = points.map((d, i) => rowFor(d, seq[i]));
+  const used = (longRow?.distance_m ?? 0) + pointRows.reduce((a, r) => a + (r.distance_m ?? 0), 0);
+
+  const easyDays = open.filter((d) => d !== longDay && !points.includes(d));
+  const easyKm = easyDays.length ? Math.min(14, Math.max(5, (vol * 1000 - used) / 1000 / easyDays.length)) : 0;
+  for (const d of easyDays) {
+    const k = km(easyKm);
+    out.push(k < 6
+      ? { date: d, type: 'jog', distance_m: m(k), pace_min_s: 330, pace_max_s: 345, notes: `ジョグ${k}km (疲労抜き)` }
+      : { date: d, type: 'easy', distance_m: m(k), pace_min_s: null, pace_max_s: null, notes: 'Easy。心拍を上げずに楽に (5:00〜5:45/km)' });
+  }
+  if (longRow) out.push(longRow);
+  out.push(...pointRows);
+  return out;
+}
+
+function qualityRow(d: string, type: PlanType, vol: number, c: WeekCtx): PlanRow {
+  const speed = c.settings.paces.interval;
+  const row = (t: PlanType, k: number, notes: string, band?: [number, number]): PlanRow => ({
+    date: d, type: t, distance_m: m(k), pace_min_s: band?.[0] ?? null, pace_max_s: band?.[1] ?? null, notes,
+  });
+  if (type === 'm') {
+    const k = km(Math.max(10, vol * 0.2));
+    const body = Math.max(5, Math.round(k - 6));
+    return row('m', k, `Mペース走: アップ3km + 目標ペース ${c.mpTxt}/km を ${body}km + ダウン3km`, [Math.round(c.mp - 3), Math.round(c.mp + 3)]);
+  }
+  const k = km(Math.max(8, vol * 0.17));
+  if (type === 'lt') {
+    const rep = k >= 12 ? 3 : 2;
+    return row('lt', k, `LT走: アップ3km + 閾値 ${c.ltTxt}/km 前後 ${rep}km×2 (間2分ジョグ) + ダウン2km`, [c.settings.paces.lt.min, c.settings.paces.lt.max]);
+  }
+  const n = Math.max(5, Math.min(8, Math.round(k - 5)));
+  return row('interval', k, `インターバル: アップ3km + 1km×${n} (${fmtPace(speed.min)}〜${fmtPace(speed.max)}/km、間400mジョグ) + ダウン2km`, [speed.min, speed.max]);
+}
+
+function longRunRow(d: string, vol: number, weeksOut: number, c: WeekCtx): PlanRow {
+  const peak = weeksOut >= 3 && weeksOut <= 6;
+  let k = vol * (peak ? 0.42 : 0.34);
+  if (weeksOut === 2) k = Math.min(k, 24);
+  if (weeksOut === 1) k = Math.min(k, 18);
+  k = km(Math.min(peak ? 32 : 28, Math.max(16, k)));
+  const mpPart = weeksOut <= 8 && weeksOut >= 2 ? Math.max(6, Math.round(k * 0.45)) : 0;
+  const notes = mpPart
+    ? `ロング走 ${k}km: 前半はゆっくり、後半 ${mpPart}km を目標ペース ${c.mpTxt}/km。本番の靴・ジェル・朝食の予行`
+    : `ロング走 ${k}km: 5:00〜5:20/km で一定。後半に疲れが出ても形を崩さない`;
+  return { date: d, type: 'long', distance_m: m(k), pace_min_s: null, pace_max_s: null, notes };
 }

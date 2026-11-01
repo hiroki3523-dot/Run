@@ -41,4 +41,40 @@ describe('planner', () => {
     const wk = (from: string) => rows.filter((r) => r.date >= from && r.date < new Date(Date.parse(from) + 7 * 86400000).toISOString().slice(0, 10)).reduce((s, r) => s + (r.distance_m ?? 0), 0) / 1000;
     expect(wk('2027-02-08')).toBeLessThan(wk('2027-01-18')); // テーパー
   });
+
+  const kum = (prefs: Partial<typeof DEFAULT_SETTINGS.plan_prefs>, extra = {}) =>
+    generatePlan({
+      start: '2026-11-09', race: kumamoto, others: [], weekly_km: 60, last_completion: 1, last_race: '2026-11-08',
+      settings: { ...DEFAULT_SETTINGS, plan_prefs: { ...DEFAULT_SETTINGS.plan_prefs, ...prefs } }, ...extra,
+    });
+  const POINTS = ['m', 'lt', 'interval'];
+  const weekOf = (rows: ReturnType<typeof kum>, from: string) => rows.filter((r) => r.date >= from && r.date < new Date(Date.parse(from) + 7 * 86400000).toISOString().slice(0, 10));
+
+  it('希望どおり: ポイント走は週2回・ロング1回・休養日は固定', () => {
+    const rows = kum({ points_per_week: 2, long_per_week: 1, rest_days: [1, 5] });
+    const wk = weekOf(rows, '2026-12-14'); // 通常週
+    expect(wk.filter((r) => POINTS.includes(r.type)).length).toBe(2);
+    expect(wk.filter((r) => r.type === 'long').length).toBe(1);
+    for (const r of wk) {
+      const dow = new Date(r.date + 'T00:00:00Z').getUTCDay();
+      if (dow === 1 || dow === 5) expect(r.type).toBe('rest');
+    }
+  });
+  it('ポイント走を週3回にできる / 0回にもできる', () => {
+    expect(weekOf(kum({ points_per_week: 3 }), '2026-12-14').filter((r) => POINTS.includes(r.type)).length).toBe(3);
+    expect(weekOf(kum({ points_per_week: 0 }), '2026-12-14').filter((r) => POINTS.includes(r.type)).length).toBe(0);
+  });
+  it('走れない日は休養になり、ロング走は近い日に移る', () => {
+    const rows = kum({ blocked: ['2026-12-20'] }); // 日曜
+    const sun = rows.find((r) => r.date === '2026-12-20')!;
+    expect(sun.type).toBe('rest');
+    const wk = weekOf(rows, '2026-12-14');
+    expect(wk.filter((r) => r.type === 'long').length).toBe(1);
+  });
+  it('週の途中からの作り直しは、走った分とポイント済みを差し引く', () => {
+    const rows = kum({}, { start: '2026-12-16', last_race: null, week_done: { km: 30, points: 1, long: false } });
+    const wk = rows.filter((r) => r.date >= '2026-12-16' && r.date <= '2026-12-20');
+    expect(wk.filter((r) => POINTS.includes(r.type)).length).toBe(1);
+    expect(wk.filter((r) => r.type === 'long').length).toBe(1);
+  });
 });

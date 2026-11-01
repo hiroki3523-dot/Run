@@ -1,4 +1,4 @@
-// Sub3 Runner — 依存なしの小さな SPA
+// STRIDE — 依存なしの小さな SPA
 const view = document.getElementById('view');
 const dialog = document.getElementById('dialog');
 const dialogForm = document.getElementById('dialog-form');
@@ -190,11 +190,12 @@ function weeklyChart(weeks) {
   const max = Math.max(...weeks.map((w) => Math.max(w.planned_m, w.actual_m)), 1);
   const h = (m) => `${(m / max) * 90}px`;
   return `<div class="chart">${weeks.map((w) => `
-    <div class="col" title="${md(w.week)}週 実績 ${km(w.actual_m)}km / 計画 ${km(w.planned_m)}km">
+    <a class="col" href="#/activities?view=week&date=${w.week}" title="${md(w.week)}週 実績 ${km(w.actual_m)}km / 計画 ${km(w.planned_m)}km">
       ${w.planned_m ? `<div class="plan" style="height:${h(w.planned_m)}"></div>` : ''}
       <div class="act" style="height:${h(w.actual_m)}"></div>
       <div class="lbl">${md(w.week)}</div>
-    </div>`).join('')}</div>`;
+    </a>`).join('')}</div>
+    <p class="muted hint">棒をタップすると、その週の評価が開きます</p>`;
 }
 
 function activityList(acts) {
@@ -254,6 +255,7 @@ async function plansView(params) {
       if (e.target.closest('a')) return;
       editPlan(plans.find((p) => p.id === Number(el.dataset.plan)), settings);
     }));
+    wirePrefs(view, settings);
     wireAutoPlan(view);
     view.querySelector('#bulk-toggle').onclick = () => view.querySelector('#bulk-box').classList.toggle('hidden');
     view.querySelector('#bulk-go').onclick = async () => {
@@ -283,6 +285,7 @@ async function plansView(params) {
     <div class="card">
       <div class="row spread num"><span>計画 ${km(total)}km・実績 ${km(actual)}km</span><button id="copy-week">この週を翌週へコピー</button></div>
     </div>
+    <div class="card" id="prefs-card"><h2>週の基本構成</h2><div id="prefs-body"></div></div>
     <div class="card" id="auto-card">
       <button id="auto-toggle">実績と目標から計画を自動で作る</button>
       <div id="auto-box" class="hidden" style="margin-top:12px">
@@ -315,6 +318,53 @@ async function plansView(params) {
           </div>
         </div>`).join('')}
     </div>`;
+}
+
+const WEEKDAYS = [['月', 1], ['火', 2], ['水', 3], ['木', 4], ['金', 5], ['土', 6], ['日', 0]];
+
+/** 自動計画の希望 (ポイント走の回数・ロング走・休養日・走れない日)。タップするとすぐ保存 */
+function wirePrefs(root, settings) {
+  const body = root.querySelector('#prefs-body');
+  const prefs = settings.plan_prefs;
+  const t = today();
+  const next14 = [...Array(14)].map((_, i) => addDays(t, i));
+  const chip = (attr, val, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" ${attr}="${val}">${label}</button>`;
+  const draw = () => {
+    body.innerHTML = `
+      <div class="field"><span class="lbl">ポイント走 (LT・インターバル・Mペース走) 週あたり</span><div class="chips">${[0, 1, 2, 3].map((n) => chip('data-pp', n, `${n}回`, prefs.points_per_week === n)).join('')}</div></div>
+      <div class="field"><span class="lbl">ロング走 週あたり</span><div class="chips">${[0, 1].map((n) => chip('data-lp', n, `${n}回`, prefs.long_per_week === n)).join('')}</div></div>
+      <div class="field"><span class="lbl">ロング走の曜日</span><div class="chips">${WEEKDAYS.map(([l, n]) => chip('data-ld', n, l, prefs.long_day === n)).join('')}</div></div>
+      <div class="field"><span class="lbl">毎週の休養日 (複数選べます)</span><div class="chips">${WEEKDAYS.map(([l, n]) => chip('data-rd', n, l, prefs.rest_days.includes(n))).join('')}</div></div>
+      <div class="field"><span class="lbl">予定があって走れない日 (今後2週間)</span><div class="chips">${next14.map((d) => chip('data-bl', d, `${dow(d)}${Number(d.slice(8))}`, prefs.blocked.includes(d))).join('')}</div></div>
+      <button type="button" id="regen" class="primary wide">今週の残りをこの条件で作り直す</button>
+      <p class="muted" id="prefs-msg"></p>`;
+  };
+  const save = async () => {
+    try { await api('/settings', { method: 'PUT', body: { plan_prefs: prefs } }); body.querySelector('#prefs-msg').textContent = '保存しました'; }
+    catch (e) { body.querySelector('#prefs-msg').textContent = `エラー: ${e.message}`; }
+  };
+  body.addEventListener('click', async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const d = b.dataset;
+    if (b.id === 'regen') {
+      const ws = weekStart(t);
+      if (!confirm(`今日から${md(addDays(ws, 6))}までの計画を、この条件で作り直します (走った日の計画は残します)`)) return;
+      b.disabled = true;
+      try { const r = await api('/plans/generate', { method: 'POST', body: { overwrite: true, commit: true, from: t, to: addDays(ws, 6) } }); body.querySelector('#prefs-msg').textContent = `${r.added} 日分を作り直しました`; setTimeout(route, 900); }
+      catch (err) { body.querySelector('#prefs-msg').textContent = `エラー: ${err.message}`; b.disabled = false; }
+      return;
+    }
+    if (d.pp != null) prefs.points_per_week = Number(d.pp);
+    else if (d.lp != null) prefs.long_per_week = Number(d.lp);
+    else if (d.ld != null) prefs.long_day = Number(d.ld);
+    else if (d.rd != null) { const n = Number(d.rd); prefs.rest_days = prefs.rest_days.includes(n) ? prefs.rest_days.filter((x) => x !== n) : [...prefs.rest_days, n]; }
+    else if (d.bl) prefs.blocked = prefs.blocked.includes(d.bl) ? prefs.blocked.filter((x) => x !== d.bl) : [...prefs.blocked, d.bl];
+    else return;
+    draw();
+    await save();
+  });
+  draw();
 }
 
 function wireAutoPlan(root) {
@@ -360,30 +410,35 @@ const ZONES = [
   { n: '無酸素持久力', short: '無酸素', pace: [222, 241], hr: [1.02, 1.06] },
   { n: '無酸素パワー', short: '全力', pace: [200, 221], hr: [1.06, 1.2] },
 ];
-const zoneMid = (z) => (ZONES[z].pace[0] + ZONES[z].pace[1]) / 2;
+/** 自分の設定ペース (設定画面の値)。E / M / LT / I を基準ペースとして選べる */
+let PACES = null;
+const REFS = { easy: { label: 'E', zone: 1 }, m: { label: 'M', zone: 3 }, lt: { label: 'LT', zone: 3 }, interval: { label: 'I', zone: 4 } };
+const bandOf = (t) => (t.ref && PACES?.[t.ref] ? [PACES[t.ref].min, PACES[t.ref].max] : ZONES[t.zone].pace);
+const bandMid = (t) => (bandOf(t)[0] + bandOf(t)[1]) / 2;
+const intensityLabel = (t) => (t.ref ? REFS[t.ref].label : ZONES[t.zone].short);
 const fmtTarget = (t) => (t.by === 'dist' ? (t.value >= 1000 ? `${+(t.value / 1000).toFixed(2)}km` : `${t.value}m`) : pace(t.value));
-const targetM = (t) => (t.by === 'dist' ? t.value : (t.value / zoneMid(t.zone)) * 1000);
+const targetM = (t) => (t.by === 'dist' ? t.value : (t.value / bandMid(t)) * 1000);
 const stepM = (sp) => (sp.kind === 'interval' ? sp.reps * (targetM(sp.work) + targetM(sp.rest)) : targetM(sp));
 const stepsTotalM = (steps) => steps.reduce((a, sp) => a + stepM(sp), 0);
 function stepText(sp) {
-  if (sp.kind === 'interval') return `${fmtTarget(sp.work)}×${sp.reps} ${ZONES[sp.work.zone].short} (休憩 ${fmtTarget(sp.rest)})`;
-  const base = `${fmtTarget(sp)} ${ZONES[sp.zone].short}`;
+  if (sp.kind === 'interval') return `${fmtTarget(sp.work)}×${sp.reps} ${intensityLabel(sp.work)} (休憩 ${fmtTarget(sp.rest)})`;
+  const base = `${fmtTarget(sp)} ${intensityLabel(sp)}`;
   return sp.kind === 'warmup' ? `アップ ${base}` : sp.kind === 'cooldown' ? `ダウン ${base}` : sp.kind === 'rest' ? `休憩 ${fmtTarget(sp)}` : base;
 }
 const stepsSummary = (steps) => steps.map(stepText).join(' → ');
 const mkStep = {
-  warmup: () => ({ kind: 'warmup', by: 'dist', value: 2000, zone: 1 }),
-  work: () => ({ kind: 'work', by: 'dist', value: 5000, zone: 3 }),
+  warmup: () => ({ kind: 'warmup', by: 'dist', value: 2000, zone: 1, ref: 'easy' }),
+  work: () => ({ kind: 'work', by: 'dist', value: 5000, zone: 3, ref: 'm' }),
   rest: () => ({ kind: 'rest', by: 'time', value: 120, zone: 0 }),
-  cooldown: () => ({ kind: 'cooldown', by: 'dist', value: 2000, zone: 1 }),
-  interval: () => ({ kind: 'interval', reps: 5, work: { by: 'dist', value: 1000, zone: 4 }, rest: { by: 'dist', value: 200, zone: 0 } }),
+  cooldown: () => ({ kind: 'cooldown', by: 'dist', value: 2000, zone: 1, ref: 'easy' }),
+  interval: () => ({ kind: 'interval', reps: 5, work: { by: 'dist', value: 1000, zone: 4, ref: 'interval' }, rest: { by: 'dist', value: 200, zone: 0 } }),
 };
 const STEP_PRESETS = {
-  'Mペース走': () => [mkStep.warmup(), { kind: 'work', by: 'dist', value: 10000, zone: 3 }, mkStep.cooldown()],
-  'LT走': () => [mkStep.warmup(), { kind: 'interval', reps: 3, work: { by: 'dist', value: 2000, zone: 3 }, rest: { by: 'dist', value: 400, zone: 0 } }, mkStep.cooldown()],
+  'Mペース走': () => [mkStep.warmup(), { kind: 'work', by: 'dist', value: 10000, zone: 3, ref: 'm' }, mkStep.cooldown()],
+  'LT走': () => [mkStep.warmup(), { kind: 'interval', reps: 3, work: { by: 'dist', value: 2000, zone: 3, ref: 'lt' }, rest: { by: 'dist', value: 400, zone: 0 } }, mkStep.cooldown()],
   'インターバル': () => [mkStep.warmup(), mkStep.interval(), mkStep.cooldown()],
-  'ビルドアップ': () => [{ kind: 'work', by: 'dist', value: 5000, zone: 1 }, { kind: 'work', by: 'dist', value: 5000, zone: 2 }, { kind: 'work', by: 'dist', value: 3000, zone: 3 }],
-  'ロング(後半M)': () => [{ kind: 'work', by: 'dist', value: 16000, zone: 1 }, { kind: 'work', by: 'dist', value: 8000, zone: 3 }],
+  'ビルドアップ': () => [{ kind: 'work', by: 'dist', value: 5000, zone: 1, ref: 'easy' }, { kind: 'work', by: 'dist', value: 5000, zone: 2 }, { kind: 'work', by: 'dist', value: 3000, zone: 3, ref: 'm' }],
+  'ロング(後半M)': () => [{ kind: 'work', by: 'dist', value: 16000, zone: 1, ref: 'easy' }, { kind: 'work', by: 'dist', value: 8000, zone: 3, ref: 'm' }],
 };
 
 const PLAN_DEFAULT_KM = { easy: 10, jog: 6, long: 24, m: 14, lt: 10, interval: 10, race: 42.2 };
@@ -421,8 +476,10 @@ async function editPlan(p, settings) {
   const week = [...Array(7)].map((_, i) => addDays(ws0, i));
   const chip = (attr, val, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" ${attr}="${esc(String(val))}">${esc(label)}</button>`;
 
+  PACES = settings.paces;
   const lthr = settings.coros?.lthr || settings.lthr || 174;
-  const zoneLine = (z) => {
+  const zoneLine = (z, ref) => {
+    if (ref && PACES?.[ref]) return `${REFS[ref].label}ペース ${pace(PACES[ref].min)}〜${pace(PACES[ref].max)} (設定の値)`;
     const Z = ZONES[z];
     const pc = z === 0 ? `${pace(Z.pace[0])}より遅い` : z === 5 ? `${pace(Z.pace[1])}より速い` : `${pace(Z.pace[0])}〜${pace(Z.pace[1])}`;
     const hr = z === 0 ? `${Math.round(lthr * Z.hr[1])}bpm未満` : z === 5 ? `${Math.round(lthr * Z.hr[0])}bpm超` : `${Math.round(lthr * Z.hr[0])}〜${Math.round(lthr * Z.hr[1])}bpm`;
@@ -434,8 +491,9 @@ async function editPlan(p, settings) {
       <div class="stepper"><button type="button" data-sval="${i}:${part}:-${t.by === 'dist' ? 1000 : 300}">−${t.by === 'dist' ? '1km' : '5分'}</button><button type="button" data-sval="${i}:${part}:-${t.by === 'dist' ? 200 : 30}">−${t.by === 'dist' ? '200m' : '30秒'}</button>
         <b class="num">${fmtTarget(t)}</b>
         <button type="button" data-sval="${i}:${part}:${t.by === 'dist' ? 200 : 30}">+${t.by === 'dist' ? '200m' : '30秒'}</button><button type="button" data-sval="${i}:${part}:${t.by === 'dist' ? 1000 : 300}">+${t.by === 'dist' ? '1km' : '5分'}</button></div>
-      <div class="chips">${ZONES.map((Z, z) => chip('data-szone', `${i}:${part}:${z}`, Z.short, t.zone === z)).join('')}</div>
-      <p class="muted zone-note">${esc(zoneLine(t.zone))}</p></div>`;
+      <div class="chips">${Object.entries(REFS).map(([k, R]) => chip('data-sref', `${i}:${part}:${k}`, `${R.label}ペース`, t.ref === k)).join('')}</div>
+      <div class="chips">${ZONES.map((Z, z) => chip('data-szone', `${i}:${part}:${z}`, Z.short, !t.ref && t.zone === z)).join('')}</div>
+      <p class="muted zone-note">${esc(zoneLine(t.zone, t.ref))}</p></div>`;
   const stepsHtml = () => {
     const cards = st.steps.map((sp, i) => {
       const open = st.open === i;
@@ -504,13 +562,14 @@ async function editPlan(p, settings) {
       const j = i + dir;
       if (j >= 0 && j < st.steps.length) { [st.steps[i], st.steps[j]] = [st.steps[j], st.steps[i]]; st.open = j; }
     } else if (d.sreps) { const [i, dl] = d.sreps.split(':').map(Number); st.steps[i].reps = Math.max(1, st.steps[i].reps + dl); }
-    else if (d.sby || d.sval || d.szone) {
-      const [i, part, v] = (d.sby || d.sval || d.szone).split(':');
+    else if (d.sby || d.sval || d.szone || d.sref) {
+      const [i, part, v] = (d.sby || d.sval || d.szone || d.sref).split(':');
       const sp = st.steps[Number(i)];
       const t = part ? sp[part] : sp;
       if (d.sby) { if (t.by !== v) { t.by = v; t.value = v === 'dist' ? 1000 : 120; } }
       else if (d.sval) t.value = Math.max(t.by === 'dist' ? 100 : 15, t.value + Number(v));
-      else t.zone = Number(v);
+      else if (d.sref) { t.ref = v; t.zone = REFS[v].zone; }
+      else { t.zone = Number(v); t.ref = null; }
     } else return;
     draw();
   };
@@ -528,8 +587,8 @@ async function editPlan(p, settings) {
     stepKm = Math.round(stepsTotalM(st.steps));
     const main = st.steps.find((x) => x.kind === 'interval' || x.kind === 'work');
     if (main && !st.pmin) {
-      const z = ZONES[main.kind === 'interval' ? main.work.zone : main.zone];
-      st.pmin = z.pace[0]; st.pmax = z.pace[1];
+      const band = bandOf(main.kind === 'interval' ? main.work : main);
+      st.pmin = band[0]; st.pmax = band[1];
     }
     st.notes = [stepsSummary(st.steps), st.notes].filter(Boolean).join(' / ');
   }
@@ -578,8 +637,11 @@ function trendChart(rows) {
   const pts = rows.map((r, i) => [pad + (i * (W - pad * 2)) / (rows.length - 1), H - pad - (r.km / max) * (H - pad * 2)]);
   const line = pts.map((p) => p.join(',')).join(' ');
   const last = pts[pts.length - 1];
-  return `<svg viewBox="0 0 ${W} ${H}" class="trend"><polygon points="${pad},${H - pad} ${line} ${last[0]},${H - pad}" class="area"/><polyline points="${line}" class="ln"/>${pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="${i === pts.length - 1 ? 4 : 2.5}"/>`).join('')}</svg>
-    <div class="row spread muted num"><span>${md(rows[0].week)}〜</span><span>最高 ${Math.max(...rows.map((r) => r.km)).toFixed(0)}km/週</span><span>今週 ${rows[rows.length - 1].km}km</span></div>`;
+  const colW = (W - pad * 2) / (rows.length - 1);
+  const hit = rows.map((r, i) => `<a href="#/activities?view=week&date=${r.week}"><rect x="${pts[i][0] - colW / 2}" y="0" width="${colW}" height="${H}" fill="transparent"/></a>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="trend"><polygon points="${pad},${H - pad} ${line} ${last[0]},${H - pad}" class="area"/><polyline points="${line}" class="ln"/>${pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="${i === pts.length - 1 ? 4 : 2.5}"/>`).join('')}${hit}</svg>
+    <div class="row spread muted num"><span>${md(rows[0].week)}〜</span><span>最高 ${Math.max(...rows.map((r) => r.km)).toFixed(0)}km/週</span><span>今週 ${rows[rows.length - 1].km}km</span></div>
+    <p class="muted hint">グラフをタップすると、その週の評価が開きます</p>`;
 }
 
 const REVIEW_TABS = [['list', '一覧'], ['day', '日'], ['week', '週'], ['month', '月']];
