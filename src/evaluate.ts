@@ -156,28 +156,48 @@ function evalPace(type: EvalType, band: PaceBand | null, samples: Sample[], laps
     };
   }
 
+  // 1 秒ごとのペースは ±数秒ゆれるので、500m ごとの平均ペースで「帯に入っていたか」を見る
   const tol = 3;
-  let inBand: number;
-  if (EASY_TYPES.includes(type)) {
-    inBand = weightedMean(work.map((s) => (s.pace >= band.min - tol ? 1 : 0)), dts)!;
-  } else if (type === 'long') {
-    inBand = weightedMean(work.map((s) => (s.pace >= band.min - tol && s.pace <= band.max + 15 ? 1 : 0)), dts)!;
-  } else {
-    inBand = weightedMean(work.map((s) => (s.pace >= band.min - tol && s.pace <= band.max + tol ? 1 : 0)), dts)!;
-  }
+  const lo = band.min - tol;
+  const hi = EASY_TYPES.includes(type) ? Infinity : type === 'long' ? band.max + 15 : band.max + tol;
+  const chunks = chunkPaces(work, 500);
+  const devOf = (p: number) => (p < lo ? lo - p : p > hi ? p - hi : 0);
+  const totalD = chunks.reduce((a, c) => a + c.d, 0) || 1;
+  const inBand = chunks.reduce((a, c) => a + (devOf(c.pace) === 0 ? c.d : 0), 0) / totalD;
+  const meanDev = chunks.reduce((a, c) => a + devOf(c.pace) * c.d, 0) / totalD; // 帯からはみ出した平均 (秒/km)
   details.in_band_pct = round(inBand * 100);
   details.target = `${fmtPace(band.min)}-${fmtPace(band.max)}`;
+  details.band_dev_s = round(meanDev, 1);
 
-  let score = inBand * 100;
+  // 帯からの平均のはみ出しが 0 秒で 100 点、1 秒/km ごとに 7 点減 (約 14 秒で 0 点)
+  let score = clamp(100 - meanDev * 7);
   // 目標帯に入っていることが前提。そのうえで刻みの安定度が低いほど減点する
   if (consistency != null) score = score * (0.5 + 0.5 * (consistency / 100));
   score -= penalty;
 
   return {
     score: round(clamp(score), 0),
-    summary: `平均 ${fmtPace(avgPace)}/km・目標帯 ${Math.round(inBand * 100)}%`,
+    summary: `平均 ${fmtPace(avgPace)}/km・目標帯 ${fmtPace(band.min)}-${fmtPace(band.max)} に ${Math.round(inBand * 100)}%`,
     details,
   };
+}
+
+/** 一定距離ごとの平均ペース (秒/km)。サンプルの 1 秒ごとのゆれをならす */
+function chunkPaces(samples: Sample[], meters: number): { pace: number; d: number }[] {
+  const out: { pace: number; d: number }[] = [];
+  let t = 0;
+  let d = 0;
+  for (const s of samples) {
+    t += s.dt;
+    d += s.dt / s.pace * 1000;
+    if (d >= meters) {
+      out.push({ pace: (t / d) * 1000, d });
+      t = 0;
+      d = 0;
+    }
+  }
+  if (d >= meters / 2) out.push({ pace: (t / d) * 1000, d });
+  return out;
 }
 
 function evalIntervalPace(band: PaceBand, samples: Sample[], laps: Lap[]): MetricResult {
@@ -287,7 +307,7 @@ function evalHr(
   const score = driftScore == null ? target * 90 : target * 100 * (0.4 + 0.6 * (driftScore / 100));
   return {
     score: round(clamp(score), 0),
-    summary: `平均 ${Math.round(avgHr)}bpm・目標域 ${Math.round(target * 100)}%${drift != null ? `・ドリフト ${round(drift * 100)}%` : ''}`,
+    summary: `平均 ${Math.round(avgHr)}bpm・目標 ${range.min}-${range.max}bpm に ${Math.round(target * 100)}%${drift != null ? `・ドリフト ${round(drift * 100)}%` : ''}`,
     details,
   };
 }
@@ -385,18 +405,30 @@ export function resolveTargets(plan: Plan | null, settings: Settings) {
 }
 
 export function evaluateRun(input: ActivityInput, plan: Plan | null, settings: Settings): Evaluation {
-  const { type, band, hrRange } = resolveTargets(plan, settings);
+  const resolved = resolveTargets(plan, settings);
+  const { type } = resolved;
+  let { band, hrRange } = resolved;
   const samples = toSamples(input);
 
+  // ロング走の中に本番ペース (M) の区間がある計画 (アップ + Mペース + ダウン)。
+  // ロング全体を「楽に走る日」として採点すると、速い区間がすべて減点になるので、
+  // Mペース区間だけを M 走として採点し、アップ・ダウンは除く
+  const longQ = type === 'long' && band != null && band.max < settings.paces.easy.min - 10;
+  const effType: EvalType = longQ ? 'm' : type;
+  if (longQ) {
+    const r = settings.hr_targets.m;
+    hrRange = { min: Math.round(settings.lthr * r.min), max: plan?.hr_max ?? Math.min(settings.max_hr, Math.round(settings.lthr * r.max)) };
+  }
+
   let focus = samples;
-  if (band && FOCUS_TYPES.includes(type)) {
-    const w = samples.filter((s) => s.pace <= band.max + (type === 'interval' ? 15 : 20));
+  if (band && FOCUS_TYPES.includes(effType)) {
+    const w = samples.filter((s) => s.pace <= band!.max + (effType === 'interval' ? 15 : 20));
     if (w.length > 0) focus = w;
   }
 
-  const pace = evalPace(type, band, samples, input.laps);
-  const hr = evalHr(type, hrRange, samples, focus, settings);
-  const cadence = evalCadence(type, focus, input.laps, settings);
+  const pace = evalPace(effType, band, samples, input.laps);
+  const hr = evalHr(effType, hrRange, samples, focus, settings);
+  const cadence = evalCadence(effType, focus, input.laps, settings);
   const volume = evalVolume(plan, input.distance_m);
   const form = evalForm(focus);
 
@@ -404,17 +436,25 @@ export function evaluateRun(input: ActivityInput, plan: Plan | null, settings: S
   const weights = WEIGHTS[type];
   const present = metrics.map((m, i) => (m.score == null ? 0 : weights[i]));
   const total = weightedMean(metrics.map((m) => m.score ?? 0), present);
+  const wsum = present.reduce((a, b) => a + b, 0) || 1;
+  const pct = (i: number) => Math.round((present[i] / wsum) * 100);
+  const sectionKm = longQ ? round(focus.reduce((a, s) => a + s.dt / s.pace, 0), 1) : undefined;
 
   return {
     type,
     score: total == null ? 0 : Math.round(total),
+    weights: { pace: pct(0), hr: pct(1), cadence: pct(2), form: pct(4) },
+    ...(sectionKm != null ? { section_km: sectionKm } : {}),
     pace,
     hr,
     cadence,
     volume,
     form,
-    comments: buildComments(type, pace, hr, cadence, volume, form, settings),
-    focus: buildFocus(type, pace, hr, cadence, form, settings),
+    comments: [
+      ...(longQ ? [`ロング走のうち、本番ペース区間 ${sectionKm}km を評価しました (アップ・ダウンは評価に入れていません)。`] : []),
+      ...buildComments(effType, pace, hr, cadence, volume, form, settings, longQ ? 'ロング走のMペース区間' : undefined),
+    ],
+    focus: buildFocus(effType, pace, hr, cadence, form, settings),
   };
 }
 
@@ -436,11 +476,12 @@ function buildComments(
   vol: MetricResult,
   form: MetricResult,
   settings: Settings,
+  labelOverride?: string,
 ): string[] {
   const c: string[] = [];
   const pd = pace.details;
   const hd = hr.details;
-  const label = type === 'free' ? 'フリーラン' : PLAN_LABELS[type];
+  const label = labelOverride ?? (type === 'free' ? 'フリーラン' : PLAN_LABELS[type]);
   const easyLike = EASY_TYPES.includes(type) || type === 'long';
 
   // ---- ペース
@@ -454,7 +495,7 @@ function buildComments(
     const spread = fast != null && slow != null ? `。1km ごとは ${mmss(fast)}〜${mmss(slow)} (ばらつき ${cv}%)` : '';
     c.push(base + spread);
     if (pd.in_band_pct != null && !easyLike) {
-      c.push(`${label}の目標帯 ${pd.target} に入っていた時間は ${pd.in_band_pct}%。`);
+      c.push(`${label}の目標帯 ${pd.target} に入っていた距離は ${pd.in_band_pct}%${pd.band_dev_s ? `。帯から平均 ${pd.band_dev_s}秒/km はみ出しています (ゼロなら満点)` : ''}。`);
     }
     const hdiff = pd.half_diff_s as number | null;
     if (hdiff != null && Math.abs(hdiff) >= 3) {

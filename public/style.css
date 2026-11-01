@@ -366,3 +366,9 @@ ul.advice li.info { border-left-color: var(--accent); }
 .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
 li.cur { background: var(--accent-soft); border-radius: 12px; }
+
+small.wt { display: block; font-size: 11px; font-weight: 400; color: var(--muted); }
+details.how { margin: 12px 0; padding: 12px 14px; border-radius: 14px; background: var(--btn-bg); }
+details.how summary { cursor: pointer; font-weight: 700; min-height: 32px; display: flex; align-items: center; }
+.how-t td, .how-t th { vertical-align: top; }
+.how-t td .muted { font-size: 12px; margin-top: 2px; font-weight: 400; }

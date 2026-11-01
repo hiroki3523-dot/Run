@@ -87,6 +87,29 @@ describe('evaluateRun', () => {
     expect(ev.comments.some((c) => c.includes('目標帯'))).toBe(true);
   });
 
+  it('アップ+Mペース+ダウンのロング走は、Mペース区間だけを採点する', () => {
+    const ev = evaluateRun(
+      input([
+        { sec: 1200, pace: 340, hr: 140, spm: 172 },
+        { sec: 2700, pace: 268, hr: 162, spm: 182 },
+        { sec: 1200, pace: 345, hr: 138, spm: 170 },
+      ]),
+      plan({ type: 'long', distance_m: 18000, pace_min_s: 265, pace_max_s: 270 }),
+      S,
+    );
+    expect(ev.section_km!).toBeGreaterThan(9);
+    expect(ev.pace.score!).toBeGreaterThanOrEqual(85);
+    expect(ev.hr.details.avg_hr).toBe(162);
+    expect(ev.score).toBeGreaterThanOrEqual(80);
+    expect(ev.weights!.pace + ev.weights!.hr + ev.weights!.cadence + ev.weights!.form).toBeGreaterThanOrEqual(99);
+  });
+
+  it('帯より 2〜3 秒/km 速いだけなら大きく減点しない (1 秒ごとのゆれで落ちない)', () => {
+    const segs = Array.from({ length: 40 }, (_, i) => ({ sec: 60, pace: 267 + ((i * 7) % 5) - 2, hr: 160, spm: 182 }));
+    const ev = evaluateRun(input(segs), plan({ type: 'm', distance_m: 10000, pace_min_s: 270, pace_max_s: 275 }), S);
+    expect(ev.pace.score!).toBeGreaterThanOrEqual(55);
+  });
+
   it('M ペース走の後半失速を検出する', () => {
     const ev = evaluateRun(
       input([
