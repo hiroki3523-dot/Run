@@ -4,7 +4,7 @@ import { addDays, weekStart } from './format';
 import { ingestActivity, morningBriefing, SHOE_TOTAL_SQL } from './process';
 import { notify } from './notify';
 import { seedInitial } from './seed';
-import { raceWeather, weatherAdvice } from './weather';
+import { weatherDays, raceWeather, weatherAdvice } from './weather';
 import { generatePlan, type PlannerRace } from './planner';
 import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
 import { getActivity } from './strava';
@@ -410,6 +410,16 @@ api.put('/goals/:month', async (c) => {
   const km = b.km == null ? null : Math.min(1000, Math.max(0, Math.round(Number(b.km) || 0)));
   await kvSet(c.env, `goal:${m}`, JSON.stringify({ km }));
   return c.json({ km });
+});
+
+/** 過去 7 日〜先 15 日の天気 (予定表・ホーム用) */
+api.get('/weather/week', async (c) => {
+  try {
+    return c.json(await weatherDays());
+  } catch (e) {
+    console.error('weather week failed', e);
+    return c.json(null);
+  }
 });
 
 /** 次のレース (16 日以内) の当日予報 */
