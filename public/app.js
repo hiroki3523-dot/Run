@@ -106,7 +106,8 @@ async function homeView() {
     api('/settings'),
     api('/race-weather').catch(() => null),
   ]);
-  const todays = plans.filter((p) => p.date === t);
+  dedupeIfNeeded(plans);
+  const todays = uniqPlans(plans.filter((p) => p.date === t));
   const next = races.find((r) => r.date >= t);
   const thisWeek = summary.find((w) => w.week === ws) || { planned_m: 0, actual_m: 0, points_planned: 0, points_done: 0 };
 
@@ -196,11 +197,30 @@ function shoeLine(p, calendar) {
   return sh ? `<div class="shoe-rec">おすすめ: ${esc(sh.name)} <span class="muted">(${PURPOSE_LABELS[sh.purpose]}・${Math.round(sh.total_km)}km)</span></div>` : '';
 }
 
+/** 同じ日・同じ内容の計画が重なっていたら 1 つにまとめる (走った実績が付いている方を残す) */
+function uniqPlans(list) {
+  const m = new Map();
+  for (const p of list) {
+    const k = [p.date, p.type, p.distance_m, p.notes].join('|');
+    const q = m.get(k);
+    if (!q || (!q.activity_id && p.activity_id)) m.set(k, p);
+  }
+  return [...m.values()];
+}
+
+/** 画面に重複があれば、サーバー側も整理する (1 度だけ) */
+let dedupeAsked = false;
+function dedupeIfNeeded(list) {
+  if (dedupeAsked || uniqPlans(list).length === list.length) return;
+  dedupeAsked = true;
+  api('/plans/dedupe', { method: 'POST' }).catch(() => {});
+}
+
 function planLine(p, hideActual = false) {
   const target = p.type === 'rest' ? '' : [p.distance_m ? `${km(p.distance_m)}km` : '', p.pace_min_s ? `${pace(p.pace_min_s)}-${pace(p.pace_max_s)}` : '', p.hr_max ? `≤${p.hr_max}bpm` : ''].filter(Boolean).join(' ');
   return `<div class="plan-item" data-plan="${p.id}">
     <div><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type]}</span> <span class="num">${target}</span>${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}${shoeLine(p, hideActual)}</div>
-    <div class="num">${p.activity_id && !hideActual ? `<a href="#/activities/${p.activity_id}">${km(p.actual_distance_m)}km ${scoreHtml(p.score)}</a>` : ''}</div>
+    <div class="num">${p.activity_id && !hideActual ? `<a class="actual-mini" href="#/activities/${p.activity_id}"><span class="muted">実績</span> ${km(p.actual_distance_m)}km ${scoreHtml(p.score)}</a>` : ''}</div>
   </div>`;
 }
 
@@ -230,13 +250,15 @@ function activityList(acts) {
 
 async function plansView(params) {
   const ws = weekStart(params.get('week') || today());
-  const [plans, weekActs, settings, shoes] = await Promise.all([
+  const [plansRaw, weekActs, settings, shoes] = await Promise.all([
     api(`/plans?from=${ws}&to=${addDays(ws, 6)}`),
     api(`/activities?from=${ws}&to=${addDays(ws, 6)}`),
     api('/settings'),
     api('/shoes').catch(() => []),
   ]);
   SHOES = shoes;
+  dedupeIfNeeded(plansRaw);
+  const plans = uniqPlans(plansRaw);
   const actLine = (a) => `<a class="actual" href="#/activities/${a.id}"><span>実績 ${km(a.distance_m, 1)}km ${pace(a.moving_time_s / (a.distance_m / 1000))}/km${a.avg_hr ? ` ${Math.round(a.avg_hr)}bpm` : ''}</span>${scoreHtml(a.score)}</a>`;
   /** 1 日ぶんの 計画 と 実績 の差 */
   const dayDiff = (d, dayPlans, dayActs) => {

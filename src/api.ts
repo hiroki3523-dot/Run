@@ -147,6 +147,24 @@ api.delete('/plans/:id', async (c) => {
   return c.body(null, 204);
 });
 
+/** 同じ日・同じ内容の計画の重複を消す (走った実績が付いている方、なければ古い方を残す) */
+api.post('/plans/dedupe', async (c) => {
+  // 実績が付いていない計画だけを消す。同じ内容の別の計画が残っていることが条件
+  const r = await c.env.DB.prepare(
+    `DELETE FROM plans WHERE id IN (
+       SELECT p.id FROM plans p
+       WHERE NOT EXISTS (SELECT 1 FROM activities a WHERE a.plan_id = p.id)
+         AND EXISTS (
+           SELECT 1 FROM plans q
+           WHERE q.id != p.id AND q.date = p.date AND q.type = p.type
+             AND COALESCE(q.distance_m, -1) = COALESCE(p.distance_m, -1) AND COALESCE(q.notes, '') = COALESCE(p.notes, '')
+             AND (q.id < p.id OR EXISTS (SELECT 1 FROM activities a WHERE a.plan_id = q.id))
+         )
+     )`,
+  ).run();
+  return c.json({ removed: r.meta.changes ?? 0 });
+});
+
 /** 計画をまとめて登録する (JSON 配列)。replace=true なら対象期間の既存計画を先に消す */
 api.post('/plans/bulk', async (c) => {
   const body = await c.req.json<{ plans?: Record<string, unknown>[]; replace?: boolean } | Record<string, unknown>[]>();
@@ -340,8 +358,9 @@ api.post('/plans/generate', async (c) => {
       ).bind(start, until < race.date ? until : race.date),
     );
   }
+  // 置き換えでも、走った実績が付いていて残した日には新しい計画を足さない (二重表示の原因)
   const have = b.overwrite
-    ? new Set<string>()
+    ? new Set((await c.env.DB.prepare('SELECT DISTINCT date FROM plans WHERE date BETWEEN ? AND ? AND id IN (SELECT plan_id FROM activities WHERE plan_id IS NOT NULL)').bind(start, until).all<{ date: string }>()).results.map((r) => r.date))
     : new Set((await c.env.DB.prepare('SELECT DISTINCT date FROM plans WHERE date BETWEEN ? AND ?').bind(start, until).all<{ date: string }>()).results.map((r) => r.date));
   const ins = c.env.DB.prepare('INSERT INTO plans (date, type, distance_m, pace_min_s, pace_max_s, notes) VALUES (?, ?, ?, ?, ?, ?)');
   const fresh = rows.filter((r) => !have.has(r.date));
