@@ -494,3 +494,7 @@ a.linkcard { display: block; text-decoration: none; color: inherit; }
 .sh-card b{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sheet-close{display:block;margin:4px auto 0;min-height:48px;padding:0 28px;border-radius:14px}
 .shoe-card .shoe-img.big{height:150px;margin:8px 0}
+
+.why-row{margin-top:8px;font-size:16px}
+.why-row .bad{color:#ff5d6c}
+.why-sub{font-size:13px;margin-top:2px}
