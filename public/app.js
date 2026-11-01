@@ -1510,13 +1510,13 @@ async function shoesView() {
       <div class="shoe-bg"><span class="bg-r">${rt}</span><span class="bg-l">${(s.retired || 0) === 1 ? '' : '役目を終える'}</span></div>
       <div class="shoe-fg">
       <div class="shoe-row">
-        <div class="shoe-img">${s.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div>
-        <div class="shoe-body"><div class="row spread"><b>${esc(s.name)}</b><span class="num">${s.total_km.toFixed(0)} / ${s.limit_km}km</span></div>
+        <div class="shoe-img">${s.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div>
+        <div class="shoe-body"><b class="shoe-name">${esc(s.name)}</b>
+        <div class="shoe-km num">${s.total_km.toFixed(1)}<small> / ${s.limit_km}KM</small></div>
         <div class="bar ${ratio >= 1 ? 'over' : ratio >= 0.9 ? 'warn' : ''}"><div style="width:${Math.min(100, ratio * 100)}%"></div></div>
         <div class="muted tiny">${purposeText(s)}</div></div>
+        <svg class="chev" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
       </div>
-      <div class="chips mini">${Object.entries(PURPOSE_LABELS).map(([k, v]) => `<button type="button" class="chip ${purposesOf(s.purpose).includes(k) ? 'on' : ''}" data-pq="${k}" data-sid="${s.id}">${v}</button>`).join('')}</div>
-      <div class="seg3" role="group" aria-label="状態">${STATUS.map(([v, l]) => `<button type="button" data-st="${v}" data-sid="${s.id}" class="${(s.retired || 0) === v ? 'on' : ''}">${l}</button>`).join('')}</div>
       </div>
     </li>`;
   };
@@ -1526,8 +1526,8 @@ async function shoesView() {
     ${advice.length ? `<div class="card"><ul class="advice">${advice.map((a) => `<li class="${a.tone}">${a.text}</li>`).join('')}</ul></div>` : ''}
     ${guesses.length ? `<div class="card"><p class="muted" style="margin-top:0">名前から、用途を自動で設定できます (${guesses.length}足)。</p><button id="guess" class="primary wide">用途をまとめて設定</button></div>` : ''}
     <div class="card"><ul class="list shoes">${active.map(row).join('') || '<li class="muted">使用中のシューズはありません</li>'}</ul></div>
-    ${rest.length ? `<details class="card"><summary>予備・引退 (${rest.length}足)</summary><ul class="list shoes">${rest.map(row).join('')}</ul></details>` : ''}
-    <p class="muted hint">用途はその場でタップして切り替え。行を右へスライドで「予備/使用中」、左へスライドで「役目を終える(引退)」。名前をタップすると写真や交換目安を直せます。</p>`;
+    ${rest.length ? `<h3 class="sub" style="margin:18px 4px 6px">予備・引退 (${rest.length}足)</h3><div class="card"><ul class="list shoes">${rest.map(row).join('')}</ul></div>` : ''}
+    <p class="muted hint">右へスライドで「予備/使用中」、左へスライドで「引退」。タップすると写真・用途・走行距離を直せます。</p>`;
 }
 
 /** 写真を選ぶと 320px 以内の JPEG に縮小して data URL にする */

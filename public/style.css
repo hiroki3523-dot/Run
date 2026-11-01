@@ -474,3 +474,11 @@ a.linkcard { display: block; text-decoration: none; color: inherit; }
 .gp .muted{flex:1}
 .gp b{font-size:20px;min-width:92px;text-align:center}
 .gp-b{width:44px;height:44px;border-radius:14px;border:1px solid var(--line,#2a2d3a);background:var(--card2,#1b1e29);color:inherit;font-size:22px}
+
+.shoe-row{grid-template-columns:92px 1fr 22px;gap:14px;padding:12px 4px}
+.shoe-row .shoe-img{width:92px;height:92px;border-radius:12px}
+.shoe-name{font-size:17px;line-height:1.25;display:block}
+.shoe-km{font-size:15px;margin:2px 0 8px}
+.shoe-km small{color:var(--muted);font-size:12px}
+.shoe-row .chev{color:var(--text);opacity:.7}
+.shoe-body .bar{height:8px;margin:0 0 6px}
