@@ -5,6 +5,7 @@ import { ingestActivity, morningBriefing, SHOE_TOTAL_SQL } from './process';
 import { notify } from './notify';
 import { seedInitial } from './seed';
 import { weatherDays, raceWeather, weatherAdvice } from './weather';
+import { DEFAULT_PLACE, forecast, searchPlaces } from './forecast';
 import { generatePlan, type PlannerRace } from './planner';
 import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
 import { getActivity } from './strava';
@@ -49,6 +50,12 @@ api.put('/settings', async (c) => {
       rest_days: [...new Set((pp.rest_days ?? []).map(Number).filter((n) => n >= 0 && n <= 6))],
       blocked: [...new Set((pp.blocked ?? []).filter((d) => isDate(d) && d >= addDays(today, -1)))].sort(),
     };
+  }
+  if (body.weather_place) {
+    const w = body.weather_place;
+    const lat = Number(w.lat), lon = Number(w.lon);
+    if (!(lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180)) return c.json({ error: '場所の座標が不正です' }, 400);
+    body.weather_place = { name: String(w.name || '現在地').slice(0, 30), lat: Math.round(lat * 1000) / 1000, lon: Math.round(lon * 1000) / 1000 };
   }
   await saveSettings(c.env, { ...(await getSettings(c.env)), ...body });
   return c.json(await getSettings(c.env));
@@ -415,9 +422,32 @@ api.put('/goals/:month', async (c) => {
 /** 過去 7 日〜先 15 日の天気 (予定表・ホーム用) */
 api.get('/weather/week', async (c) => {
   try {
-    return c.json(await weatherDays());
+    const place = (await getSettings(c.env)).weather_place ?? DEFAULT_PLACE;
+    return c.json(await weatherDays(place));
   } catch (e) {
     console.error('weather week failed', e);
+    return c.json(null);
+  }
+});
+
+/** 場所の検索 (地名から緯度経度) */
+api.get('/weather/search', async (c) => {
+  const q = (c.req.query('q') ?? '').trim();
+  if (!q) return c.json([]);
+  try {
+    return c.json(await searchPlaces(q));
+  } catch {
+    return c.json([]);
+  }
+});
+
+/** 詳しい予報 (時間別・7 日・暑さ指数・走りやすさ・おすすめ時間帯) */
+api.get('/weather/forecast', async (c) => {
+  try {
+    const place = (await getSettings(c.env)).weather_place ?? DEFAULT_PLACE;
+    return c.json(await forecast(place));
+  } catch (e) {
+    console.error('forecast failed', e);
     return c.json(null);
   }
 });

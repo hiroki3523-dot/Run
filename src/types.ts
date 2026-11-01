@@ -58,6 +58,8 @@ export interface Settings {
   coros: CorosInfo;
   /** 週のメニューの基本構成 (自動計画の希望) */
   plan_prefs: PlanPrefs;
+  /** 天気の場所 (未設定なら福岡) */
+  weather_place?: { name: string; lat: number; lon: number };
 }
 
 export interface PlanPrefs {
