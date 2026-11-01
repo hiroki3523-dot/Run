@@ -247,3 +247,26 @@ ul.focus li::marker { color: var(--accent); }
 .stepper button { min-width: 52px; padding: 12px 8px; border-radius: 14px; font-size: 16px; }
 .stepper b { font-size: 26px; font-weight: 300; text-align: center; flex: 1; }
 .stepper b small { font-size: 13px; color: var(--muted); }
+/* ---- メニュー構成 (COROS 風) */
+.step { border: 1px solid var(--line); border-radius: 16px; overflow: hidden; border-left-width: 5px; }
+.step[data-k=warmup] { border-left-color: #c9a227; }
+.step[data-k=work] { border-left-color: #2e9e5b; }
+.step[data-k=interval] { border-left-color: #2e9e5b; }
+.step[data-k=rest] { border-left-color: #8a8f9c; }
+.step[data-k=cooldown] { border-left-color: #2a8a93; }
+.step-head { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 14px; background: transparent; border: 0; text-align: left; color: var(--text); }
+.step-name { font-weight: 600; }
+.step-meta { color: var(--muted); font-size: 13px; text-align: right; }
+.step-body { padding: 0 14px 14px; display: grid; gap: 10px; }
+.part { display: grid; gap: 8px; }
+.part .lbl { font-size: 12px; font-weight: 600; color: var(--muted); }
+.zone-note { margin: 0; font-size: 12px; }
+.step-total { text-align: right; color: var(--muted); }
+.chip.danger { color: var(--bad); }
+.step-body, .part { grid-template-columns: minmax(0, 1fr); }
+.step .stepper { gap: 4px; }
+.step .stepper button { min-width: 0; padding: 10px 6px; font-size: 13px; flex: 0 0 auto; }
+.step .stepper b { font-size: 22px; min-width: 0; }
+.step .chip { padding: 8px 12px; }
+.step .stepper b { font-size: 17px; font-weight: 500; white-space: nowrap; }
+.step .stepper button { padding: 10px 5px; font-size: 12px; }

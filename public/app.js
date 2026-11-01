@@ -349,6 +349,43 @@ function wireAutoPlan(root) {
   };
 }
 
+// ---- COROS 風のメニュー構成 (ウォームアップ / トレーニング / 休憩 / インターバル / クールダウン)
+const STEP_KINDS = { warmup: 'ウォームアップ', work: 'トレーニング', rest: '休憩', interval: 'インターバル', cooldown: 'クールダウン' };
+/** COROS の強度ゾーン (ペースは秒/km。上限・下限が無いゾーンは目安で補う) */
+const ZONES = [
+  { n: '回復', short: '回復', pace: [345, 390], hr: [0, 0.8] },
+  { n: '有酸素持久力', short: '持久力', pace: [286, 345], hr: [0.8, 0.9] },
+  { n: '有酸素パワー', short: 'パワー', pace: [265, 285], hr: [0.91, 0.95] },
+  { n: '乳酸閾値', short: '閾値', pace: [242, 264], hr: [0.95, 1.02] },
+  { n: '無酸素持久力', short: '無酸素', pace: [222, 241], hr: [1.02, 1.06] },
+  { n: '無酸素パワー', short: '全力', pace: [200, 221], hr: [1.06, 1.2] },
+];
+const zoneMid = (z) => (ZONES[z].pace[0] + ZONES[z].pace[1]) / 2;
+const fmtTarget = (t) => (t.by === 'dist' ? (t.value >= 1000 ? `${+(t.value / 1000).toFixed(2)}km` : `${t.value}m`) : pace(t.value));
+const targetM = (t) => (t.by === 'dist' ? t.value : (t.value / zoneMid(t.zone)) * 1000);
+const stepM = (sp) => (sp.kind === 'interval' ? sp.reps * (targetM(sp.work) + targetM(sp.rest)) : targetM(sp));
+const stepsTotalM = (steps) => steps.reduce((a, sp) => a + stepM(sp), 0);
+function stepText(sp) {
+  if (sp.kind === 'interval') return `${fmtTarget(sp.work)}×${sp.reps} ${ZONES[sp.work.zone].short} (休憩 ${fmtTarget(sp.rest)})`;
+  const base = `${fmtTarget(sp)} ${ZONES[sp.zone].short}`;
+  return sp.kind === 'warmup' ? `アップ ${base}` : sp.kind === 'cooldown' ? `ダウン ${base}` : sp.kind === 'rest' ? `休憩 ${fmtTarget(sp)}` : base;
+}
+const stepsSummary = (steps) => steps.map(stepText).join(' → ');
+const mkStep = {
+  warmup: () => ({ kind: 'warmup', by: 'dist', value: 2000, zone: 1 }),
+  work: () => ({ kind: 'work', by: 'dist', value: 5000, zone: 3 }),
+  rest: () => ({ kind: 'rest', by: 'time', value: 120, zone: 0 }),
+  cooldown: () => ({ kind: 'cooldown', by: 'dist', value: 2000, zone: 1 }),
+  interval: () => ({ kind: 'interval', reps: 5, work: { by: 'dist', value: 1000, zone: 4 }, rest: { by: 'dist', value: 200, zone: 0 } }),
+};
+const STEP_PRESETS = {
+  'Mペース走': () => [mkStep.warmup(), { kind: 'work', by: 'dist', value: 10000, zone: 3 }, mkStep.cooldown()],
+  'LT走': () => [mkStep.warmup(), { kind: 'interval', reps: 3, work: { by: 'dist', value: 2000, zone: 3 }, rest: { by: 'dist', value: 400, zone: 0 } }, mkStep.cooldown()],
+  'インターバル': () => [mkStep.warmup(), mkStep.interval(), mkStep.cooldown()],
+  'ビルドアップ': () => [{ kind: 'work', by: 'dist', value: 5000, zone: 1 }, { kind: 'work', by: 'dist', value: 5000, zone: 2 }, { kind: 'work', by: 'dist', value: 3000, zone: 3 }],
+  'ロング(後半M)': () => [{ kind: 'work', by: 'dist', value: 16000, zone: 1 }, { kind: 'work', by: 'dist', value: 8000, zone: 3 }],
+};
+
 const PLAN_DEFAULT_KM = { easy: 10, jog: 6, long: 24, m: 14, lt: 10, interval: 10, race: 42.2 };
 const DIST_CHIPS = [5, 8, 10, 12, 15, 18, 20, 25, 30];
 const MEMO_TEMPLATES = {
@@ -371,11 +408,53 @@ async function editPlan(p, settings) {
     pmin: p.pace_min_s || null,
     pmax: p.pace_max_s || null,
     notes: p.notes || '',
+    steps: [],
+    open: null,
   };
+  try { st.steps = p.steps ? JSON.parse(p.steps) : []; } catch { st.steps = []; }
+  if (st.steps.length) {
+    const sum = stepsSummary(st.steps);
+    st.notes = (p.notes || '').startsWith(sum) ? (p.notes || '').slice(sum.length).replace(/^ \/ /, '') : p.notes || '';
+  }
   if (!p.id && st.km == null) st.km = PLAN_DEFAULT_KM[st.type] ?? null;
   const ws0 = weekStart(p.date);
   const week = [...Array(7)].map((_, i) => addDays(ws0, i));
   const chip = (attr, val, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" ${attr}="${esc(String(val))}">${esc(label)}</button>`;
+
+  const lthr = settings.coros?.lthr || settings.lthr || 174;
+  const zoneLine = (z) => {
+    const Z = ZONES[z];
+    const pc = z === 0 ? `${pace(Z.pace[0])}より遅い` : z === 5 ? `${pace(Z.pace[1])}より速い` : `${pace(Z.pace[0])}〜${pace(Z.pace[1])}`;
+    const hr = z === 0 ? `${Math.round(lthr * Z.hr[1])}bpm未満` : z === 5 ? `${Math.round(lthr * Z.hr[0])}bpm超` : `${Math.round(lthr * Z.hr[0])}〜${Math.round(lthr * Z.hr[1])}bpm`;
+    return `${Z.n} ${pc}・${hr}`;
+  };
+  const partEditor = (i, part, t, label) => `
+    <div class="part">${label ? `<span class="lbl">${label}</span>` : ''}
+      <div class="chips">${chip('data-sby', `${i}:${part}:dist`, '距離', t.by === 'dist')}${chip('data-sby', `${i}:${part}:time`, '時間', t.by === 'time')}</div>
+      <div class="stepper"><button type="button" data-sval="${i}:${part}:-${t.by === 'dist' ? 1000 : 300}">−${t.by === 'dist' ? '1km' : '5分'}</button><button type="button" data-sval="${i}:${part}:-${t.by === 'dist' ? 200 : 30}">−${t.by === 'dist' ? '200m' : '30秒'}</button>
+        <b class="num">${fmtTarget(t)}</b>
+        <button type="button" data-sval="${i}:${part}:${t.by === 'dist' ? 200 : 30}">+${t.by === 'dist' ? '200m' : '30秒'}</button><button type="button" data-sval="${i}:${part}:${t.by === 'dist' ? 1000 : 300}">+${t.by === 'dist' ? '1km' : '5分'}</button></div>
+      <div class="chips">${ZONES.map((Z, z) => chip('data-szone', `${i}:${part}:${z}`, Z.short, t.zone === z)).join('')}</div>
+      <p class="muted zone-note">${esc(zoneLine(t.zone))}</p></div>`;
+  const stepsHtml = () => {
+    const cards = st.steps.map((sp, i) => {
+      const open = st.open === i;
+      return `<div class="step ${open ? 'open' : ''}" data-k="${sp.kind}">
+        <button type="button" class="step-head" data-sopen="${i}"><span class="step-name">${STEP_KINDS[sp.kind]}</span><span class="step-meta num">${esc(stepText(sp))}</span></button>
+        ${open ? `<div class="step-body">
+          ${sp.kind === 'interval'
+            ? `<div class="stepper"><button type="button" data-sreps="${i}:-1">−1本</button><b class="num">${sp.reps} <small>本</small></b><button type="button" data-sreps="${i}:1">+1本</button></div>
+               ${partEditor(i, 'work', sp.work, '走る')}${partEditor(i, 'rest', sp.rest, '休憩')}`
+            : partEditor(i, '', sp, '')}
+          <div class="chips"><button type="button" class="chip" data-smove="${i}:-1">上へ</button><button type="button" class="chip" data-smove="${i}:1">下へ</button><button type="button" class="chip danger" data-sdel="${i}">削除</button></div>
+        </div>` : ''}</div>`;
+    }).join('');
+    const total = st.steps.length ? `<div class="step-total num">合計 約 ${(stepsTotalM(st.steps) / 1000).toFixed(1)}km</div>` : '';
+    return `<div class="field"><span class="lbl">メニューを組む (任意)</span>
+      <div class="chips">${Object.keys(STEP_PRESETS).map((n) => chip('data-spreset', n, n, false)).join('')}</div>
+      ${cards}${total}
+      <div class="chips">${Object.entries(STEP_KINDS).map(([k, v]) => chip('data-sadd', k, `+ ${v}`, false)).join('')}</div></div>`;
+  };
 
   const draw = () => {
     const def = settings.paces?.[st.type];
@@ -383,7 +462,7 @@ async function editPlan(p, settings) {
     dialogForm.querySelector('#pl-body').innerHTML = `
       <div class="field"><span class="lbl">日</span><div class="chips">${week.map((d) => chip('data-date', d, `${dow(d)} ${Number(d.slice(8))}`, d === st.date)).join('')}</div></div>
       <div class="field"><span class="lbl">種別</span><div class="chips">${Object.entries(PLAN_LABELS).map(([k, v]) => chip('data-type', k, v, k === st.type)).join('')}</div></div>
-      ${st.type === 'rest' ? '' : `
+      ${st.type === 'rest' || st.steps.length ? '' : `
       <div class="field"><span class="lbl">距離</span>
         <div class="stepper"><button type="button" data-step="-1">−1</button><button type="button" data-step="-0.5">−0.5</button>
           <b class="num">${st.km != null ? st.km.toFixed(1) : '-'} <small>km</small></b>
@@ -392,7 +471,8 @@ async function editPlan(p, settings) {
       <div class="field"><span class="lbl">ペース</span>
         <div class="stepper"><button type="button" data-pace="-5">−5秒</button><b class="num">${shown}</b><button type="button" data-pace="5">+5秒</button></div>
         ${st.pmin ? '<button type="button" class="chip" data-pace-reset="1">標準に戻す</button>' : ''}</div>`}
-      <div class="field"><span class="lbl">メモ</span><div class="chips">${(MEMO_TEMPLATES[st.type] || []).map((t) => chip('data-memo', t, t, t === st.notes)).join('')}</div>
+      ${st.type === 'rest' ? '' : stepsHtml()}
+      <div class="field"><span class="lbl">${st.steps.length ? '補足メモ (任意)' : 'メモ'}</span><div class="chips">${st.steps.length ? '' : (MEMO_TEMPLATES[st.type] || []).map((t) => chip('data-memo', t, t, t === st.notes)).join('')}</div>
         <input name="notes" value="${esc(st.notes)}" placeholder="自由入力 (任意)"></div>`;
   };
 
@@ -415,7 +495,23 @@ async function editPlan(p, settings) {
       if (base[0]) { st.pmin = base[0] + Number(d.pace); st.pmax = base[1] + Number(d.pace); }
     } else if (d.paceReset) st.pmin = st.pmax = null;
     else if (d.memo) st.notes = st.notes === d.memo ? '' : d.memo;
-    else return;
+    else if (d.sadd) { st.steps.push(mkStep[d.sadd]()); st.open = st.steps.length - 1; }
+    else if (d.spreset) { st.steps = STEP_PRESETS[d.spreset](); st.open = null; }
+    else if (d.sopen != null) st.open = st.open === Number(d.sopen) ? null : Number(d.sopen);
+    else if (d.sdel != null) { st.steps.splice(Number(d.sdel), 1); st.open = null; }
+    else if (d.smove) {
+      const [i, dir] = d.smove.split(':').map(Number);
+      const j = i + dir;
+      if (j >= 0 && j < st.steps.length) { [st.steps[i], st.steps[j]] = [st.steps[j], st.steps[i]]; st.open = j; }
+    } else if (d.sreps) { const [i, dl] = d.sreps.split(':').map(Number); st.steps[i].reps = Math.max(1, st.steps[i].reps + dl); }
+    else if (d.sby || d.sval || d.szone) {
+      const [i, part, v] = (d.sby || d.sval || d.szone).split(':');
+      const sp = st.steps[Number(i)];
+      const t = part ? sp[part] : sp;
+      if (d.sby) { if (t.by !== v) { t.by = v; t.value = v === 'dist' ? 1000 : 120; } }
+      else if (d.sval) t.value = Math.max(t.by === 'dist' ? 100 : 15, t.value + Number(v));
+      else t.zone = Number(v);
+    } else return;
     draw();
   };
 
@@ -427,10 +523,21 @@ async function editPlan(p, settings) {
   dialogForm.removeEventListener('click', onClick);
   if (!values) return;
   st.notes = values.notes ?? st.notes;
+  let stepKm = null;
+  if (st.steps.length && st.type !== 'rest') {
+    stepKm = Math.round(stepsTotalM(st.steps));
+    const main = st.steps.find((x) => x.kind === 'interval' || x.kind === 'work');
+    if (main && !st.pmin) {
+      const z = ZONES[main.kind === 'interval' ? main.work.zone : main.zone];
+      st.pmin = z.pace[0]; st.pmax = z.pace[1];
+    }
+    st.notes = [stepsSummary(st.steps), st.notes].filter(Boolean).join(' / ');
+  }
   const body = {
+    steps: st.steps.length ? st.steps : null,
     date: st.date,
     type: st.type,
-    distance_m: st.type === 'rest' || st.km == null ? null : Math.round(st.km * 1000),
+    distance_m: st.type === 'rest' ? null : stepKm ?? (st.km == null ? null : Math.round(st.km * 1000)),
     pace_min_s: st.pmin,
     pace_max_s: st.pmax,
     hr_max: p.hr_max ?? null,

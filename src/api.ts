@@ -100,12 +100,20 @@ api.get('/plans', async (c) => {
 
 function planValues(b: Record<string, unknown>) {
   if (!isDate(b.date) || !PLAN_TYPES.includes(b.type as Plan['type'])) throw new Error('date と type は必須です');
-  return [b.date, b.type, num(b.distance_m), num(b.pace_min_s), num(b.pace_max_s), num(b.hr_max), b.notes || null];
+  return [b.date, b.type, num(b.distance_m), num(b.pace_min_s), num(b.pace_max_s), num(b.hr_max), b.notes || null, stepsJson(b.steps)];
+}
+
+/** steps は配列を JSON 文字列にして保存 (最大 20 ステップ) */
+function stepsJson(v: unknown): string | null {
+  if (v == null || v === '') return null;
+  const arr = typeof v === 'string' ? JSON.parse(v) : v;
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  return JSON.stringify(arr.slice(0, 20));
 }
 
 api.post('/plans', async (c) => {
   const row = await c.env.DB.prepare(
-    'INSERT INTO plans (date, type, distance_m, pace_min_s, pace_max_s, hr_max, notes) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *',
+    'INSERT INTO plans (date, type, distance_m, pace_min_s, pace_max_s, hr_max, notes, steps) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *',
   )
     .bind(...planValues(await c.req.json()))
     .first();
@@ -114,7 +122,7 @@ api.post('/plans', async (c) => {
 
 api.put('/plans/:id', async (c) => {
   const row = await c.env.DB.prepare(
-    `UPDATE plans SET date = ?, type = ?, distance_m = ?, pace_min_s = ?, pace_max_s = ?, hr_max = ?, notes = ?
+    `UPDATE plans SET date = ?, type = ?, distance_m = ?, pace_min_s = ?, pace_max_s = ?, hr_max = ?, notes = ?, steps = ?
      WHERE id = ? RETURNING *`,
   )
     .bind(...planValues(await c.req.json()), c.req.param('id'))
@@ -163,11 +171,11 @@ api.post('/plans/copy-week', async (c) => {
     .bind(src, addDays(src, 6))
     .all<Plan>();
   const stmt = c.env.DB.prepare(
-    'INSERT INTO plans (date, type, distance_m, pace_min_s, pace_max_s, hr_max, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO plans (date, type, distance_m, pace_min_s, pace_max_s, hr_max, notes, steps) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   );
   if (results.length > 0) {
     await c.env.DB.batch(
-      results.map((p) => stmt.bind(addDays(p.date, offset), p.type, p.distance_m, p.pace_min_s, p.pace_max_s, p.hr_max, p.notes)),
+      results.map((p) => stmt.bind(addDays(p.date, offset), p.type, p.distance_m, p.pace_min_s, p.pace_max_s, p.hr_max, p.notes, p.steps ?? null)),
     );
   }
   return c.json({ copied: results.length });
