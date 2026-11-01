@@ -888,9 +888,8 @@ async function editPlan(p, settings) {
   const partEditor = (i, part, t, label) => `
     <div class="part">${label ? `<span class="lbl">${label}</span>` : ''}
       <div class="chips">${chip('data-sby', `${i}:${part}:dist`, '距離', t.by === 'dist')}${chip('data-sby', `${i}:${part}:time`, '時間', t.by === 'time')}</div>
-      <div class="stepper"><button type="button" data-sval="${i}:${part}:-${t.by === 'dist' ? 1000 : 300}">−${t.by === 'dist' ? '1km' : '5分'}</button><button type="button" data-sval="${i}:${part}:-${t.by === 'dist' ? 200 : 30}">−${t.by === 'dist' ? '200m' : '30秒'}</button>
-        <b class="num">${fmtTarget(t)}</b>
-        <button type="button" data-sval="${i}:${part}:${t.by === 'dist' ? 200 : 30}">+${t.by === 'dist' ? '200m' : '30秒'}</button><button type="button" data-sval="${i}:${part}:${t.by === 'dist' ? 1000 : 300}">+${t.by === 'dist' ? '1km' : '5分'}</button></div>
+      <div class="slide"><b class="num" id="sv-${i}-${part}">${fmtTarget(t)}</b>
+        <input type="range" data-rng="sval:${i}:${part}" ${t.by === 'dist' ? `min="0.2" max="20" step="0.1" value="${(t.value / 1000).toFixed(1)}"` : `min="30" max="3600" step="30" value="${t.value}"`}></div>
       <div class="chips">${Object.entries(REFS).map(([k, R]) => chip('data-sref', `${i}:${part}:${k}`, `${R.label}ペース`, t.ref === k)).join('')}</div>
       <div class="chips">${ZONES.map((Z, z) => chip('data-szone', `${i}:${part}:${z}`, Z.short, !t.ref && t.zone === z)).join('')}</div>
       <p class="muted zone-note">${esc(zoneLine(t.zone, t.ref))}</p></div>`;
@@ -901,7 +900,7 @@ async function editPlan(p, settings) {
         <button type="button" class="step-head" data-sopen="${i}"><span class="step-name">${STEP_KINDS[sp.kind]}</span><span class="step-meta num">${esc(stepText(sp))}</span></button>
         ${open ? `<div class="step-body">
           ${sp.kind === 'interval'
-            ? `<div class="stepper"><button type="button" data-sreps="${i}:-1">−1本</button><b class="num">${sp.reps} <small>本</small></b><button type="button" data-sreps="${i}:1">+1本</button></div>
+            ? `<div class="slide"><b class="num" id="sr-${i}">${sp.reps} <small>本</small></b><input type="range" data-rng="reps:${i}" min="1" max="20" step="1" value="${sp.reps}"></div>
                ${partEditor(i, 'work', sp.work, '走る')}${partEditor(i, 'rest', sp.rest, '休憩')}`
             : partEditor(i, '', sp, '')}
           <div class="chips"><button type="button" class="chip" data-smove="${i}:-1">上へ</button><button type="button" class="chip" data-smove="${i}:1">下へ</button><button type="button" class="chip danger" data-sdel="${i}">削除</button></div>
@@ -916,22 +915,22 @@ async function editPlan(p, settings) {
 
   const draw = () => {
     const def = settings.paces?.[st.type];
+    const poff = def && st.pmin ? Math.max(-30, Math.min(30, st.pmin - def.min)) : 0;
     const shown = st.pmin ? `${pace(st.pmin)}〜${pace(st.pmax)}` : def ? `標準 ${pace(def.min)}〜${pace(def.max)}` : '-';
     dialogForm.querySelector('#pl-body').innerHTML = `
       <div class="field"><span class="lbl">日</span><div class="chips">${week.map((d) => chip('data-date', d, `${dow(d)} ${Number(d.slice(8))}`, d === st.date)).join('')}</div></div>
       <div class="field"><span class="lbl">種別</span><div class="chips">${Object.entries(PLAN_LABELS).map(([k, v]) => chip('data-type', k, v, k === st.type)).join('')}</div></div>
       ${st.type === 'rest' || st.steps.length ? '' : `
       <div class="field"><span class="lbl">距離</span>
-        <div class="stepper"><button type="button" data-step="-1">−1</button><button type="button" data-step="-0.5">−0.5</button>
-          <b class="num">${st.km != null ? st.km.toFixed(1) : '-'} <small>km</small></b>
-          <button type="button" data-step="0.5">+0.5</button><button type="button" data-step="1">+1</button></div>
-        <div class="chips">${DIST_CHIPS.map((v) => chip('data-km', v, String(v), st.km === v)).join('')}</div></div>
+        <div class="slide"><b class="num" id="km-out">${(st.km ?? 10).toFixed(1)} <small>km</small></b>
+          <input type="range" data-rng="km" min="3" max="42" step="0.5" value="${st.km ?? 10}"></div></div>
       <div class="field"><span class="lbl">ペース</span>
-        <div class="stepper"><button type="button" data-pace="-5">−5秒</button><b class="num">${shown}</b><button type="button" data-pace="5">+5秒</button></div>
-        ${st.pmin ? '<button type="button" class="chip" data-pace-reset="1">標準に戻す</button>' : ''}</div>`}
+        <div class="slide"><b class="num" id="pace-out">${shown}</b>
+          <input type="range" data-rng="pace" min="-30" max="30" step="5" value="${poff}"></div>
+        <p class="muted zone-note" style="margin:2px 0 0">左へ速く、右へ遅く。真ん中が標準です。</p></div>`}
       ${st.type === 'rest' ? '' : stepsHtml()}
-      <div class="field"><span class="lbl">${st.steps.length ? '補足メモ (任意)' : 'メモ'}</span><div class="chips">${st.steps.length ? '' : (MEMO_TEMPLATES[st.type] || []).map((t) => chip('data-memo', t, t, t === st.notes)).join('')}</div>
-        <input name="notes" value="${esc(st.notes)}" placeholder="自由入力 (任意)"></div>`;
+      <div class="field"><span class="lbl">メモ (任意)</span>
+        <input name="notes" value="${esc(st.notes)}" placeholder="気をつけたいこと など"></div>`;
   };
 
   const onClick = (e) => {
@@ -945,15 +944,8 @@ async function editPlan(p, settings) {
       st.type = d.type;
       st.km = d.type === 'rest' ? null : (PLAN_DEFAULT_KM[d.type] ?? st.km);
       st.pmin = st.pmax = null;
-      if (!(MEMO_TEMPLATES[d.type] || []).includes(st.notes)) st.notes = '';
-    } else if (d.km) st.km = Number(d.km);
-    else if (d.step) st.km = Math.max(0.5, (st.km ?? 0) + Number(d.step));
-    else if (d.pace) {
-      const base = st.pmin ? [st.pmin, st.pmax] : [settings.paces?.[st.type]?.min, settings.paces?.[st.type]?.max];
-      if (base[0]) { st.pmin = base[0] + Number(d.pace); st.pmax = base[1] + Number(d.pace); }
-    } else if (d.paceReset) st.pmin = st.pmax = null;
-    else if (d.memo) st.notes = st.notes === d.memo ? '' : d.memo;
-    else if (d.sadd) { st.steps.push(mkStep[d.sadd]()); st.open = st.steps.length - 1; }
+      if (Object.values(MEMO_TEMPLATES).some((l) => l.includes(st.notes))) st.notes = '';
+    } else if (d.sadd) { st.steps.push(mkStep[d.sadd]()); st.open = st.steps.length - 1; }
     else if (d.spreset) { st.steps = STEP_PRESETS[d.spreset](); st.open = null; }
     else if (d.sopen != null) st.open = st.open === Number(d.sopen) ? null : Number(d.sopen);
     else if (d.sdel != null) { st.steps.splice(Number(d.sdel), 1); st.open = null; }
@@ -961,13 +953,11 @@ async function editPlan(p, settings) {
       const [i, dir] = d.smove.split(':').map(Number);
       const j = i + dir;
       if (j >= 0 && j < st.steps.length) { [st.steps[i], st.steps[j]] = [st.steps[j], st.steps[i]]; st.open = j; }
-    } else if (d.sreps) { const [i, dl] = d.sreps.split(':').map(Number); st.steps[i].reps = Math.max(1, st.steps[i].reps + dl); }
-    else if (d.sby || d.sval || d.szone || d.sref) {
-      const [i, part, v] = (d.sby || d.sval || d.szone || d.sref).split(':');
+    } else if (d.sby || d.szone || d.sref) {
+      const [i, part, v] = (d.sby || d.szone || d.sref).split(':');
       const sp = st.steps[Number(i)];
       const t = part ? sp[part] : sp;
       if (d.sby) { if (t.by !== v) { t.by = v; t.value = v === 'dist' ? 1000 : 120; } }
-      else if (d.sval) t.value = Math.max(t.by === 'dist' ? 100 : 15, t.value + Number(v));
       else if (d.sref) { t.ref = v; t.zone = REFS[v].zone; }
       else { t.zone = Number(v); t.ref = null; }
     } else return;
@@ -976,10 +966,36 @@ async function editPlan(p, settings) {
 
   const wait = openDialog(`<h2>${p.id ? '計画を編集' : '計画を追加'}</h2><div id="pl-body"></div>`,
     p.id ? { onDelete: async () => { await api(`/plans/${p.id}`, { method: 'DELETE' }); route(); } } : {});
+  // スライダー: ドラッグ中は画面を作り直さず、数字だけ更新する
+  const onInput = (e) => {
+    const r = e.target.closest('[data-rng]');
+    if (!r) return;
+    const [k, i, part] = r.dataset.rng.split(':');
+    const v = Number(r.value);
+    if (k === 'km') { st.km = v; dialogForm.querySelector('#km-out').innerHTML = `${v.toFixed(1)} <small>km</small>`; }
+    else if (k === 'pace') {
+      const def = settings.paces?.[st.type];
+      if (!def) return;
+      if (v === 0) st.pmin = st.pmax = null; else { st.pmin = def.min + v; st.pmax = def.max + v; }
+      dialogForm.querySelector('#pace-out').textContent = st.pmin ? `${pace(st.pmin)}〜${pace(st.pmax)}` : `標準 ${pace(def.min)}〜${pace(def.max)}`;
+    } else if (k === 'reps') {
+      st.steps[Number(i)].reps = v; dialogForm.querySelector(`#sr-${i}`).innerHTML = `${v} <small>本</small>`;
+      dialogForm.querySelector(`[data-sopen="${i}"] .step-meta`).textContent = stepText(st.steps[Number(i)]);
+    } else if (k === 'sval') {
+      const sp = st.steps[Number(i)];
+      const t = part ? sp[part] : sp;
+      t.value = t.by === 'dist' ? Math.round(v * 1000) : v;
+      dialogForm.querySelector(`#sv-${i}-${part}`).textContent = fmtTarget(t);
+      dialogForm.querySelector(`[data-sopen="${i}"] .step-meta`).textContent = stepText(sp);
+      const tot = dialogForm.querySelector('.step-total'); if (tot) tot.textContent = `合計 約 ${(stepsTotalM(st.steps) / 1000).toFixed(1)}km`;
+    }
+  };
   draw();
   dialogForm.addEventListener('click', onClick);
+  dialogForm.addEventListener('input', onInput);
   const values = await wait;
   dialogForm.removeEventListener('click', onClick);
+  dialogForm.removeEventListener('input', onInput);
   if (!values) return;
   st.notes = values.notes ?? st.notes;
   let stepKm = null;
