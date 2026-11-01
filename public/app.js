@@ -813,9 +813,9 @@ const ZONES = [
 /** 自分の設定ペース (設定画面の値)。E / M / LT / I を基準ペースとして選べる */
 let PACES = null;
 const REFS = { easy: { label: 'E', zone: 1 }, m: { label: 'M', zone: 3 }, lt: { label: 'LT', zone: 3 }, interval: { label: 'I', zone: 4 } };
-const bandOf = (t) => (t.ref && PACES?.[t.ref] ? [PACES[t.ref].min, PACES[t.ref].max] : ZONES[t.zone].pace);
+const bandOf = (t) => (t.pmin && t.pmax ? [t.pmin, t.pmax] : t.ref && PACES?.[t.ref] ? [PACES[t.ref].min, PACES[t.ref].max] : ZONES[t.zone].pace);
 const bandMid = (t) => (bandOf(t)[0] + bandOf(t)[1]) / 2;
-const intensityLabel = (t) => (t.ref ? REFS[t.ref].label : ZONES[t.zone].short);
+const intensityLabel = (t) => (t.pmin && t.pmax ? `${pace(t.pmin)}〜${pace(t.pmax)}` : t.ref ? REFS[t.ref].label : ZONES[t.zone].short);
 const fmtTarget = (t) => (t.by === 'dist' ? (t.value >= 1000 ? `${+(t.value / 1000).toFixed(2)}km` : `${t.value}m`) : pace(t.value));
 const targetM = (t) => (t.by === 'dist' ? t.value : (t.value / bandMid(t)) * 1000);
 const stepM = (sp) => (sp.kind === 'interval' ? sp.reps * (targetM(sp.work) + targetM(sp.rest)) : targetM(sp));
@@ -878,7 +878,8 @@ async function editPlan(p, settings) {
 
   PACES = settings.paces;
   const lthr = settings.coros?.lthr || settings.lthr || 174;
-  const zoneLine = (z, ref) => {
+  const zoneLine = (z, ref, t) => {
+    if (t?.pmin && t?.pmax) return `ペース ${pace(t.pmin)}〜${pace(t.pmax)} (自分で決めた範囲)`;
     if (ref && PACES?.[ref]) return `${REFS[ref].label}ペース ${pace(PACES[ref].min)}〜${pace(PACES[ref].max)} (設定の値)`;
     const Z = ZONES[z];
     const pc = z === 0 ? `${pace(Z.pace[0])}より遅い` : z === 5 ? `${pace(Z.pace[1])}より速い` : `${pace(Z.pace[0])}〜${pace(Z.pace[1])}`;
@@ -892,7 +893,10 @@ async function editPlan(p, settings) {
         <input type="range" data-rng="sval:${i}:${part}" ${t.by === 'dist' ? `min="0.2" max="20" step="0.1" value="${(t.value / 1000).toFixed(1)}"` : `min="30" max="3600" step="30" value="${t.value}"`}></div>
       <div class="chips">${Object.entries(REFS).map(([k, R]) => chip('data-sref', `${i}:${part}:${k}`, `${R.label}ペース`, t.ref === k)).join('')}</div>
       <div class="chips">${ZONES.map((Z, z) => chip('data-szone', `${i}:${part}:${z}`, Z.short, !t.ref && t.zone === z)).join('')}</div>
-      <p class="muted zone-note">${esc(zoneLine(t.zone, t.ref))}</p></div>`;
+      <div class="slide pr-range"><span class="lbl">ペース範囲 (速い側 / 遅い側)</span><b class="num" id="sp-${i}-${part}">${pace(bandOf(t)[0])}〜${pace(bandOf(t)[1])}<small> /km</small></b>
+        <input type="range" data-rng="spmin:${i}:${part}" min="170" max="480" step="1" value="${Math.round(bandOf(t)[0])}" aria-label="速い側">
+        <input type="range" data-rng="spmax:${i}:${part}" min="170" max="480" step="1" value="${Math.round(bandOf(t)[1])}" aria-label="遅い側"></div>
+      <p class="muted zone-note">${esc(zoneLine(t.zone, t.ref, t))}</p></div>`;
   const stepsHtml = () => {
     const cards = st.steps.map((sp, i) => {
       const open = st.open === i;
@@ -958,8 +962,8 @@ async function editPlan(p, settings) {
       const sp = st.steps[Number(i)];
       const t = part ? sp[part] : sp;
       if (d.sby) { if (t.by !== v) { t.by = v; t.value = v === 'dist' ? 1000 : 120; } }
-      else if (d.sref) { t.ref = v; t.zone = REFS[v].zone; }
-      else { t.zone = Number(v); t.ref = null; }
+      else if (d.sref) { t.ref = v; t.zone = REFS[v].zone; delete t.pmin; delete t.pmax; }
+      else { t.zone = Number(v); t.ref = null; delete t.pmin; delete t.pmax; }
     } else return;
     draw();
   };
@@ -981,6 +985,16 @@ async function editPlan(p, settings) {
     } else if (k === 'reps') {
       st.steps[Number(i)].reps = v; dialogForm.querySelector(`#sr-${i}`).innerHTML = `${v} <small>本</small>`;
       dialogForm.querySelector(`[data-sopen="${i}"] .step-meta`).textContent = stepText(st.steps[Number(i)]);
+    } else if (k === 'spmin' || k === 'spmax') {
+      const sp = st.steps[Number(i)];
+      const t = part ? sp[part] : sp;
+      const [lo, hi] = bandOf(t);
+      let a = k === 'spmin' ? v : lo, b = k === 'spmax' ? v : hi;
+      if (a > b) { if (k === 'spmin') b = a; else a = b; }
+      t.pmin = a; t.pmax = b; t.ref = null;
+      dialogForm.querySelector(`#sp-${i}-${part}`).innerHTML = `${pace(a)}〜${pace(b)}<small> /km</small>`;
+      dialogForm.querySelectorAll(`[data-rng$=":${i}:${part}"]`).forEach((r) => { if (r.dataset.rng.startsWith('spmin')) r.value = a; else if (r.dataset.rng.startsWith('spmax')) r.value = b; });
+      dialogForm.querySelector(`[data-sopen="${i}"] .step-meta`).textContent = stepText(sp);
     } else if (k === 'sval') {
       const sp = st.steps[Number(i)];
       const t = part ? sp[part] : sp;
@@ -1002,7 +1016,7 @@ async function editPlan(p, settings) {
   if (st.steps.length && st.type !== 'rest') {
     stepKm = Math.round(stepsTotalM(st.steps));
     const main = st.steps.find((x) => x.kind === 'interval' || x.kind === 'work');
-    if (main && !st.pmin) {
+    if (main) {
       const band = bandOf(main.kind === 'interval' ? main.work : main);
       st.pmin = band[0]; st.pmax = band[1];
     }
