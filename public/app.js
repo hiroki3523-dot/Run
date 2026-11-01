@@ -101,14 +101,14 @@ async function homeView() {
       ${todays.length === 0 ? '<p class="muted">メニュー未登録</p>' : todays.map(planLine).join('')}
     </div>
     ${next ? `
-    <div class="card">
+    <div class="card hero">
       <div class="row spread"><h2>${esc(next.name)}</h2><span class="badge">${esc(next.priority)}</span></div>
       <div class="row spread">
         <div><span class="big">${daysBetween(t, next.date)}</span> 日</div>
         <div class="muted num">${md(next.date)}・${km(next.distance_m)}km${next.goal_time_s ? `<br>目標 ${dur(next.goal_time_s)} (${pace(next.goal_time_s / (next.distance_m / 1000))}/km)` : ''}</div>
       </div>
     </div>` : ''}
-    <div class="card">
+    <div class="card week">
       <h2>今週</h2>
       <div class="row spread num"><span>${km(thisWeek.actual_m)} / ${km(thisWeek.planned_m)} km</span><span class="muted">ポイント練 ${thisWeek.points_done}/${thisWeek.points_planned}</span></div>
       <div class="bar"><div style="width:${Math.min(100, thisWeek.planned_m ? (thisWeek.actual_m / thisWeek.planned_m) * 100 : 0)}%"></div></div>
@@ -126,7 +126,7 @@ async function homeView() {
 function planLine(p) {
   const target = p.type === 'rest' ? '' : [p.distance_m ? `${km(p.distance_m)}km` : '', p.pace_min_s ? `${pace(p.pace_min_s)}-${pace(p.pace_max_s)}` : '', p.hr_max ? `≤${p.hr_max}bpm` : ''].filter(Boolean).join(' ');
   return `<div class="plan-item" data-plan="${p.id}">
-    <div><span class="badge">${PLAN_LABELS[p.type]}</span> <span class="num">${target}</span>${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}</div>
+    <div><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type]}</span> <span class="num">${target}</span>${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}</div>
     <div class="num">${p.activity_id ? `<a href="#/activities/${p.activity_id}">${km(p.actual_distance_m)}km ${scoreHtml(p.score)}</a>` : ''}</div>
   </div>`;
 }
@@ -311,7 +311,7 @@ async function activityDetailView(id) {
     </div>
     ${ev ? `
     <div class="card">
-      <h2>評価 <span class="badge">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></h2>
+      <h2>評価 <span class="badge" data-t="${ev.type}">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></h2>
       ${metric('ペース', ev.pace)}${metric('心拍', ev.hr)}${metric('ケイデンス', ev.cadence)}${metric('距離', ev.volume)}
       <ul>${ev.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
       ${ev.pace.details.rep_paces ? `<p class="muted num">各本: ${esc(ev.pace.details.rep_paces)}</p>` : ''}

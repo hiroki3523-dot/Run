@@ -153,3 +153,35 @@ pre { font: 12.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; color: var(--m
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 .week-day button[data-add] { border-color: transparent; color: var(--muted); padding: 4px 8px; margin-left: -8px; }
+
+/* ---- 色: 練習の種類ごとに色分け。ひと目で「今日は何の日か」が分かる */
+:root {
+  --c-easy: #16b57a; --c-jog: #2fb7c9; --c-long: #7a5cff; --c-m: #ff8a1f;
+  --c-lt: #ff4f7b; --c-interval: #e63946; --c-race: #ffb800; --c-rest: #98a0b3;
+}
+.badge[data-t] { color: #fff; }
+.badge[data-t="easy"] { background: var(--c-easy); }
+.badge[data-t="jog"] { background: var(--c-jog); }
+.badge[data-t="long"] { background: var(--c-long); }
+.badge[data-t="m"] { background: var(--c-m); }
+.badge[data-t="lt"] { background: var(--c-lt); }
+.badge[data-t="interval"] { background: var(--c-interval); }
+.badge[data-t="race"] { background: var(--c-race); color: #3b2a00; }
+.badge[data-t="rest"] { background: var(--c-rest); }
+
+/* レースまでの日数: 画面でいちばん目立たせる */
+.card.hero {
+  background: linear-gradient(135deg, #2b3dff 0%, #7a5cff 55%, #ff4f7b 100%);
+  color: #fff;
+}
+.card.hero h2, .card.hero .muted { color: rgb(255 255 255 / .82); }
+.card.hero .big { font-size: 64px; }
+.card.hero .badge { background: rgb(255 255 255 / .22); color: #fff; }
+
+.card.week .bar { height: 8px; }
+.card.week .bar > div { background: linear-gradient(90deg, var(--c-easy), var(--c-jog), var(--accent)); }
+.chart .act { background: linear-gradient(180deg, var(--c-long), var(--accent)); }
+nav a.active { background: linear-gradient(135deg, #2b3dff, #7a5cff); color: #fff; }
+button.primary, .btn.primary { background: linear-gradient(135deg, #2b3dff, #7a5cff); border-color: transparent; color: #fff; }
+h1::before { background: linear-gradient(135deg, #ff8a1f, #ff4f7b); }
+.week-day.today::before { background: linear-gradient(180deg, var(--c-m), var(--c-lt)); }
