@@ -7,8 +7,11 @@ export interface Env {
   STRAVA_CLIENT_SECRET: string;
   STRAVA_VERIFY_TOKEN: string;
   NTFY_SERVER?: string;
-  NTFY_TOPIC: string;
+  NTFY_TOPIC?: string;
   NTFY_TOKEN?: string;
+  /** Bark (iPhone 通知アプリ) を使う場合のデバイスキー */
+  BARK_KEY?: string;
+  BARK_SERVER?: string;
 }
 
 export const PLAN_TYPES = ['easy', 'jog', 'long', 'm', 'lt', 'interval', 'race', 'rest'] as const;
@@ -52,8 +55,8 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  max_hr: 190,
-  lthr: 170,
+  max_hr: 180,
+  lthr: 174,
   target_cadence: 180,
   // サブ3 (4:15/km) を基準にした目安
   paces: {

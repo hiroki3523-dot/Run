@@ -3,7 +3,7 @@
   "short_name": "Sub3",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#0f766e",
+  "background_color": "#f4f5f7",
+  "theme_color": "#2b3dff",
   "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
 }

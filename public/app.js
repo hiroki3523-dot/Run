@@ -101,14 +101,14 @@ async function homeView() {
       ${todays.length === 0 ? '<p class="muted">メニュー未登録</p>' : todays.map(planLine).join('')}
     </div>
     ${next ? `
-    <div class="card">
+    <div class="card hero">
       <div class="row spread"><h2>${esc(next.name)}</h2><span class="badge">${esc(next.priority)}</span></div>
       <div class="row spread">
         <div><span class="big">${daysBetween(t, next.date)}</span> 日</div>
         <div class="muted num">${md(next.date)}・${km(next.distance_m)}km${next.goal_time_s ? `<br>目標 ${dur(next.goal_time_s)} (${pace(next.goal_time_s / (next.distance_m / 1000))}/km)` : ''}</div>
       </div>
     </div>` : ''}
-    <div class="card">
+    <div class="card week">
       <h2>今週</h2>
       <div class="row spread num"><span>${km(thisWeek.actual_m)} / ${km(thisWeek.planned_m)} km</span><span class="muted">ポイント練 ${thisWeek.points_done}/${thisWeek.points_planned}</span></div>
       <div class="bar"><div style="width:${Math.min(100, thisWeek.planned_m ? (thisWeek.actual_m / thisWeek.planned_m) * 100 : 0)}%"></div></div>
@@ -126,7 +126,7 @@ async function homeView() {
 function planLine(p) {
   const target = p.type === 'rest' ? '' : [p.distance_m ? `${km(p.distance_m)}km` : '', p.pace_min_s ? `${pace(p.pace_min_s)}-${pace(p.pace_max_s)}` : '', p.hr_max ? `≤${p.hr_max}bpm` : ''].filter(Boolean).join(' ');
   return `<div class="plan-item" data-plan="${p.id}">
-    <div><span class="badge">${PLAN_LABELS[p.type]}</span> <span class="num">${target}</span>${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}</div>
+    <div><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type]}</span> <span class="num">${target}</span>${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}</div>
     <div class="num">${p.activity_id ? `<a href="#/activities/${p.activity_id}">${km(p.actual_distance_m)}km ${scoreHtml(p.score)}</a>` : ''}</div>
   </div>`;
 }
@@ -169,6 +169,17 @@ async function plansView(params) {
       if (e.target.closest('a')) return;
       editPlan(plans.find((p) => p.id === Number(el.dataset.plan)), settings);
     }));
+    view.querySelector('#bulk-toggle').onclick = () => view.querySelector('#bulk-box').classList.toggle('hidden');
+    view.querySelector('#bulk-go').onclick = async () => {
+      const out = view.querySelector('#bulk-out');
+      try {
+        const data = JSON.parse(view.querySelector('#bulk-text').value);
+        const replace = view.querySelector('#bulk-replace').checked;
+        const r = await api('/plans/bulk', { method: 'POST', body: { plans: Array.isArray(data) ? data : data.plans, replace } });
+        out.textContent = `✅ ${r.imported} 件登録しました`;
+        setTimeout(route, 800);
+      } catch (e) { out.textContent = `❌ ${e.message}`; }
+    };
     view.querySelector('#copy-week').onclick = async () => {
       if (!confirm(`この週の計画を翌週 (${md(addDays(ws, 7))}〜) に複製しますか？`)) return;
       const r = await api('/plans/copy-week', { method: 'POST', body: { from: ws, to: addDays(ws, 7) } });
@@ -185,6 +196,16 @@ async function plansView(params) {
     </div>
     <div class="card">
       <div class="row spread num"><span>計画 ${km(total)}km・実績 ${km(actual)}km</span><button id="copy-week">翌週へ複製</button></div>
+    </div>
+    <div class="card">
+      <button id="bulk-toggle">📋 メニューを貼り付けて登録</button>
+      <div id="bulk-box" class="hidden" style="margin-top:8px">
+        <p class="muted">Claude が作った JSON を貼り付けます。</p>
+        <textarea id="bulk-text" rows="8" style="width:100%" placeholder='[{"date":"2026-11-03","type":"jog","distance_m":8000,"notes":"..."}]'></textarea>
+        <label class="row"><input type="checkbox" id="bulk-replace"> 期間内の既存メニューを置き換える</label>
+        <div class="row"><button id="bulk-go" class="primary">登録</button></div>
+        <p id="bulk-out"></p>
+      </div>
     </div>
     <div class="card">
       ${days.map((d) => `
@@ -290,7 +311,7 @@ async function activityDetailView(id) {
     </div>
     ${ev ? `
     <div class="card">
-      <h2>評価 <span class="badge">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></h2>
+      <h2>評価 <span class="badge" data-t="${ev.type}">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></h2>
       ${metric('ペース', ev.pace)}${metric('心拍', ev.hr)}${metric('ケイデンス', ev.cadence)}${metric('距離', ev.volume)}
       <ul>${ev.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
       ${ev.pace.details.rep_paces ? `<p class="muted num">各本: ${esc(ev.pace.details.rep_paces)}</p>` : ''}
@@ -437,22 +458,28 @@ async function settingsView() {
     const run = (sel, fn) => { const b = view.querySelector(sel); if (b) b.onclick = async () => { b.disabled = true; try { out.textContent = JSON.stringify(await fn(), null, 2); } catch (e) { out.textContent = e.message; } b.disabled = false; }; };
     run('#subscribe', () => api('/strava/subscribe', { method: 'POST' }));
     run('#subscription', () => api('/strava/subscription'));
-    run('#test-notify', () => api('/notify/test', { method: 'POST' }));
-    run('#morning', () => api('/notify/morning', { method: 'POST' }));
-    run('#backfill', async () => {
-      const days = Number(prompt('何日分を取り込みますか？', '30'));
-      if (!days) return 'キャンセル';
-      let after = Math.floor(Date.now() / 1000) - days * 86400;
-      let total = 0;
-      for (;;) {
-        out.textContent = `取り込み中… ${total} 件`;
-        const r = await api(`/strava/backfill?after=${after}`, { method: 'POST' });
-        total += r.imported.length;
-        if (!r.next_after || r.imported.length === 0) break;
-        after = r.next_after;
-      }
-      return `${total} 件取り込みました`;
+    const notifyText = (r) => {
+      const res = r.results || [];
+      if (res.length === 0) return '❌ 通知先が未設定です (NTFY_TOPIC か BARK_KEY を設定してください)';
+      return res.map((x) => `${x.ok ? '✅' : '❌'} ${x.channel}${x.error ? `: ${x.error}` : ' に送信しました'}`).join('\n');
+    };
+    run('#test-notify', async () => notifyText(await api('/notify/test', { method: 'POST' })));
+    run('#morning', async () => notifyText(await api('/notify/morning', { method: 'POST' })));
+    const bfText = (b) => !b ? '未実行' : b.active
+      ? `取り込み中… ${b.imported} 件取り込み済み${b.pause_until && b.pause_until * 1000 > Date.now() ? ' (Strava の上限待ち。自動で再開します)' : ''}`
+      : `${b.finished ? '完了' : '停止中'}: ${b.imported} 件取り込み${b.last_error ? ` / エラー: ${b.last_error}` : ''}`;
+    run('#backfill-all', async () => {
+      if (!confirm('Strava の全期間を取り込みます。アプリを閉じても自動で進みます。開始しますか？')) return 'キャンセル';
+      return bfText(await api('/strava/backfill/start', { method: 'POST' }));
     });
+    run('#backfill-30', async () => bfText(await api('/strava/backfill/start?days=30', { method: 'POST' })));
+    run('#backfill-status', async () => bfText(await api('/strava/backfill/status')));
+    run('#backfill-stop', async () => bfText(await api('/strava/backfill/stop', { method: 'POST' })));
+    run('#copy-cal', async () => {
+      await navigator.clipboard.writeText(status.calendar_url);
+      return 'カレンダー購読 URL をコピーしました。iPhone の「設定 > カレンダー > アカウント > アカウントを追加 > その他 >照会カレンダーを追加」に貼り付けてください';
+    });
+    run('#open-cal', async () => { location.href = status.calendar_url.replace(/^https?:/, 'webcal:'); return 'カレンダーを開きます'; });
     const sf = view.querySelector('#settings-form');
     if (sf) sf.onsubmit = async (e) => {
       e.preventDefault();
@@ -476,6 +503,7 @@ async function settingsView() {
       </form>
       ${err ? `<p class="error">${esc(err)}</p>` : ''}
     </div>
+    <pre id="out" style="white-space:pre-wrap;word-break:break-all;margin:8px 4px"></pre>
     ${status ? `
     <div class="card">
       <h2>Strava</h2>
@@ -484,12 +512,22 @@ async function settingsView() {
         <a class="btn primary" href="/auth/strava?key=${encodeURIComponent(getToken())}">${status.strava_connected ? '再連携' : 'Strava と連携'}</a>
         <button id="subscribe">Webhook 登録</button>
         <button id="subscription">Webhook 確認</button>
-        <button id="backfill">過去データ取り込み</button>
       </div>
     </div>
     <div class="card">
-      <h2>通知 (ntfy)</h2>
-      <p class="muted">${status.ntfy_topic_set ? 'トピック設定済み' : 'NTFY_TOPIC が未設定です'}</p>
+      <h2>過去データの取り込み</h2>
+      <p class="muted">${esc(status.backfill ? (status.backfill.active ? `取り込み中: ${status.backfill.imported} 件` : `前回: ${status.backfill.imported} 件取り込み${status.backfill.finished ? ' (完了)' : ''}`) : '未実行')}</p>
+      <div class="row"><button id="backfill-all" class="primary">全期間を取り込む</button><button id="backfill-30">直近30日</button><button id="backfill-status">進み具合</button><button id="backfill-stop">停止</button></div>
+      <p class="muted">開始後は閉じて大丈夫です。Strava の上限に当たると自動で待って再開します。</p>
+    </div>
+    <div class="card">
+      <h2>iPhone カレンダー</h2>
+      <p class="muted">練習メニューとレースを iPhone のカレンダーに表示します (読み取り専用・自動更新)。</p>
+      <div class="row"><button id="open-cal" class="primary">カレンダーに追加</button><button id="copy-cal">URL をコピー</button></div>
+    </div>
+    <div class="card">
+      <h2>通知</h2>
+      <p class="muted">ntfy: ${status.ntfy_topic_set ? '設定済み' : '未設定'}・Bark: ${status.bark_set ? '設定済み' : '未設定'}</p>
       <div class="row"><button id="test-notify">テスト通知</button><button id="morning">朝の通知を今すぐ送る</button></div>
     </div>
     <form class="card" id="settings-form">
@@ -504,7 +542,7 @@ async function settingsView() {
       </table>
       <p style="margin-top:12px"><button class="primary">保存</button></p>
     </form>` : ''}
-    <pre id="out" class="muted" style="white-space:pre-wrap"></pre>`;
+    `;
 }
 
 // ---------------------------------------------------------------- router
