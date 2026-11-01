@@ -133,6 +133,37 @@ describe('evaluateRun', () => {
     expect(ev.comments.some((c) => c.includes('ケイデンス'))).toBe(true);
   });
 
+  it('ピッチ・歩幅が崩れると form が減点される', () => {
+    const steady = evaluateRun(input([{ sec: 1800, pace: 330, hr: 140, spm: 178 }]), null, S);
+    const messy = evaluateRun(
+      input([
+        { sec: 400, pace: 330, hr: 140, spm: 184 },
+        { sec: 400, pace: 330, hr: 142, spm: 168 },
+        { sec: 400, pace: 330, hr: 143, spm: 182 },
+        { sec: 400, pace: 330, hr: 144, spm: 162 },
+      ]),
+      null,
+      S,
+    );
+    expect(steady.form!.score!).toBeGreaterThan(90);
+    expect(messy.form!.score!).toBeLessThan(steady.form!.score! - 20);
+  });
+
+  it('ペースがバラバラだと厳しく減点される', () => {
+    const even = evaluateRun(input([{ sec: 2400, pace: 300, hr: 150, spm: 178 }]), null, S);
+    const uneven = evaluateRun(
+      input([
+        { sec: 600, pace: 270, hr: 150, spm: 178 },
+        { sec: 600, pace: 330, hr: 150, spm: 178 },
+        { sec: 600, pace: 280, hr: 150, spm: 178 },
+        { sec: 600, pace: 340, hr: 150, spm: 178 },
+      ]),
+      null,
+      S,
+    );
+    expect(uneven.score).toBeLessThan(even.score - 15);
+  });
+
   it('計画なしはフリーラン、距離評価なし', () => {
     const ev = evaluateRun(input([{ sec: 2400, pace: 300, hr: 145, spm: 178 }]), null, S);
     expect(ev.type).toBe('free');
@@ -154,7 +185,7 @@ describe('evaluateRun', () => {
   it('計画距離に届かないと減点', () => {
     const ev = evaluateRun(input([{ sec: 1800, pace: 320, hr: 140, spm: 178 }]), plan({ type: 'easy', distance_m: 15000 }), S);
     expect(ev.volume.score!).toBeLessThan(50);
-    expect(ev.comments).toContain('計画距離に届いていません。');
+    expect(ev.comments).toContain('計画距離に届いていません (参考)。');
   });
 });
 
