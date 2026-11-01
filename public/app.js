@@ -62,7 +62,7 @@ async function api(path, opts = {}) {
 /** フォーム内容を dialog で表示し、送信値を返す (キャンセルは null) */
 function openDialog(html, { onDelete } = {}) {
   dialogForm.innerHTML = `${html}
-    <div class="row spread" style="margin-top:12px">
+    <div class="row spread dlg-actions">
       <div>${onDelete ? '<button value="delete" class="danger" formnovalidate>削除</button>' : ''}</div>
       <div class="row"><button value="cancel" formnovalidate>キャンセル</button><button value="ok" class="primary">保存</button></div>
     </div>`;
@@ -737,7 +737,6 @@ async function activityDetailView(id) {
   const zones = [1, 2, 3, 4, 5].map((z) => hrd[`z${z}_pct`]).filter((v) => v != null);
 
   return `
-    <p><a href="#/activities">‹ 一覧</a></p>
     <div class="card">
       <div class="row spread"><h2>${esc(a.name)}</h2><a class="muted" href="https://www.strava.com/activities/${a.id}" target="_blank" rel="noopener">Strava ↗</a></div>
       <div class="muted">${a.start_date_local.slice(0, 16).replace('T', ' ')}</div>
@@ -1111,6 +1110,11 @@ async function route() {
   const parts = (path || '/').split('/').filter(Boolean);
   const tab = parts[0] || 'home';
   document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
+  // 詳細ページ (ランの詳細・週/日の評価・別の週) では「戻る」を出す
+  const isRoot = parts.length <= 1 && !query;
+  document.getElementById('back').classList.toggle('hidden', isRoot);
+  document.querySelector('h1').classList.toggle('hidden', !isRoot);
+  window.scrollTo(0, 0);
 
   if (!getToken() && tab !== 'settings') {
     location.hash = '#/settings';
@@ -1133,3 +1137,10 @@ async function route() {
 
 window.addEventListener('hashchange', route);
 route();
+
+document.getElementById('back').onclick = () => {
+  const [path] = location.hash.slice(1).split('?');
+  // 履歴が無い (ホーム画面から直接開いた) ときは、そのタブの一覧へ
+  if (history.length > 1) history.back();
+  else location.hash = `#/${(path || '/').split('/').filter(Boolean)[0] || ''}`;
+};
