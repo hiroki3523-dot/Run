@@ -472,6 +472,10 @@ async function settingsView() {
       if (!confirm('Strava の全期間を取り込みます。アプリを閉じても自動で進みます。開始しますか？')) return 'キャンセル';
       return bfText(await api('/strava/backfill/start', { method: 'POST' }));
     });
+    run('#backfill-2025', async () => {
+      const days = Math.ceil((Date.now() - Date.parse('2025-01-01T00:00:00+09:00')) / 86400000);
+      return bfText(await api(`/strava/backfill/start?days=${days}`, { method: 'POST' }));
+    });
     run('#backfill-30', async () => bfText(await api('/strava/backfill/start?days=30', { method: 'POST' })));
     run('#backfill-status', async () => bfText(await api('/strava/backfill/status')));
     run('#backfill-stop', async () => bfText(await api('/strava/backfill/stop', { method: 'POST' })));
@@ -517,7 +521,7 @@ async function settingsView() {
     <div class="card">
       <h2>過去データの取り込み</h2>
       <p class="muted">${esc(status.backfill ? (status.backfill.active ? `取り込み中: ${status.backfill.imported} 件` : `前回: ${status.backfill.imported} 件取り込み${status.backfill.finished ? ' (完了)' : ''}`) : '未実行')}</p>
-      <div class="row"><button id="backfill-all" class="primary">全期間を取り込む</button><button id="backfill-30">直近30日</button><button id="backfill-status">進み具合</button><button id="backfill-stop">停止</button></div>
+      <div class="row"><button id="backfill-2025" class="primary">2025年1月から取り込む</button><button id="backfill-all">全期間</button><button id="backfill-30">直近30日</button><button id="backfill-status">進み具合</button><button id="backfill-stop">停止</button></div>
       <p class="muted">開始後は閉じて大丈夫です。Strava の上限に当たると自動で待って再開します。</p>
     </div>
     <div class="card">
