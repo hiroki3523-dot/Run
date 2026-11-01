@@ -404,11 +404,124 @@ export function resolveTargets(plan: Plan | null, settings: Settings) {
   return { type, band, hrRange };
 }
 
-export function evaluateRun(input: ActivityInput, plan: Plan | null, settings: Settings): Evaluation {
+// ---------------------------------------------------------------- steps (アップ → メイン → ダウン)
+
+/** ステップ未保存の古い計画用: COROS 強度ゾーンの目安ペース (秒/km) */
+const ZONE_PACE: [number, number][] = [[345, 390], [286, 345], [265, 285], [242, 264], [222, 241], [200, 221]];
+
+interface StepWin {
+  from: number; // 練習の先頭からの距離 m
+  to: number;
+  band: PaceBand;
+}
+interface RawTarget { by?: string; value?: number; zone?: number; ref?: string | null; pmin?: number; pmax?: number }
+
+function targetBand(t: RawTarget, settings: Settings): PaceBand {
+  if (t.pmin && t.pmax) return { min: t.pmin, max: t.pmax };
+  const p = t.ref ? (settings.paces as Record<string, PaceBand | undefined>)[t.ref] : undefined;
+  if (p) return { min: p.min, max: p.max };
+  const z = ZONE_PACE[Math.max(0, Math.min(5, t.zone ?? 1))];
+  return { min: z[0], max: z[1] };
+}
+
+/** 計画のステップから、メイン区間 (トレーニング・インターバルの走る部分) の距離範囲とペース帯を作る */
+export function stepWindows(plan: Plan | null, settings: Settings): StepWin[] {
+  if (!plan?.steps) return [];
+  let steps: Array<Record<string, any>>;
+  try {
+    steps = typeof plan.steps === 'string' ? JSON.parse(plan.steps) : (plan.steps as any);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(steps)) return [];
+  const lenOf = (t: RawTarget) => {
+    const b = targetBand(t, settings);
+    return t.by === 'time' ? ((t.value ?? 0) / ((b.min + b.max) / 2)) * 1000 : (t.value ?? 0);
+  };
+  const out: StepWin[] = [];
+  let pos = 0;
+  for (const sp of steps) {
+    if (sp.kind === 'interval') {
+      for (let r = 0; r < (sp.reps ?? 1); r++) {
+        const w = lenOf(sp.work);
+        out.push({ from: pos, to: pos + w, band: targetBand(sp.work, settings) });
+        pos += w + lenOf(sp.rest);
+      }
+    } else {
+      const w = lenOf(sp as RawTarget);
+      if (sp.kind === 'work') out.push({ from: pos, to: pos + w, band: targetBand(sp as RawTarget, settings) });
+      pos += w;
+    }
+  }
+  return out;
+}
+
+/** メイン区間ごとのペース帯に対する評価 (帯からはみ出した平均秒数 → 点数) */
+function evalStepPace(parts: { win: StepWin; samples: Sample[] }[]): MetricResult {
+  const all = parts.flatMap((p) => p.samples);
+  const avgPace = weightedMean(all.map((s) => s.pace), all.map((s) => s.dt))!;
+  const tol = 3;
+  let totalD = 0, inD = 0, devSum = 0;
+  for (const { win, samples } of parts) {
+    for (const c of chunkPaces(samples, 500)) {
+      const dev = c.pace < win.band.min - tol ? win.band.min - tol - c.pace : c.pace > win.band.max + tol ? c.pace - win.band.max - tol : 0;
+      totalD += c.d; devSum += dev * c.d; if (dev === 0) inD += c.d;
+    }
+  }
+  totalD ||= 1;
+  const meanDev = devSum / totalD;
+  const lo = Math.min(...parts.map((p) => p.win.band.min)), hi = Math.max(...parts.map((p) => p.win.band.max));
+  return {
+    score: round(clamp(100 - meanDev * 7), 0),
+    summary: `メイン 平均 ${fmtPace(avgPace)}/km・目標 ${fmtPace(lo)}-${fmtPace(hi)} に ${Math.round((inD / totalD) * 100)}%`,
+    details: { avg_pace: round(avgPace, 0), in_band_pct: round((inD / totalD) * 100), band_dev_s: round(meanDev, 1), target: `${fmtPace(lo)}-${fmtPace(hi)}`, work_km: round(all.reduce((a, x) => a + x.dt / x.pace, 0), 2) },
+  };
+}
+
+export function evaluateRun(input: ActivityInput, plan: Plan | null, settings: Settings, ctx?: { offset_m?: number }): Evaluation {
   const resolved = resolveTargets(plan, settings);
   const { type } = resolved;
   let { band, hrRange } = resolved;
   const samples = toSamples(input);
+
+  // ステップ (アップ・メイン・ダウン) がある計画: メイン区間だけを、メインのペース帯で評価する
+  const wins = stepWindows(plan, settings);
+  const offset = ctx?.offset_m ?? 0;
+  const parts = wins
+    .map((win) => ({ win, samples: samples.filter((x) => x.d + offset >= win.from && x.d + offset < win.to) }))
+    .filter((x) => x.samples.length > 0);
+  const mainKm = parts.reduce((a, x) => a + x.samples.reduce((b, y) => b + y.dt / y.pace, 0), 0);
+  if (plan && type !== 'free' && mainKm >= 0.8) {
+    const main = parts.flatMap((x) => x.samples);
+    const mid = parts.reduce((a, x) => a + (x.win.band.min + x.win.band.max) / 2, 0) / parts.length;
+    const effT: EvalType = mid < settings.paces.easy.min - 10 && (type === 'long' || type === 'easy' || type === 'jog') ? 'm' : type;
+    const r = settings.hr_targets[effT as Exclude<EvalType, 'free'>] ?? settings.hr_targets.m;
+    const hrR = { min: Math.round(settings.lthr * r.min), max: plan.hr_max ?? Math.min(settings.max_hr, Math.round(settings.lthr * r.max)) };
+    const pace = evalStepPace(parts);
+    const hr = evalHr(effT, hrR, samples, main, settings);
+    const cadence = evalCadence(effT, main, input.laps, settings);
+    const volume = evalVolume(plan, input.distance_m);
+    const form = evalForm(main);
+    const metrics = [pace, hr, cadence, volume, form];
+    const weights = WEIGHTS[type];
+    const present = metrics.map((m, i) => (m.score == null ? 0 : weights[i]));
+    const total = weightedMean(metrics.map((m) => m.score ?? 0), present);
+    const wsum = present.reduce((a, b) => a + b, 0) || 1;
+    const pct = (i: number) => Math.round((present[i] / wsum) * 100);
+    const sectionKm = round(mainKm, 1);
+    return {
+      type,
+      score: total == null ? 0 : Math.round(total),
+      weights: { pace: pct(0), hr: pct(1), cadence: pct(2), form: pct(4) },
+      section_km: sectionKm,
+      pace, hr, cadence, volume, form,
+      comments: [
+        `計画のステップのうち、メイン区間 ${sectionKm}km を評価しました (アップ・ダウンは評価に入れていません)。`,
+        ...buildComments(effT, pace, hr, cadence, volume, form, settings, 'メイン区間'),
+      ],
+      focus: buildFocus(effT, pace, hr, cadence, form, settings),
+    };
+  }
 
   // ロング走の中に本番ペース (M) の区間がある計画 (アップ + Mペース + ダウン)。
   // ロング全体を「楽に走る日」として採点すると、速い区間がすべて減点になるので、

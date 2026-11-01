@@ -1020,6 +1020,9 @@ async function editPlan(p, settings) {
       const band = bandOf(main.kind === 'interval' ? main.work : main);
       st.pmin = band[0]; st.pmax = band[1];
     }
+    // 評価で使えるように、各ステップのペース範囲を確定して保存する
+    const freeze = (t) => { if (!(t.pmin && t.pmax)) { const bd = bandOf(t); t.pmin = Math.round(bd[0]); t.pmax = Math.round(bd[1]); } };
+    st.steps.forEach((sp) => { if (sp.kind === 'interval') { freeze(sp.work); freeze(sp.rest); } else freeze(sp); });
     st.notes = [stepsSummary(st.steps), st.notes].filter(Boolean).join(' / ');
   }
   const body = {
