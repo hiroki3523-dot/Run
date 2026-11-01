@@ -597,7 +597,7 @@ table.lap .sbar { height: 8px; }
 .pl-main { min-width: 0; flex: 1; }
 .pl-t { font-weight: 600; }
 .stp { display: grid; gap: 2px; margin: 8px 0 2px; }
-.stp-r { display: grid; grid-template-columns: 10px 96px 72px 1fr; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
+.stp-r { display: grid; grid-template-columns: 10px 5.6em 3.9em 1fr; white-space: nowrap; align-items: center; gap: 6px; font-size: 13px; padding: 3px 0; }
 .stp-r i { width: 4px; height: 18px; border-radius: 2px; background: var(--kc); }
 .stp-n { font-weight: 600; }
 .stp-n small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
@@ -632,3 +632,10 @@ a.act { display: block; margin-top: 8px; padding: 10px 12px; border-radius: 14px
 .rv-o input { width: 22px; height: 22px; accent-color: var(--accent); }
 
 .card.hero .hero-d { display: flex; align-items: baseline; gap: 8px; font-size: 20px; }
+
+/* メニュー通りに走れたかの印 */
+.day-body { position: relative; min-width: 0; }
+.plan-item { position: relative; }
+.jmark { position: absolute; top: 0; right: 0; width: 30px; height: 30px; display: grid; place-items: center; }
+.jmark.ok { color: var(--good); } .jmark.warn { color: var(--c-m); } .jmark.ng { color: var(--bad); }
+.plan-item.has-mark .pl-main, .day-body > .plan-item:first-of-type .pl-main { padding-right: 40px; }
