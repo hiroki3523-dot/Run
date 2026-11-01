@@ -150,7 +150,7 @@ async function homeView() {
         <div><span class="big">${daysBetween(t, next.date)}</span> 日</div>
         <div class="muted num">${md(next.date)}・${km(next.distance_m)}km${next.goal_time_s ? `<br>目標 ${dur(next.goal_time_s)} (${pace(next.goal_time_s / (next.distance_m / 1000))}/km)` : ''}</div>
       </div>
-      <a class="herolink" href="#/races/${next.id}">ペース表・準備物チェック ›</a>
+      <a class="herolink" href="#/races/${next.id}">ペース表・持ち物 ›</a>
     </div>
     ${weatherCard(weather)}
     ${goalCard(settings, next)}` : ''}
@@ -355,16 +355,16 @@ async function weatherView() {
         <div><span class="muted">降水</span><b>${n.precip_pct ?? 0}%</b></div>
         <div><span class="muted">暑さ指数</span><b style="color:${wbgtColor(n.wbgt)}">${n.wbgt}</b></div>
       </div>
-      <p class="muted" style="margin:10px 0 0">暑さ指数: <b style="color:${wbgtColor(n.wbgt)}">${wbgtLabel(n.wbgt)}</b> (気温・湿度・日射から推定。25 以上は警戒)</p>
+      <p class="muted" style="margin:10px 0 0">暑さ指数 <b style="color:${wbgtColor(n.wbgt)}">${wbgtLabel(n.wbgt)}</b></p>
     </div>` : ''}
     <div class="card"><h2>ランのアドバイス</h2><ul class="bullets">${f.advice.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>
-      ${n && n.temp > 10 ? `<p class="muted" style="margin:6px 0 0">目安: いまの気温だと、普段のペースより約 ${Math.max(0, Math.round((n.temp - 10) * 2))} 秒/km 遅くなります。</p>` : ''}</div>
+</div>
     <div class="card"><h2>おすすめの時間帯</h2>${best(f.daily[0], '今日')}${best(f.daily[1], '明日')}${best(f.daily[2], dowOf(f.daily[2]?.date || '') + '曜')}</div>
     <div class="card"><h2>今日から 24 時間</h2>${hourChart(f.hourly)}
       <div class="hscroll">${f.hourly.slice(0, 24).map((h) => `<div class="hcell"><span class="muted num">${h.h}時</span>${wxIcon(h.code, 22)}<b class="num">${Math.round(h.temp)}°</b><span class="rain num">${(h.precip_pct ?? 0) >= 20 ? h.precip_pct + '%' : ''}</span><i style="background:${idxColor(h.index)}"></i></div>`).join('')}</div></div>
     <div class="card"><h2>7 日間</h2><div class="dlist">${f.daily.map((d) => `<div class="drow"><span class="dd num"><b>${md(d.date)}</b> <span class="muted">${dow(d.date)}</span></span>${wxIcon(d.code, 24)}<span class="num dt"><b>${Math.round(d.tmax)}</b><span class="muted">/${Math.round(d.tmin)}</span></span><span class="rain num dr">${d.precip_pct ?? 0}%</span><span class="muted num ds">風${d.wind_max.toFixed(0)}・日の出${d.sunrise} 日の入${d.sunset}</span></div>`).join('')}</div></div>
     ${f.air ? `<div class="card"><h2>大気</h2><p class="num" style="margin:0">PM2.5 <b>${f.air.pm2_5 != null ? Math.round(f.air.pm2_5) : '-'}</b> µg/m³${f.air.aqi != null ? `・AQI <b>${Math.round(f.air.aqi)}</b> <span class="muted">(${f.air.aqi < 50 ? '良好' : f.air.aqi < 100 ? 'ふつう' : '悪い'})</span>` : ''}</p></div>` : ''}
-    <p class="muted hint">Open-Meteo の予報から計算しています。暑さ指数と走りやすさは、気温・湿度・日射・風・雨から出した推定値です。</p>`;
+    <p class="muted hint">暑さ指数と走りやすさは、予報から計算した推定値です。</p>`;
 }
 
 /** 天気の場所を選ぶ (地名で検索 / 現在地) */
@@ -1229,29 +1229,20 @@ async function activityDetailView(id) {
 
 // ---- レース
 
-const CHECK_CATS = { prep: '前日までに', morning: '当日の朝', start: 'スタート前', after: 'ゴール後', other: 'その他 (追加分)' };
+const CHECK_CATS = { prep: '前日まで', morning: '当日の朝', other: '追加分' };
 const CHECK_ITEMS = [
-  ['prep', 'p1', '参加案内・ゼッケン引換証・本人確認'],
-  ['prep', 'p2', '本番用シューズ (慣らし済み) と替えの靴下'],
-  ['prep', 'p3', 'ウェア上下・ゼッケンを留める安全ピン'],
-  ['prep', 'p4', '防寒 (捨てるウェア・ポンチョ・手袋)'],
-  ['prep', 'p5', 'GPSウォッチを充電・ペース表を設定'],
-  ['prep', 'p6', 'ジェルなど補給食 (本数を決めて)'],
-  ['prep', 'p7', '塩・電解質タブレット'],
-  ['prep', 'p8', 'ワセリン・絆創膏 (擦れ止め)'],
-  ['prep', 'p9', 'キャップ・サングラス'],
-  ['prep', 'p10', '会場・スタート時間・荷物預けの場所を確認'],
-  ['prep', 'p11', '天気予報を見て、ウェアを最終決定'],
-  ['prep', 'p12', '前日は炭水化物中心の食事・早めに就寝'],
-  ['morning', 'm1', 'スタートの 2〜3 時間前に朝食 (消化のよいもの)'],
-  ['morning', 'm2', '水分をとる・トイレを済ませる'],
+  ['prep', 'p1', 'ゼッケン引換証・本人確認'],
+  ['prep', 'p2', '本番シューズと靴下'],
+  ['prep', 'p3', 'ウェア・安全ピン'],
+  ['prep', 'p4', '防寒 (ポンチョ・捨て着)'],
+  ['prep', 'p5', 'ウォッチ充電・ペース表'],
+  ['prep', 'p6', 'ジェル・塩タブレット'],
+  ['prep', 'p7', 'ワセリン・絆創膏'],
+  ['prep', 'p8', '会場・集合時間・荷物預けの確認'],
+  ['morning', 'm1', '朝食 (スタート 2〜3 時間前)'],
+  ['morning', 'm2', 'トイレ・給水'],
   ['morning', 'm3', '荷物を預ける'],
-  ['morning', 'm4', '軽いジョグと動的ストレッチ'],
-  ['start', 's1', 'GPSの電波をつかむ'],
-  ['start', 's2', 'スタート 15 分前に整列・ジェル 1 本目の時間を決める'],
-  ['start', 's3', '捨てウェアを脱ぐタイミングを決める'],
-  ['after', 'a1', '防寒着に着替え、すぐ補給 (水分・糖質・塩分)'],
-  ['after', 'a2', '記録を確認し、Strava に反映'],
+  ['morning', 'm4', '軽いジョグ・ストレッチ'],
 ];
 
 async function raceDetailView(id) {
@@ -1281,6 +1272,16 @@ async function raceDetailView(id) {
     view.querySelector('#ck-bar').style.width = `${(done() / items.length) * 100}%`;
   };
   setTimeout(() => {
+    if (upcoming) wireChecks();
+    view.querySelectorAll('[data-pm]').forEach((b) => (b.onclick = () => {
+      mode = b.dataset.pm;
+      view.querySelectorAll('[data-pm]').forEach((x) => x.classList.toggle('on', x === b));
+      view.querySelector('#pace-out').innerHTML = splitTable(r, mode);
+      view.querySelector('#pace-note').textContent = PACE_PLANS[mode].note;
+    }));
+    view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
+  });
+  const wireChecks = () => {
     drawChecks();
     view.querySelector('#checks').addEventListener('change', (e) => {
       const id2 = e.target.dataset.ck;
@@ -1308,15 +1309,9 @@ async function raceDetailView(id) {
       inp.value = '';
       drawChecks(); save();
     };
-    view.querySelectorAll('[data-pm]').forEach((b) => (b.onclick = () => {
-      mode = b.dataset.pm;
-      view.querySelectorAll('[data-pm]').forEach((x) => x.classList.toggle('on', x === b));
-      view.querySelector('#pace-out').innerHTML = splitTable(r, mode);
-      view.querySelector('#pace-note').textContent = PACE_PLANS[mode].note;
-    }));
-    view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
-  });
+  };
   const dleft = r.date >= t ? daysBetween(t, r.date) : null;
+  const upcoming = dleft != null;
   return `
     <div class="card hero">
       <div class="row spread"><h2>${esc(r.name)}</h2><span class="badge">${esc(r.priority)}</span></div>
@@ -1331,11 +1326,11 @@ async function raceDetailView(id) {
       <p class="muted" id="pace-note" style="margin-top:0">${PACE_PLANS.even.note}</p>` : ''}
       <div id="pace-out">${splitTable(r, 'even')}</div>
     </div>
-    <div class="card"><div class="row spread"><h2>準備物チェックリスト</h2><b class="num" id="ck-prog"></b></div>
-      <div class="bar" style="margin:6px 0 14px"><div id="ck-bar" style="width:0"></div></div>
+    ${upcoming ? `<div class="card"><div class="row spread"><h2>持ち物</h2><b class="num" id="ck-prog"></b></div>
+      <div class="bar" style="margin:6px 0 10px"><div id="ck-bar" style="width:0"></div></div>
       <div id="checks"></div>
-      <form id="ck-add" class="row" style="margin-top:14px;gap:8px"><input id="ck-new" placeholder="持ち物を追加 (例: 梅干し)" style="flex:1" maxlength="60"><button class="primary">追加</button></form>
-    </div>
+      <form id="ck-add" class="row" style="margin-top:12px;gap:8px"><input id="ck-new" placeholder="追加 (例: 梅干し)" style="flex:1" maxlength="60"><button class="primary">追加</button></form>
+    </div>` : ''}
     <button id="edit-race" class="wide">レースの情報を編集</button>`;
 }
 
