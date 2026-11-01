@@ -511,3 +511,38 @@ a.linkcard { display: block; text-decoration: none; color: inherit; }
 
 .nrc-row{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-bottom:1px solid var(--line)}
 .nrc-row select{height:44px;border-radius:12px;font-size:16px}
+
+/* ---- ワークアウト作成 (全画面) */
+body.wk-open { overflow: hidden; }
+.wk { position: fixed; inset: 0; z-index: 100; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+.wk-top { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: calc(10px + env(safe-area-inset-top)) 14px 10px; background: var(--bg); }
+.wk-top b { font-size: 17px; text-align: center; flex: 1; }
+.wk-btn { min-height: 44px; min-width: 64px; padding: 0 14px; border-radius: 14px; font-size: 15px; }
+.wk-body { padding: 4px 14px 0; display: flex; flex-direction: column; gap: 12px; }
+.wk-card { background: var(--surface); border-radius: 20px; padding: 14px 16px; }
+.wk-steps { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.wk-plus { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; color: var(--accent, #5b5bff); background: var(--surface); border: 1px solid var(--line); }
+.wk-step { position: relative; width: 100%; display: flex; align-items: center; gap: 4px; background: var(--surface); border-radius: 18px; overflow: hidden; padding-left: 12px; border-left: 8px solid var(--kc); touch-action: pan-y; }
+.wk-step.drag { z-index: 3; box-shadow: 0 10px 30px rgb(0 0 0 / .35); }
+.wk-grip { width: 34px; min-height: 64px; font-size: 20px; color: var(--muted); background: none; border: none; touch-action: none; }
+.wk-card-main { flex: 1; display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 14px 4px; background: none; border: none; color: inherit; min-height: 64px; }
+.wk-card-main b { font-size: 17px; }
+.wk-card-main .muted { font-size: 13px; }
+.wk-step .chev { margin-right: 12px; opacity: .6; }
+.wk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.wk-kind { position: relative; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; text-align: left; padding: 16px 14px 24px; min-height: 108px; border-radius: 18px; background: var(--surface); border: none; color: inherit; overflow: hidden; }
+.wk-kind b { font-size: 17px; }
+.wk-kind i { position: absolute; left: 0; right: 0; bottom: 0; height: 12px; background: var(--kc); opacity: .75; }
+.wk-group { background: var(--surface); border-radius: 18px; padding: 0 16px; }
+.wk-sub { font-size: 13px; color: var(--muted); padding: 4px 6px 0; }
+.wk-rowwrap + .wk-rowwrap { border-top: 1px solid var(--line); }
+.wk-row { width: 100%; min-height: 56px; display: flex; align-items: center; gap: 10px; background: none; border: none; color: inherit; font-size: 16px; padding: 0; text-align: left; }
+.wk-row > span:first-child { flex: 1; }
+.wk-row .v { color: var(--muted); }
+.wk-row.open .v { color: var(--accent, #5b5bff); }
+.wk-row svg { opacity: .6; transition: transform .15s; }
+.wk-row.open svg { transform: rotate(180deg); }
+.wk-open { padding: 4px 0 14px; display: flex; flex-direction: column; gap: 10px; }
+.wk-grip, .wk-card-main, .wk-row { background: none !important; border: none !important; box-shadow: none !important; border-radius: 0 !important; transform: none; }
+.wk-card-main { align-items: flex-start; }
+.wk-row { padding: 0; }
