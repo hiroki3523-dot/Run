@@ -320,7 +320,9 @@ api.get('/activities/:id/review', async (c) => {
   ).bind(row.date).all<{ distance_m: number; moving_time_s: number; avg_hr: number | null; role: string | null }>();
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
   const race = await c.env.DB.prepare(`SELECT name, date, goal_time_s, distance_m FROM races WHERE date >= ? AND priority IN ('A','B') ORDER BY date LIMIT 1`).bind(today).first<any>();
-  const rpeRaw = await kvGet(c.env, `rpe:${id}`);
+  let fb: { rpe?: number; leg?: string; tags?: string[] } = {};
+  try { fb = JSON.parse((await kvGet(c.env, `fb:${id}`)) ?? '{}'); } catch { /* 無視 */ }
+  if (!fb.rpe) { const old = await kvGet(c.env, `rpe:${id}`); if (old) fb.rpe = Number(old); }
   let splits: { km: number; time_s: number; pace_s: number | null; hr: number | null }[] = [];
   try {
     const a = (await getActivity(c.env, id)) as unknown as { splits_metric?: { distance: number; moving_time: number; average_heartrate?: number }[] };
@@ -341,17 +343,21 @@ api.get('/activities/:id/review', async (c) => {
     lthr: st.coros.lthr ?? st.lthr, max_hr: st.max_hr,
     band: plan?.pace_min_s && plan?.pace_max_s ? { min: plan.pace_min_s, max: plan.pace_max_s } : null,
     race: race ?? null, today,
-    rpe: rpeRaw ? Number(rpeRaw) : null,
+    rpe: fb.rpe ?? null, leg: fb.leg ?? null, tags: fb.tags ?? [],
   });
-  return c.json({ ...review, rpe: rpeRaw ? Number(rpeRaw) : null, shoe_id: row.shoe_id });
+  return c.json({ ...review, fb: { rpe: fb.rpe ?? null, leg: fb.leg ?? null, tags: fb.tags ?? [] } });
 });
 
-/** 走ったときの主観的なきつさ (1〜4) を残す */
-api.put('/activities/:id/rpe', async (c) => {
-  const b = await c.req.json<{ rpe?: number }>();
-  const v = Number(b.rpe);
-  if (![1, 2, 3, 4].includes(v)) return c.json({ error: 'rpe は 1〜4' }, 400);
-  await kvSet(c.env, `rpe:${Number(c.req.param('id'))}`, String(v));
+/** ふりかえり (きつさ・脚の状態・気になる点) を残す。送った項目だけ更新する */
+api.put('/activities/:id/feedback', async (c) => {
+  const id = Number(c.req.param('id'));
+  const b = await c.req.json<{ rpe?: number | null; leg?: string | null; tags?: string[] }>();
+  let cur: { rpe?: number | null; leg?: string | null; tags?: string[] } = {};
+  try { cur = JSON.parse((await kvGet(c.env, `fb:${id}`)) ?? '{}'); } catch { /* 無視 */ }
+  if ('rpe' in b) cur.rpe = b.rpe && [1, 2, 3, 4].includes(Number(b.rpe)) ? Number(b.rpe) : null;
+  if ('leg' in b) cur.leg = b.leg && ['light', 'normal', 'heavy', 'pain'].includes(b.leg) ? b.leg : null;
+  if ('tags' in b) cur.tags = (b.tags ?? []).filter((t) => ['hot', 'cold', 'wind', 'sleep', 'hungry', 'tired'].includes(t));
+  await kvSet(c.env, `fb:${id}`, JSON.stringify(cur));
   return c.json({ ok: true });
 });
 

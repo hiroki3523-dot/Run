@@ -628,3 +628,9 @@ a.act { display: block; margin-top: 8px; padding: 10px 12px; border-radius: 14px
 .rv-q { margin: 14px 0; display: grid; gap: 8px; }
 .rv-o { display: flex; align-items: center; gap: 12px; padding: 10px 4px; font-size: 15px; min-height: 44px; }
 .rv-o input { width: 22px; height: 22px; accent-color: var(--accent); }
+
+.fb-g { margin: 14px 0; display: grid; gap: 6px; }
+.fb-g b { font-size: 15px; }
+.fb-g .muted { font-size: 12px; }
+.fb-g .chip { min-height: 44px; padding: 0 16px; }
+.fb-note { margin: 10px 0 0; padding: 12px 14px; border-radius: 14px; background: var(--accent-soft); font-size: 14px; line-height: 1.7; }
