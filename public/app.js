@@ -304,11 +304,110 @@ const wxDay = (d) => {
 
 function weekWxCard(from, place) {
   const days = [...Array(7)].map((_, i) => addDays(from, i));
-  return `<div class="card"><div class="row spread"><h2>週間天気</h2><span class="muted">${esc(place)}</span></div>
+  return `<a class="card linkcard" href="#/weather"><div class="row spread"><h2>週間天気</h2><span class="muted">${esc(place)} ・詳しく見る ›</span></div>
     <div class="wxweek">${days.map((d) => {
       const w = WX[d];
       return `<div class="${d === from ? 'today' : ''}"><div class="muted">${dow(d)}</div>${w ? wxIcon(w.code, 26) : '<span class="muted">-</span>'}<b class="num">${w ? Math.round(w.tmax) : '-'}</b><span class="muted num">${w ? Math.round(w.tmin) : ''}</span><span class="rain num">${w && w.precip_pct != null && w.precip_pct >= 30 ? w.precip_pct + '%' : ''}</span></div>`;
-    }).join('')}</div></div>`;
+    }).join('')}</div></a>`;
+}
+
+const idxColor = (i) => (i >= 85 ? '#16b57a' : i >= 70 ? '#2fb7c9' : i >= 50 ? '#ffb800' : i >= 30 ? '#ff8a1f' : '#e63946');
+const idxLabel = (i) => (i >= 85 ? '最適' : i >= 70 ? '走りやすい' : i >= 50 ? 'ふつう' : i >= 30 ? 'きびしい' : '避けたい');
+const wbgtLabel = (w) => (w >= 31 ? '運動は原則中止' : w >= 28 ? '厳重警戒' : w >= 25 ? '警戒' : w >= 21 ? '注意' : 'ほぼ安全');
+const wbgtColor = (w) => (w >= 31 ? '#e63946' : w >= 28 ? '#ff4f7b' : w >= 25 ? '#ff8a1f' : w >= 21 ? '#ffb800' : '#16b57a');
+
+/** 24 時間の気温 (線)・降水確率 (棒)・走りやすさ (色帯) */
+function hourChart(hours) {
+  const hs = hours.slice(0, 24);
+  if (hs.length < 3) return '';
+  const W = 340, H = 170, L = 30, R = 10, T = 12, B = 44;
+  const x = (i) => L + (i / (hs.length - 1)) * (W - L - R);
+  const ts = hs.map((h) => h.temp), tmin = Math.floor(Math.min(...ts) - 1), tmax = Math.ceil(Math.max(...ts) + 1);
+  const y = (v) => T + ((tmax - v) / (tmax - tmin || 1)) * (H - T - B);
+  const bw = (W - L - R) / hs.length;
+  const bars = hs.map((h, i) => `<rect x="${(x(i) - bw / 2 + 1).toFixed(1)}" y="${(H - B - ((h.precip_pct ?? 0) / 100) * (H - T - B) * 0.55).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${(((h.precip_pct ?? 0) / 100) * (H - T - B) * 0.55).toFixed(1)}" fill="#3d8bff" opacity=".35"/>`).join('');
+  const strip = hs.map((h, i) => `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${H - B + 8}" width="${bw.toFixed(1)}" height="12" fill="${idxColor(h.index)}" opacity="${h.daylight ? 1 : 0.35}"/>`).join('');
+  const xl = hs.map((h, i) => (i % 3 === 0 ? `<text x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle">${h.h}</text>` : '')).join('');
+  const line = `<polyline fill="none" stroke="#ff8a1f" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" points="${hs.map((h, i) => `${x(i).toFixed(1)},${y(h.temp).toFixed(1)}`).join(' ')}"/>`;
+  const grid = [tmin, Math.round((tmin + tmax) / 2), tmax].map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="var(--line)"/><text x="${L - 5}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${v}</text>`).join('');
+  return `<div class="schart"><div class="legend"><span><i style="background:#ff8a1f"></i>気温(℃)</span><span><i style="background:#3d8bff;opacity:.5"></i>降水確率</span><span><i style="background:#16b57a"></i>下の帯は走りやすさ</span></div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="24時間の気温と降水確率"><g class="ax">${grid}${xl}</g>${bars}${line}${strip}</svg></div>`;
+}
+
+async function weatherView() {
+  const f = await api('/weather/forecast');
+  setTimeout(() => {
+    const b = view.querySelector('#change-place'); if (b) b.onclick = () => pickPlace();
+    const r = view.querySelector('#wx-reload'); if (r) r.onclick = () => route();
+  });
+  if (!f) return `<div class="card error">天気を取得できませんでした。<button id="wx-reload">もう一度</button></div>`;
+  const n = f.now;
+  const dowOf = (d) => dow(d);
+  const best = (d, label) => (d?.best ? `<div class="bestrow"><span class="bt">${label}</span><b class="num">${d.best.from}〜${d.best.to}時</b><span class="num">${d.best.temp}℃</span><span class="pill" style="background:${idxColor(d.best.index)}">${d.best.label}</span></div>` : '');
+  return `
+    <div class="row spread" style="margin-bottom:10px"><h2>${esc(f.place.name)}の天気</h2><button id="change-place" class="primary">場所を変える</button></div>
+    ${n ? `<div class="card">
+      <div class="nowrow"><div>${wxIcon(n.code, 56)}</div><div><div class="bigt num">${Math.round(n.temp)}<small>℃</small></div><div class="muted">${wxKind(n.code)[1]}・体感 ${Math.round(n.feels)}℃</div></div>
+        <div class="nowidx"><div class="muted">走りやすさ</div><div class="num idx" style="color:${idxColor(n.index)}">${n.index}</div><div style="color:${idxColor(n.index)};font-weight:700">${idxLabel(n.index)}</div></div></div>
+      <div class="facts num">
+        <div><span class="muted">湿度</span><b>${Math.round(n.humidity)}%</b></div>
+        <div><span class="muted">風</span><b>${n.wind.toFixed(1)}m/s</b></div>
+        <div><span class="muted">降水</span><b>${n.precip_pct ?? 0}%</b></div>
+        <div><span class="muted">暑さ指数</span><b style="color:${wbgtColor(n.wbgt)}">${n.wbgt}</b></div>
+      </div>
+      <p class="muted" style="margin:10px 0 0">暑さ指数: <b style="color:${wbgtColor(n.wbgt)}">${wbgtLabel(n.wbgt)}</b> (気温・湿度・日射から推定。25 以上は警戒)</p>
+    </div>` : ''}
+    <div class="card"><h2>ランのアドバイス</h2><ul class="bullets">${f.advice.map((a) => `<li>${esc(a)}</li>`).join('')}</ul>
+      ${n && n.temp > 10 ? `<p class="muted" style="margin:6px 0 0">目安: いまの気温だと、普段のペースより約 ${Math.max(0, Math.round((n.temp - 10) * 2))} 秒/km 遅くなります。</p>` : ''}</div>
+    <div class="card"><h2>おすすめの時間帯</h2>${best(f.daily[0], '今日')}${best(f.daily[1], '明日')}${best(f.daily[2], dowOf(f.daily[2]?.date || '') + '曜')}</div>
+    <div class="card"><h2>今日から 24 時間</h2>${hourChart(f.hourly)}
+      <div class="hscroll">${f.hourly.slice(0, 24).map((h) => `<div class="hcell"><span class="muted num">${h.h}時</span>${wxIcon(h.code, 22)}<b class="num">${Math.round(h.temp)}°</b><span class="rain num">${(h.precip_pct ?? 0) >= 20 ? h.precip_pct + '%' : ''}</span><i style="background:${idxColor(h.index)}"></i></div>`).join('')}</div></div>
+    <div class="card"><h2>7 日間</h2><div class="dlist">${f.daily.map((d) => `<div class="drow"><span class="dd num"><b>${md(d.date)}</b> <span class="muted">${dow(d.date)}</span></span>${wxIcon(d.code, 24)}<span class="num dt"><b>${Math.round(d.tmax)}</b><span class="muted">/${Math.round(d.tmin)}</span></span><span class="rain num dr">${d.precip_pct ?? 0}%</span><span class="muted num ds">風${d.wind_max.toFixed(0)}・日の出${d.sunrise} 日の入${d.sunset}</span></div>`).join('')}</div></div>
+    ${f.air ? `<div class="card"><h2>大気</h2><p class="num" style="margin:0">PM2.5 <b>${f.air.pm2_5 != null ? Math.round(f.air.pm2_5) : '-'}</b> µg/m³${f.air.aqi != null ? `・AQI <b>${Math.round(f.air.aqi)}</b> <span class="muted">(${f.air.aqi < 50 ? '良好' : f.air.aqi < 100 ? 'ふつう' : '悪い'})</span>` : ''}</p></div>` : ''}
+    <p class="muted hint">Open-Meteo の予報から計算しています。暑さ指数と走りやすさは、気温・湿度・日射・風・雨から出した推定値です。</p>`;
+}
+
+/** 天気の場所を選ぶ (地名で検索 / 現在地) */
+async function pickPlace() {
+  const pending = openDialog(`
+    <h2>天気の場所</h2>
+    <button type="button" id="geo" class="primary wide">現在地を使う</button>
+    <label style="margin-top:14px">地名で探す<input id="place-q" placeholder="例: 佐賀、久留米、渋谷" autocomplete="off"></label>
+    <div id="place-res" class="place-res"></div>
+    <input type="hidden" name="name"><input type="hidden" name="lat"><input type="hidden" name="lon">`);
+  const q = (id) => dialogForm.querySelector(id);
+  const choose = (name, lat, lon) => { q('[name=name]').value = name; q('[name=lat]').value = lat; q('[name=lon]').value = lon; dialog.close('ok'); };
+  let timer;
+  q('#place-q').oninput = (e) => {
+    clearTimeout(timer);
+    const v = e.target.value.trim();
+    if (!v) { q('#place-res').innerHTML = ''; return; }
+    timer = setTimeout(async () => {
+      try {
+        const r = await api(`/weather/search?q=${encodeURIComponent(v)}`);
+        q('#place-res').innerHTML = r.length ? r.map((x, i) => `<button type="button" class="choice" data-pi="${i}"><b>${esc(x.name)}</b><small>${esc(x.detail)}</small></button>`).join('') : '<p class="muted">見つかりません</p>';
+        q('#place-res').querySelectorAll('[data-pi]').forEach((b) => (b.onclick = () => { const x = r[Number(b.dataset.pi)]; choose(x.name, x.lat, x.lon); }));
+      } catch (err) { q('#place-res').innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+    }, 350);
+  };
+  q('#geo').onclick = () => {
+    if (!navigator.geolocation) { alert('この端末では現在地を取得できません'); return; }
+    q('#geo').textContent = '取得中…';
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const lat = pos.coords.latitude, lon = pos.coords.longitude;
+      let name = '現在地';
+      try {
+        const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=ja`);
+        const j = await r.json();
+        name = j.city || j.locality || j.principalSubdivision || name;
+      } catch { /* 名前が取れなくても座標で動く */ }
+      choose(name, lat, lon);
+    }, () => { q('#geo').textContent = '現在地を使う'; alert('現在地を取得できませんでした。設定で位置情報を許可するか、地名で探してください。'); }, { enableHighAccuracy: false, timeout: 10000 });
+  };
+  const v = await pending;
+  if (!v || !v.name || !v.lat) return;
+  await api('/settings', { method: 'PUT', body: { weather_place: { name: v.name, lat: Number(v.lat), lon: Number(v.lon) } } });
+  route();
 }
 
 function weatherCard(w) {
@@ -1695,7 +1794,7 @@ async function route() {
   const tab = parts[0] || 'home';
   document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   // 詳細ページ (ランの詳細・週/日の評価・別の週) では「戻る」を出す
-  const isRoot = parts.length <= 1 && !query;
+  const isRoot = parts.length <= 1 && !query && tab !== 'weather';
   document.getElementById('back').classList.toggle('hidden', isRoot);
   document.querySelector('h1').classList.toggle('hidden', !isRoot);
   window.scrollTo(0, 0);
@@ -1709,6 +1808,7 @@ async function route() {
     const html =
       tab === 'plans' ? await plansView(params)
       : tab === 'activities' ? (parts[1] ? await activityDetailView(parts[1]) : await activitiesView(params))
+      : tab === 'weather' ? await weatherView()
       : tab === 'races' ? (parts[1] ? await raceDetailView(parts[1]) : await racesView())
       : tab === 'shoes' ? await shoesView()
       : tab === 'settings' ? await settingsView()

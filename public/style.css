@@ -444,3 +444,28 @@ details.card summary { cursor: pointer; font-weight: 700; min-height: 36px; disp
 .ck-del { min-height: 36px; min-width: 36px; padding: 0; border-radius: 50%; font-size: 18px; }
 .bar.mg { position: relative; height: 12px; overflow: visible; }
 .bar.mg i { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--text); opacity: .7; }
+
+/* ---- 天気ページ */
+a.linkcard { display: block; text-decoration: none; color: inherit; }
+.nowrow { display: grid; grid-template-columns: 64px 1fr auto; gap: 12px; align-items: center; }
+.bigt { font-size: 44px; font-weight: 300; line-height: 1; }
+.bigt small { font-size: 18px; margin-left: 2px; }
+.nowidx { text-align: right; }
+.nowidx .idx { font-size: 34px; font-weight: 700; line-height: 1.1; }
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.facts > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 6px; border-radius: 12px; background: var(--btn-bg); text-align: center; font-size: 12px; }
+.facts b { font-size: 16px; }
+.bestrow { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.bestrow:last-child { border-bottom: none; }
+.bestrow .bt { color: var(--muted); font-size: 13px; }
+.pill { color: #fff; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+.hscroll { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 8px; margin: 0 -4px; scrollbar-width: none; }
+.hcell { flex: 0 0 52px; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 0 6px; border-radius: 12px; background: var(--btn-bg); font-size: 12px; }
+.hcell i { width: 70%; height: 4px; border-radius: 2px; margin-top: 2px; }
+.hcell .rain { min-height: 14px; color: #3d8bff; font-size: 11px; font-weight: 700; }
+.dlist { display: grid; }
+.drow { display: grid; grid-template-columns: 74px 28px 52px 38px; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.drow:last-child { border-bottom: none; }
+.drow .ds { grid-column: 1 / -1; font-size: 11.5px; }
+.drow .dr { color: #3d8bff; font-weight: 700; font-size: 13px; }
+.place-res { display: grid; gap: 8px; margin-top: 10px; max-height: 40vh; overflow: auto; }

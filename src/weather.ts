@@ -24,8 +24,8 @@ export interface RaceWeather {
 export interface DayWeather { date: string; code: number; tmax: number; tmin: number; precip_pct: number | null; wind_max: number }
 
 /** 1 週間 (過去 7 日 + 先 15 日) の天気。自宅の近くの都市 (既定は福岡) */
-export async function weatherDays(cityName = '福岡'): Promise<{ place: string; days: DayWeather[] } | null> {
-  const city = CITIES.find((c) => c[0] === cityName) ?? CITIES[0];
+export async function weatherDays(place: { name: string; lat: number; lon: number }): Promise<{ place: string; days: DayWeather[] } | null> {
+  const city: [string, string, number, number] = [place.name, place.name, place.lat, place.lon];
   const q = new URLSearchParams({
     latitude: String(city[2]),
     longitude: String(city[3]),
