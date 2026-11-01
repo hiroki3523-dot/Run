@@ -673,7 +673,7 @@ async function settingsView() {
       <h2>過去データの取り込み</h2>
       <p class="muted">${esc(status.backfill ? (status.backfill.active ? `取り込み中: ${status.backfill.imported} 件` : `前回: ${status.backfill.imported} 件取り込み${status.backfill.finished ? ' (完了)' : ''}`) : '未実行')}</p>
       <div class="row"><button id="backfill-2025" class="primary">2025年1月から取り込む</button><button id="backfill-all">全期間</button><button id="backfill-30">直近30日</button><button id="backfill-status">進み具合</button><button id="backfill-stop">停止</button></div>
-      <p class="muted">開始後は閉じて大丈夫です。Strava の上限に当たると自動で待って再開します。</p>
+      <p class="muted">直近30日を先に取り込み、そのあと古い記録へ進みます。閉じて大丈夫です。Strava の上限に当たると自動で待って再開します。</p>
     </div>
     <div class="card">
       <h2>初期データ</h2>

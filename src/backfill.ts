@@ -23,6 +23,13 @@ export interface BackfillState {
   pause_until?: number;
   errors: number;
   last_error?: string;
+  /** 今の区間が終わったあとに続けて取り込む開始位置 (epoch 秒) */
+  then?: number[];
+}
+
+/** 区間の終わりに達したら、次の区間の開始位置を返す。なければ null (全部終了) */
+export function nextSegment(st: Pick<BackfillState, 'then'>): number | null {
+  return st.then && st.then.length > 0 ? st.then.shift()! : null;
 }
 
 interface BatchResult {
@@ -88,12 +95,18 @@ export async function getBackfill(env: Env): Promise<BackfillState | null> {
 
 const save = (env: Env, st: BackfillState) => kvSet(env, 'backfill', JSON.stringify(st));
 
-/** 取り込みを開始する。days が null なら全期間。 */
+/** 最初に取り込む直近の日数。画面に新しい記録がすぐ出るようにする */
+const RECENT_DAYS = 30;
+
+/** 取り込みを開始する。days が null なら全期間。直近 30 日を先に取り込み、そのあと古い順に進める。 */
 export async function startBackfill(env: Env, days: number | null): Promise<BackfillState> {
   const now = Math.floor(Date.now() / 1000);
+  const from = days == null ? 0 : now - days * 86400;
+  const recent = now - RECENT_DAYS * 86400;
   const st: BackfillState = {
     active: true,
-    after: days == null ? 0 : now - days * 86400,
+    after: from < recent ? recent : from,
+    then: from < recent ? [from] : [],
     imported: 0,
     skipped: 0,
     started: new Date().toISOString(),
@@ -124,8 +137,13 @@ export async function backfillStep(env: Env): Promise<void> {
     // 上限に達したら次の 15 分枠まで待つ (枠の切り替わり直後は避けて +30 秒)
     st.pause_until = r.rate_limited ? nextQuarter(now) + 30 : undefined;
     if (r.next_after == null) {
-      st.active = false;
-      st.finished = new Date().toISOString();
+      const seg = nextSegment(st);
+      if (seg == null) {
+        st.active = false;
+        st.finished = new Date().toISOString();
+      } else {
+        st.after = seg;
+      }
     } else {
       st.after = r.next_after;
     }
