@@ -322,7 +322,10 @@ api.post('/strava/backfill/start', async (c) => {
   const d = Number(c.req.query('days'));
   return c.json(await startBackfill(c.env, Number.isFinite(d) && d > 0 ? d : null));
 });
-api.get('/strava/backfill/status', async (c) => c.json(await getBackfill(c.env)));
+api.get('/strava/backfill/status', async (c) => {
+  const db = await c.env.DB.prepare('SELECT COUNT(*) AS count, MIN(date) AS oldest, MAX(date) AS newest FROM activities').first();
+  return c.json({ ...((await getBackfill(c.env)) ?? {}), db });
+});
 api.post('/strava/backfill/stop', async (c) => (await stopBackfill(c.env), c.json(await getBackfill(c.env))));
 
 /** レース5件と福岡までの計画を登録 (登録済みの日付は飛ばす) */

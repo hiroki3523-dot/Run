@@ -600,12 +600,33 @@ async function settingsView() {
     };
     run('#test-notify', async () => notifyText(await api('/notify/test', { method: 'POST' })));
     run('#morning', async () => notifyText(await api('/notify/morning', { method: 'POST' })));
+    const fmtTime = (ep) => new Date(ep * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+    const renderBackfill = (b) => {
+      const el = view.querySelector('#bf-live');
+      if (!el) return false;
+      const db = b.db || {};
+      const waiting = b.active && b.pause_until && b.pause_until * 1000 > Date.now();
+      const state = !b.started ? '未実行'
+        : b.active ? (waiting ? `⏸ Strava の上限待ち (${fmtTime(b.pause_until)} ごろ再開)` : '▶ 取り込み中')
+        : b.finished ? (b.last_error ? '⚠️ エラーで停止' : '✅ 完了') : '⏹ 停止中';
+      const pos = b.active && b.after ? `現在位置 ${new Date(b.after * 1000).toISOString().slice(0, 10)} 付近` : '';
+      el.innerHTML = `<div><b>${state}</b></div>
+        <div class="num">取り込み済み ${db.count ?? 0} 件${db.oldest ? `(${db.oldest.replace(/-/g, '/')} 〜 ${db.newest.replace(/-/g, '/')})` : ''}</div>
+        ${b.started ? `<div class="num">今回 ${b.imported} 件取り込み・${b.skipped} 件は済みのため飛ばしました${pos ? `・${pos}` : ''}</div>` : ''}
+        ${b.last_error ? `<div class="error">${esc(b.last_error)}</div>` : ''}`;
+      return true;
+    };
+    const refreshBackfill = async () => {
+      try { return renderBackfill(await api('/strava/backfill/status')); } catch { return false; }
+    };
+    refreshBackfill();
+    const timer = setInterval(async () => { if (!(await refreshBackfill())) clearInterval(timer); }, 8000);
     const bfText = (b) => !b ? '未実行' : b.active
       ? `取り込み中… ${b.imported} 件取り込み済み${b.pause_until && b.pause_until * 1000 > Date.now() ? ' (Strava の上限待ち。自動で再開します)' : ''}`
       : `${b.finished ? '完了' : '停止中'}: ${b.imported} 件取り込み${b.last_error ? ` / エラー: ${b.last_error}` : ''}`;
     run('#backfill-all', async () => {
       if (!confirm('Strava の全期間を取り込みます。アプリを閉じても自動で進みます。開始しますか？')) return 'キャンセル';
-      return bfText(await api('/strava/backfill/start', { method: 'POST' }));
+      { const r = bfText(await api('/strava/backfill/start', { method: 'POST' })); refreshBackfill(); return r; }
     });
     run('#reset-settings', async () => {
       if (!confirm('ペース帯・心拍の基準を COROS 基準に戻します。よろしいですか？')) return 'キャンセル';
@@ -620,11 +641,11 @@ async function settingsView() {
     });
     run('#backfill-2025', async () => {
       const days = Math.ceil((Date.now() - Date.parse('2025-01-01T00:00:00+09:00')) / 86400000);
-      return bfText(await api(`/strava/backfill/start?days=${days}`, { method: 'POST' }));
+      { const r = bfText(await api(`/strava/backfill/start?days=${days}`, { method: 'POST' })); refreshBackfill(); return r; }
     });
-    run('#backfill-30', async () => bfText(await api('/strava/backfill/start?days=30', { method: 'POST' })));
+    run('#backfill-30', async () => { const r = bfText(await api('/strava/backfill/start?days=30', { method: 'POST' })); refreshBackfill(); return r; });
     run('#backfill-status', async () => bfText(await api('/strava/backfill/status')));
-    run('#backfill-stop', async () => bfText(await api('/strava/backfill/stop', { method: 'POST' })));
+    run('#backfill-stop', async () => { const r = bfText(await api('/strava/backfill/stop', { method: 'POST' })); refreshBackfill(); return r; });
     run('#copy-cal', async () => {
       await navigator.clipboard.writeText(status.calendar_url);
       return 'カレンダー購読 URL をコピーしました。iPhone の「設定 > カレンダー > アカウント > アカウントを追加 > その他 >照会カレンダーを追加」に貼り付けてください';
@@ -671,7 +692,7 @@ async function settingsView() {
     </div>
     <div class="card">
       <h2>過去データの取り込み</h2>
-      <p class="muted">${esc(status.backfill ? (status.backfill.active ? `取り込み中: ${status.backfill.imported} 件` : `前回: ${status.backfill.imported} 件取り込み${status.backfill.finished ? ' (完了)' : ''}`) : '未実行')}</p>
+      <div id="bf-live" class="bf-live muted">読み込み中…</div>
       <div class="row"><button id="backfill-2025" class="primary">2025年1月から取り込む</button><button id="backfill-all">全期間</button><button id="backfill-30">直近30日</button><button id="backfill-status">進み具合</button><button id="backfill-stop">停止</button></div>
       <p class="muted">直近30日を先に取り込み、そのあと古い記録へ進みます。閉じて大丈夫です。Strava の上限に当たると自動で待って再開します。</p>
     </div>
