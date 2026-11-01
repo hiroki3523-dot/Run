@@ -346,3 +346,23 @@ ul.advice li.bad { border-left-color: var(--bad); }
 ul.advice li.info { border-left-color: var(--accent); }
 
 .actual-mini { text-decoration: none; color: var(--text); white-space: nowrap; }
+
+/* ---- 実績詳細: メニュー選択・ゾーン・グラフ */
+.plan-choices { display: grid; gap: 10px; margin: 12px 0 16px; }
+.choice { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 12px 16px; border-radius: 14px; width: 100%; }
+.choice b { font-size: 15px; }
+.choice small { font-size: 12px; font-weight: 400; color: var(--muted); }
+.choice.on { background: linear-gradient(135deg, #2b3dff, #7a5cff); border-color: transparent; color: #fff; }
+.choice.on small { color: rgb(255 255 255 / .8); }
+.zones { display: grid; gap: 10px; margin-top: 8px; }
+.zrow { display: grid; grid-template-columns: 112px 1fr 40px; gap: 8px; align-items: center; font-size: 13px; }
+.zl b { margin-right: 4px; }
+.zbar { height: 12px; border-radius: 6px; background: var(--btn-bg); overflow: hidden; }
+.zbar i { display: block; height: 100%; border-radius: 6px; }
+.zv { text-align: right; }
+.schart { margin: 4px 0 14px; }
+.schart svg { display: block; }
+.schart .ax text { font-size: 10px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+li.cur { background: var(--accent-soft); border-radius: 12px; }

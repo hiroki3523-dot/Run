@@ -24,17 +24,26 @@ export async function ingestActivity(env: Env, id: number, opts: IngestOptions =
     .bind(id)
     .first<{ plan_id: number | null; notified_at: string | null }>();
 
-  const plan =
+  const linkedPlan =
     opts.planId !== undefined
       ? opts.planId == null
         ? null
         : await env.DB.prepare('SELECT * FROM plans WHERE id = ?').bind(opts.planId).first<Plan>()
       : await findPlan(env, id, date, act.distance, existing?.plan_id ?? null);
+  const plan = linkedPlan;
+  // 同じメニューに複数のワークアウト (アップ・本体・ダウン) が紐づくとき、短い付属ぶんは計画とは比べず単体で評価する
+  let evalPlan = plan;
+  if (plan?.distance_m) {
+    const bigger = await env.DB.prepare('SELECT 1 AS x FROM activities WHERE plan_id = ? AND id != ? AND distance_m > ? LIMIT 1')
+      .bind(plan.id, id, act.distance)
+      .first();
+    if (bigger && act.distance < plan.distance_m * 0.5) evalPlan = null;
+  }
 
   const [streams, settings] = await Promise.all([getStreams(env, id), getSettings(env)]);
   const evaluation = evaluateRun(
     { distance_m: act.distance, moving_time_s: act.moving_time, laps: act.laps ?? [], streams },
-    plan,
+    evalPlan,
     settings,
   );
   const shoeId = act.gear_id ? await ensureShoe(env, act) : null;
@@ -87,12 +96,12 @@ export async function deleteActivity(env: Env, id: number): Promise<void> {
   await env.DB.prepare('DELETE FROM activities WHERE id = ?').bind(id).run();
 }
 
-/** 同日の計画のうち、未紐づけで距離が近いものを選ぶ */
+/** 同日の計画から選ぶ。1 つだけならそれ。複数あれば、まだ走っていない計画を優先して距離が近いもの (1 つの計画に複数のワークアウトを紐づけられる) */
 async function findPlan(env: Env, activityId: number, date: string, distance: number, current: number | null) {
   const { results } = await env.DB.prepare(
     `SELECT p.* FROM plans p
      WHERE p.date = ? AND p.type != 'rest'
-       AND NOT EXISTS (SELECT 1 FROM activities a WHERE a.plan_id = p.id AND a.id != ?)`,
+     ORDER BY EXISTS (SELECT 1 FROM activities a WHERE a.plan_id = p.id AND a.id != ?), p.id`,
   )
     .bind(date, activityId)
     .all<Plan>();
@@ -101,6 +110,7 @@ async function findPlan(env: Env, activityId: number, date: string, distance: nu
     if (keep) return keep;
   }
   if (results.length === 0) return null;
+  if (results.length === 1) return results[0];
   return results.reduce((best, p) =>
     Math.abs((p.distance_m ?? distance) - distance) < Math.abs((best.distance_m ?? distance) - distance) ? p : best,
   );

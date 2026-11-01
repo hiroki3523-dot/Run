@@ -101,9 +101,12 @@ api.get('/plans', async (c) => {
   const { from, to } = c.req.query();
   if (!isDate(from) || !isDate(to)) return c.json({ error: 'from/to が必要です' }, 400);
   const { results } = await c.env.DB.prepare(
-    `SELECT p.*, a.id AS activity_id, a.score, a.distance_m AS actual_distance_m
-     FROM plans p LEFT JOIN activities a ON a.plan_id = p.id
-     WHERE p.date BETWEEN ? AND ? ORDER BY p.date, p.id`,
+    `SELECT p.*,
+       (SELECT a.id FROM activities a WHERE a.plan_id = p.id ORDER BY a.distance_m DESC LIMIT 1) AS activity_id,
+       (SELECT a.score FROM activities a WHERE a.plan_id = p.id ORDER BY a.distance_m DESC LIMIT 1) AS score,
+       (SELECT SUM(a.distance_m) FROM activities a WHERE a.plan_id = p.id) AS actual_distance_m,
+       (SELECT COUNT(*) FROM activities a WHERE a.plan_id = p.id) AS activity_count
+     FROM plans p WHERE p.date BETWEEN ? AND ? ORDER BY p.date, p.id`,
   )
     .bind(from, to)
     .all();
@@ -316,11 +319,11 @@ api.post('/plans/generate', async (c) => {
   let week_done: { km: number; points: number; long: boolean } | undefined;
   if (start > wsStart) {
     const { results: did } = await c.env.DB.prepare(
-      `SELECT a.distance_m, p.type FROM activities a LEFT JOIN plans p ON p.id = a.plan_id WHERE a.date >= ? AND a.date < ?`,
-    ).bind(wsStart, start).all<{ distance_m: number; type: string | null }>();
+      `SELECT a.distance_m, a.plan_id, p.type FROM activities a LEFT JOIN plans p ON p.id = a.plan_id WHERE a.date >= ? AND a.date < ?`,
+    ).bind(wsStart, start).all<{ distance_m: number; plan_id: number | null; type: string | null }>();
     week_done = {
       km: did.reduce((a, r) => a + r.distance_m, 0) / 1000,
-      points: did.filter((r) => r.type && ['m', 'lt', 'interval', 'race'].includes(r.type)).length,
+      points: new Set(did.filter((r) => r.type && ['m', 'lt', 'interval', 'race'].includes(r.type)).map((r) => r.plan_id)).size,
       long: did.some((r) => r.type === 'long' || r.distance_m >= 18000),
     };
   }
@@ -413,7 +416,10 @@ api.get('/activities/:id', async (c) => {
     .first<Record<string, unknown>>();
   if (!row) return c.notFound();
   const plan = row.plan_id ? await c.env.DB.prepare('SELECT * FROM plans WHERE id = ?').bind(row.plan_id).first() : null;
-  return c.json({ ...row, evaluation: row.evaluation ? JSON.parse(row.evaluation as string) : null, plan });
+  const { results: siblings } = await c.env.DB.prepare(
+    `SELECT id, name, start_date_local, distance_m, moving_time_s, avg_hr, score, plan_id FROM activities WHERE date = ? ORDER BY start_date_local`,
+  ).bind(row.date).all();
+  return c.json({ ...row, evaluation: row.evaluation ? JSON.parse(row.evaluation as string) : null, plan, siblings });
 });
 
 /** 計画の付け替え・シューズ変更 (計画を変えたら再評価) */
@@ -423,7 +429,18 @@ api.put('/activities/:id', async (c) => {
   if ('shoe_id' in body) {
     await c.env.DB.prepare('UPDATE activities SET shoe_id = ? WHERE id = ?').bind(body.shoe_id ?? null, id).run();
   }
-  if ('plan_id' in body) await ingestActivity(c.env, id, { planId: body.plan_id ?? null });
+  if ('plan_id' in body) {
+    if (body.plan_id == null) {
+      await ingestActivity(c.env, id, { planId: null });
+    } else {
+      // 同じ日に走ったランは、まとめて同じメニューに紐づける (距離の長い順に評価)
+      const me = await c.env.DB.prepare('SELECT date FROM activities WHERE id = ?').bind(id).first<{ date: string }>();
+      const { results } = await c.env.DB.prepare('SELECT id FROM activities WHERE date = ? ORDER BY distance_m DESC LIMIT 6')
+        .bind(me?.date ?? '').all<{ id: number }>();
+      const ids = results.length ? results.map((r) => r.id) : [id];
+      for (const aid of ids) await ingestActivity(c.env, aid, { planId: body.plan_id });
+    }
+  }
   return c.json({ ok: true });
 });
 

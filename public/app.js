@@ -220,7 +220,7 @@ function planLine(p, hideActual = false) {
   const target = p.type === 'rest' ? '' : [p.distance_m ? `${km(p.distance_m)}km` : '', p.pace_min_s ? `${pace(p.pace_min_s)}-${pace(p.pace_max_s)}` : '', p.hr_max ? `≤${p.hr_max}bpm` : ''].filter(Boolean).join(' ');
   return `<div class="plan-item" data-plan="${p.id}">
     <div><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type]}</span> <span class="num">${target}</span>${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}${shoeLine(p, hideActual)}</div>
-    <div class="num">${p.activity_id && !hideActual ? `<a class="actual-mini" href="#/activities/${p.activity_id}"><span class="muted">実績</span> ${km(p.actual_distance_m)}km ${scoreHtml(p.score)}</a>` : ''}</div>
+    <div class="num">${p.activity_id && !hideActual ? `<a class="actual-mini" href="#/activities/${p.activity_id}"><span class="muted">実績</span> ${km(p.actual_distance_m)}km${p.activity_count > 1 ? `<span class="muted">(${p.activity_count}本)</span>` : ''} ${scoreHtml(p.score)}</a>` : ''}</div>
   </div>`;
 }
 
@@ -259,7 +259,15 @@ async function plansView(params) {
   SHOES = shoes;
   dedupeIfNeeded(plansRaw);
   const plans = uniqPlans(plansRaw);
-  const actLine = (a) => `<a class="actual" href="#/activities/${a.id}"><span>実績 ${km(a.distance_m, 1)}km ${pace(a.moving_time_s / (a.distance_m / 1000))}/km${a.avg_hr ? ` ${Math.round(a.avg_hr)}bpm` : ''}</span>${scoreHtml(a.score)}</a>`;
+  /** 同じ日に走ったワークアウトは 1 つのメニューとして合算して表示する */
+  const actLine = (list) => {
+    if (!list.length) return '';
+    const main = [...list].sort((a, b) => b.distance_m - a.distance_m)[0];
+    const dist = list.reduce((x, a) => x + a.distance_m, 0), time = list.reduce((x, a) => x + a.moving_time_s, 0);
+    const hrs = list.filter((a) => a.avg_hr);
+    const hr = hrs.length ? hrs.reduce((x, a) => x + a.avg_hr * a.moving_time_s, 0) / hrs.reduce((x, a) => x + a.moving_time_s, 0) : null;
+    return `<a class="actual" href="#/activities/${main.id}"><span>実績 ${km(dist, 1)}km ${pace(time / (dist / 1000))}/km${hr ? ` ${Math.round(hr)}bpm` : ''}${list.length > 1 ? ` <span class="muted">(${list.length}本をまとめて)</span>` : ''}</span>${scoreHtml(main.score)}</a>`;
+  };
   /** 1 日ぶんの 計画 と 実績 の差 */
   const dayDiff = (d, dayPlans, dayActs) => {
     const runPlans = dayPlans.filter((p) => p.type !== 'rest');
@@ -345,7 +353,7 @@ async function plansView(params) {
           <div class="daycol">${dp.length ? '<span class="grip" data-grip="' + d + '" aria-label="ドラッグして入れ替え">⠿</span>' : '<span class="grip off"></span>'}<div><strong>${md(d)}</strong><div class="muted">${dow(d)}</div>${dayTag(d)}</div></div>
           <div>
             ${dp.map((p) => planLine(p, true)).join('')}
-            ${weekActs.filter((a) => a.date === d).map(actLine).join('')}
+            ${actLine(weekActs.filter((a) => a.date === d))}
             ${dayDiff(d, dp, weekActs.filter((a) => a.date === d))}
             <button data-add="${d}" style="margin-top:4px;font-size:12px">＋ 追加</button>
           </div>
@@ -825,6 +833,41 @@ async function activitiesView(params) {
       </a></li>`).join('')}</ul>`}</div>`;
 }
 
+const HR_ZONES = [['Z1', '回復', '#98a0b3'], ['Z2', '有酸素持久力', '#16b57a'], ['Z3', '有酸素パワー', '#ffb800'], ['Z4', '乳酸閾値', '#ff8a1f'], ['Z5', '無酸素', '#e63946']];
+/** 心拍ゾーンごとの時間割合を横棒で */
+function zoneBars(zones) {
+  return `<div class="zones">${HR_ZONES.map(([z, name, col], i) => {
+    const v = Math.round(zones[i] ?? 0);
+    return `<div class="zrow"><span class="zl"><b>${z}</b> ${name}</span><span class="zbar"><i style="width:${Math.max(v, v ? 2 : 0)}%;background:${col}"></i></span><span class="zv num">${v}%</span></div>`;
+  }).join('')}</div>`;
+}
+
+/** 1km ごとのペース (線) と心拍 (線) を 1 枚のグラフに */
+function splitChart(sp) {
+  const pts = sp.map((x, i) => ({ i, p: x.pace_s, h: x.hr })).filter((x) => x.p);
+  if (pts.length < 2) return '';
+  const W = 340, H = 150, L = 38, R = 38, T = 14, B = 22;
+  const px = (i) => L + (pts.length === 1 ? 0 : (i / (sp.length - 1)) * (W - L - R));
+  const ps = pts.map((x) => x.p), pmin = Math.min(...ps) - 5, pmax = Math.max(...ps) + 5;
+  const py = (v) => T + ((v - pmin) / (pmax - pmin)) * (H - T - B); // 速い = 上
+  const hs = pts.filter((x) => x.h).map((x) => x.h);
+  const hmin = hs.length ? Math.min(...hs) - 3 : 0, hmax = hs.length ? Math.max(...hs) + 3 : 1;
+  const hy = (v) => H - B - ((v - hmin) / (hmax - hmin)) * (H - T - B);
+  const line = (arr, f, col) => arr.length > 1 ? `<polyline fill="none" stroke="${col}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" points="${arr.map((x) => f(x)).join(' ')}"/>` : '';
+  const paceLine = line(pts, (x) => `${px(x.i).toFixed(1)},${py(x.p).toFixed(1)}`, 'var(--accent)');
+  const hrPts = pts.filter((x) => x.h);
+  const hrLine = line(hrPts, (x) => `${px(x.i).toFixed(1)},${hy(x.h).toFixed(1)}`, '#ff4f7b');
+  const dots = pts.map((x) => `<circle cx="${px(x.i).toFixed(1)}" cy="${py(x.p).toFixed(1)}" r="3" fill="var(--accent)"/>`).join('');
+  const step = Math.ceil(sp.length / 8);
+  const xl = sp.map((_, i) => (i % step === 0 || i === sp.length - 1 ? `<text x="${px(i).toFixed(1)}" y="${H - 6}" text-anchor="middle">${i + 1}</text>` : '')).join('');
+  return `<div class="schart"><div class="legend"><span><i style="background:var(--accent)"></i>ペース (上ほど速い)</span>${hrPts.length > 1 ? '<span><i style="background:#ff4f7b"></i>心拍</span>' : ''}</div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="1kmごとのペースと心拍">
+      <g class="ax"><text x="${L - 6}" y="${py(pmin + 5) + 4}" text-anchor="end">${pace(Math.round(pmin + 5))}</text><text x="${L - 6}" y="${py(pmax - 5) + 4}" text-anchor="end">${pace(Math.round(pmax - 5))}</text>
+      ${hrPts.length > 1 ? `<text x="${W - R + 6}" y="${hy(hmax - 3) + 4}">${Math.round(hmax - 3)}</text><text x="${W - R + 6}" y="${hy(hmin + 3) + 4}">${Math.round(hmin + 3)}</text>` : ''}${xl}</g>
+      <line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" stroke="var(--line)"/>
+      ${paceLine}${hrLine}${dots}</svg></div>`;
+}
+
 async function activityDetailView(id) {
   const [a, shoes] = await Promise.all([api(`/activities/${id}`), api('/shoes')]);
   const plans = await api(`/plans?from=${a.date}&to=${a.date}`);
@@ -832,11 +875,14 @@ async function activityDetailView(id) {
   const metric = (name, m) => `<div class="metric"><span>${name}</span>${scoreHtml(m?.score)}<span class="muted">${esc(m?.summary)}</span></div>`;
 
   setTimeout(() => {
-    view.querySelector('#plan-select').onchange = async (e) => {
-      const v = e.target.value;
-      await api(`/activities/${id}`, { method: 'PUT', body: { plan_id: v ? Number(v) : null } });
+    view.querySelectorAll('[data-pc]').forEach((b) => (b.onclick = async () => {
+      if (b.classList.contains('on')) return;
+      view.querySelectorAll('[data-pc]').forEach((x) => (x.disabled = true));
+      b.insertAdjacentHTML('beforeend', '<small>切り替え中…</small>');
+      const v = b.dataset.pc;
+      try { await api(`/activities/${id}`, { method: 'PUT', body: { plan_id: v ? Number(v) : null } }); } catch (e) { alert(e.message); }
       route();
-    };
+    }));
     view.querySelector('#shoe-select').onchange = async (e) => {
       await api(`/activities/${id}`, { method: 'PUT', body: { shoe_id: e.target.value ? Number(e.target.value) : null } });
       route();
@@ -845,6 +891,7 @@ async function activityDetailView(id) {
       const box = view.querySelector('#splits');
       if (!box || !Array.isArray(sp) || !sp.length) { if (box) box.innerHTML = '<span class="muted">取得できませんでした</span>'; return; }
       const slow = Math.max(...sp.map((x) => x.pace_s || 0)), fast = Math.min(...sp.filter((x) => x.pace_s).map((x) => x.pace_s));
+      view.querySelector('#splitchart').innerHTML = splitChart(sp);
       box.innerHTML = `<table class="num splits"><tr><th>km</th><th>ペース</th><th></th><th>標高</th><th>心拍</th></tr>${sp.map((x, i) => `<tr><td>${i + 1}</td><td>${x.pace_s ? pace(x.pace_s) : '-'}</td><td><span class="sbar" style="width:${x.pace_s ? 30 + ((slow - x.pace_s) / Math.max(1, slow - fast)) * 70 : 0}%"></span></td><td>${x.elev}</td><td>${x.hr ?? '-'}</td></tr>`).join('')}</table>`;
     }).catch(() => {});
     view.querySelector('#reeval').onclick = async (e) => {
@@ -855,7 +902,11 @@ async function activityDetailView(id) {
   });
 
   const hrd = ev?.hr?.details || {};
-  const zones = [1, 2, 3, 4, 5].map((z) => hrd[`z${z}_pct`]).filter((v) => v != null);
+  const zones = [1, 2, 3, 4, 5].map((z) => hrd[`z${z}_pct`]);
+  const sib = a.siblings || [];
+  const sumD = sib.reduce((x, r) => x + r.distance_m, 0), sumT = sib.reduce((x, r) => x + r.moving_time_s, 0);
+  const planName = (p) => `${PLAN_LABELS[p.type]}${p.distance_m ? ' ' + km(p.distance_m) + 'km' : ''}`;
+  const uPlans = uniqPlans(plans);
 
   return `
     <div class="card">
@@ -873,16 +924,20 @@ async function activityDetailView(id) {
       <ul class="bullets">${ev.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
       ${ev.focus?.length ? `<h3 class="sub">次に意識すること</h3><ul class="bullets focus">${ev.focus.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
       ${ev.pace.details.rep_paces ? `<p class="muted num">各本: ${esc(ev.pace.details.rep_paces)}</p>` : ''}
-      ${zones.length ? `<p class="muted num">心拍ゾーン Z1–Z5: ${zones.map((z) => `${Math.round(z)}%`).join(' / ')}</p>` : ''}
+      ${zones.some((z) => z != null) ? `<h3 class="sub">心拍ゾーン (走った時間の割合)</h3>${zoneBars(zones)}` : ''}
     </div>` : ''}
-    <div class="card"><h2>スプリット</h2><div id="splits"><span class="muted">読み込み中…</span></div></div>
+    ${sib.length > 1 ? `<div class="card"><h2>この日のラン (${sib.length}本)</h2>
+      <p class="muted" style="margin-top:0">アップ・本体・ダウンなど、同じ日のランは 1 つのメニューとして見ます</p>
+      <div class="num" style="margin:8px 0"><span class="big">${km(sumD, 2)}</span> km・${dur(sumT)}・${pace(sumT / (sumD / 1000))}/km</div>
+      <ul class="list">${sib.map((r) => `<li class="${r.id === a.id ? 'cur' : ''}"><a href="#/activities/${r.id}"><div class="row spread"><span>${r.start_date_local.slice(11, 16)} ${esc(r.name)}${r.id === a.id ? ' <span class="badge">いま見ているラン</span>' : ''}</span>${scoreHtml(r.score)}</div><div class="muted num">${km(r.distance_m, 2)}km・${pace(r.moving_time_s / (r.distance_m / 1000))}/km${r.avg_hr ? `・${Math.round(r.avg_hr)}bpm` : ''}</div></a></li>`).join('')}</ul></div>` : ''}
+    <div class="card"><h2>スプリット</h2><div id="splitchart"></div><div id="splits"><span class="muted">読み込み中…</span></div></div>
     <div class="card">
-      <label>紐づける計画
-        <select id="plan-select">
-          <option value="">なし (フリーラン)</option>
-          ${plans.map((p) => `<option value="${p.id}" ${a.plan_id === p.id ? 'selected' : ''}>${PLAN_LABELS[p.type]} ${p.distance_m ? km(p.distance_m) + 'km' : ''}</option>`).join('')}
-        </select>
-      </label>
+      <h2>この練習のメニュー</h2>
+      <p class="muted" style="margin-top:0">${a.plan ? `いまは「${md(a.date)} ${planName(a.plan)}」として評価しています` : 'いまはメニューなし (フリーラン) として評価しています'}。別のメニューに変えるときは下から選んでください。同じ日のランはまとめて変わります。</p>
+      <div class="plan-choices" id="plan-choices">
+        ${uPlans.filter((p) => p.type !== 'rest').map((p) => `<button type="button" class="choice ${a.plan_id === p.id ? 'on' : ''}" data-pc="${p.id}"><b>${planName(p)}</b><small>${md(p.date)}の計画${p.notes ? '・' + esc(p.notes) : ''}</small></button>`).join('')}
+        <button type="button" class="choice ${a.plan_id == null ? 'on' : ''}" data-pc=""><b>メニューなし (フリーラン)</b><small>計画とは比べず、単独で評価します</small></button>
+      </div>
       <label>シューズ
         <select id="shoe-select">
           <option value="">なし</option>
