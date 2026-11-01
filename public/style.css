@@ -508,3 +508,6 @@ a.linkcard { display: block; text-decoration: none; color: inherit; }
 .pr-range b{font-size:22px}
 .pr-range .lbl{font-size:12px;color:var(--muted)}
 .pr-range input[type=range]{height:36px}
+
+.nrc-row{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-bottom:1px solid var(--line)}
+.nrc-row select{height:44px;border-radius:12px;font-size:16px}

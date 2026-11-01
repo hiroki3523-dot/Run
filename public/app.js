@@ -1503,7 +1503,10 @@ const NRC_SHOES = [
   ['インフィニティラン4', 491.7, 0], ['インヴィンシブル3', 777.8, 0], ['Cloud monster', 76.52, 0], ['エアマックス', 84.75, 0],
 ];
 const normName = (x) => String(x || '').normalize('NFKC').toLowerCase().replace(/[\s　]+/g, '');
+const NRC_ALIAS = { 'ボメロプラス②': 'ボメロプラス2', 'ボメロプラス③black': 'ボメロプラスブラック', 'アルファフライ3②': 'アルファフライ3 no2', 'ヴェイパーフライ4②': 'ヴェイパーフライ ブラ…', 'evosl': 'EVO SL EXO' };
 function nrcOf(shoe) {
+  const alias = Object.entries(NRC_ALIAS).find(([k]) => normName(k) === normName(shoe.name));
+  if (alias) { const hit = NRC_SHOES.find(([nm]) => nm === alias[1]); if (hit) return hit; }
   const n = normName(shoe.name);
   return NRC_SHOES.find(([nm]) => !nm.endsWith('…') && normName(nm) === n) || NRC_SHOES.find(([nm]) => nm.endsWith('…') && n.startsWith(normName(nm.slice(0, -1))));
 }
@@ -1515,8 +1518,7 @@ async function shoesView() {
   const [shoes, races] = await Promise.all([api('/shoes'), api('/races').catch(() => [])]);
   const nextRace = races.filter((r) => r.date >= today() && ['A', 'B'].includes(r.priority)).sort((a, b) => a.date.localeCompare(b.date))[0];
   const advice = shoeAdvice(shoes, nextRace);
-  // NRC と距離・状態が違うシューズ (合わせたら表示は消える)
-  const nrcDiff = shoes.map((x) => ({ s: x, n: nrcOf(x) })).filter(({ s: x, n }) => n && (Math.abs(x.total_km - n[1]) > 0.5 || (n[2] && x.retired === 1)));
+  const nrcDone = (() => { try { return localStorage.getItem('nrcDone') === '1'; } catch { return false; } })();
   const guesses = shoes.filter((x) => !x.retired && guessPurposes(x.name) && purposesOf(x.purpose).join() !== guessPurposes(x.name).join());
   setTimeout(() => {
     view.querySelector('#add-shoe').onclick = () => editShoe({ purpose: 'easy', limit_km: 700, initial_km: 0 });
@@ -1576,13 +1578,20 @@ async function shoesView() {
     }));
     const nb = view.querySelector('#nrc-sync');
     if (nb) nb.onclick = async () => {
-      const lines = nrcDiff.map(({ s: x, n }) => `${x.name}: ${x.total_km.toFixed(1)} → ${n[1]}km${n[2] && x.retired === 1 ? ' (使用中に戻す)' : ''}`);
-      if (!confirm(`NRC の距離に合わせます:\n${lines.join('\n')}`)) return;
-      nb.disabled = true;
-      for (const { s: x, n } of nrcDiff) {
+      const opts = (sel) => `<option value="">そのまま</option>${NRC_SHOES.map((n, k) => `<option value="${k}" ${sel === n ? 'selected' : ''}>${esc(n[0].replace('…', ''))}　${n[1]}km</option>`).join('')}`;
+      const pending = openDialog(`<h2>NRC の距離に合わせる</h2>
+        <p class="muted" style="margin-top:0">アプリのシューズごとに、NRC のどれにあたるかを選びます。選んだものだけ、距離が NRC の数字になります。</p>
+        ${shoes.map((x) => `<label class="nrc-row"><span><b>${esc(x.name)}</b><small class="muted num"> いま ${x.total_km.toFixed(1)}km</small></span><select name="s${x.id}">${opts(nrcOf(x))}</select></label>`).join('')}`);
+      const v = await pending;
+      if (!v) return;
+      for (const x of shoes) {
+        const k = v[`s${x.id}`];
+        if (k === '' || k == null) continue;
+        const n = NRC_SHOES[Number(k)];
         const imported = x.total_km - (x.initial_km || 0);
         await putShoe(x, { initial_km: Math.round((n[1] - imported) * 100) / 100, ...(n[2] && x.retired === 1 ? { retired: 0 } : {}) });
       }
+      try { localStorage.setItem('nrcDone', '1'); } catch {}
       route();
     };
     const g = view.querySelector('#guess');
@@ -1615,10 +1624,11 @@ async function shoesView() {
   return `
     <div class="row spread" style="margin-bottom:8px"><h2>シューズ</h2><button class="primary" id="add-shoe">＋ 追加</button></div>
     ${advice.length ? `<div class="card"><ul class="advice">${advice.map((a) => `<li class="${a.tone}">${a.text}</li>`).join('')}</ul></div>` : ''}
-    ${nrcDiff.length ? `<div class="card"><p style="margin:0 0 10px"><b>NRC と距離が違うシューズ ${nrcDiff.length}足</b></p><button id="nrc-sync" class="primary wide">NRC の距離に合わせる</button></div>` : ''}
+    ${nrcDone ? '' : `<div class="card"><p style="margin:0 0 10px"><b>距離を NRC の数字に合わせる</b></p><button id="nrc-sync" class="primary wide">NRC に合わせる</button></div>`}
     ${guesses.length ? `<div class="card"><p class="muted" style="margin-top:0">名前から、用途を自動で設定できます (${guesses.length}足)。</p><button id="guess" class="primary wide">用途をまとめて設定</button></div>` : ''}
     <div class="card"><ul class="list shoes">${active.map(row).join('') || '<li class="muted">使用中のシューズはありません</li>'}</ul></div>
     ${rest.length ? `<h3 class="sub" style="margin:18px 4px 6px">予備・引退 (${rest.length}足)</h3><div class="card"><ul class="list shoes">${rest.map(row).join('')}</ul></div>` : ''}
+    ${nrcDone ? '<div style="margin-top:10px"><button id="nrc-sync" class="chip">NRC の距離に合わせ直す</button></div>' : ''}
     <p class="muted hint">右へスライドで「予備/使用中」、左へスライドで「引退」。タップすると写真・用途・走行距離を直せます。</p>`;
 }
 
