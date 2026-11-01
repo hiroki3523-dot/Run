@@ -281,7 +281,7 @@ async function plansView(params) {
       <a class="btn" href="#/plans?week=${addDays(ws, 7)}">翌週 ›</a>
     </div>
     <div class="card">
-      <div class="row spread num"><span>計画 ${km(total)}km・実績 ${km(actual)}km</span><button id="copy-week">翌週へ複製</button></div>
+      <div class="row spread num"><span>計画 ${km(total)}km・実績 ${km(actual)}km</span><button id="copy-week">この週を翌週へコピー</button></div>
     </div>
     <div class="card" id="auto-card">
       <button id="auto-toggle">実績と目標から計画を自動で作る</button>
@@ -349,36 +349,93 @@ function wireAutoPlan(root) {
   };
 }
 
+const PLAN_DEFAULT_KM = { easy: 10, jog: 6, long: 24, m: 14, lt: 10, interval: 10, race: 42.2 };
+const DIST_CHIPS = [5, 8, 10, 12, 15, 18, 20, 25, 30];
+const MEMO_TEMPLATES = {
+  easy: ['ゆっくり (会話できるペース)', '流し 4本を最後に'],
+  jog: ['ゆっくりジョグ', '回復ジョグ+流し 3本'],
+  long: ['全体を一定ペースで', '後半 5km をMペースに', '30km 走'],
+  m: ['アップ 2km + M 10km + ダウン 2km', 'アップ 2km + M 5km×2 (間 1km つなぎ)', 'M 1km×4 (調整)'],
+  lt: ['アップ 2km + 2km×3 (間 400m)', 'アップ 2km + 5km テンポ', '1km×5 (間 200m)'],
+  interval: ['1000m×5 (間 200m ジョグ)', '400m×10 (間 200m)', '2000m×3 (間 400m)'],
+  race: ['目標ペースで走り切る'],
+  rest: ['完全休養', 'ストレッチ・体幹のみ'],
+};
+
+/** タップだけで計画を作る・直す */
 async function editPlan(p, settings) {
-  const typeOpts = Object.entries(PLAN_LABELS).map(([k, v]) => `<option value="${k}" ${p.type === k ? 'selected' : ''}>${v}</option>`).join('');
-  const values = await openDialog(`
-    <h2>${p.id ? '計画を編集' : '計画を追加'}</h2>
-    <div class="grid2">
-      <label>日付<input type="date" name="date" value="${p.date}" required></label>
-      <label>種別<select name="type" id="plan-type">${typeOpts}</select></label>
-    </div>
-    <label>距離 (km)<input name="distance_km" inputmode="decimal" value="${p.distance_m ? p.distance_m / 1000 : ''}"></label>
-    <div class="grid2">
-      <label>ペース 速い側<input name="pace_min" placeholder="既定" value="${p.pace_min_s ? pace(p.pace_min_s) : ''}"></label>
-      <label>ペース 遅い側<input name="pace_max" placeholder="既定" value="${p.pace_max_s ? pace(p.pace_max_s) : ''}"></label>
-    </div>
-    <p class="muted" id="pace-hint"></p>
-    <label>心拍上限 (bpm)<input name="hr_max" inputmode="numeric" placeholder="既定" value="${p.hr_max ?? ''}"></label>
-    <label>メモ<textarea name="notes" rows="2" placeholder="例: 1000m×5 r=200m jog">${esc(p.notes)}</textarea></label>`,
-    p.id ? { onDelete: async () => { await api(`/plans/${p.id}`, { method: 'DELETE' }); route(); } } : {},
-  );
-  if (!values) return;
-  const body = {
-    date: values.date,
-    type: values.type,
-    distance_m: values.distance_km ? Number(values.distance_km) * 1000 : null,
-    pace_min_s: parseDur(values.pace_min),
-    pace_max_s: parseDur(values.pace_max),
-    hr_max: values.hr_max ? Number(values.hr_max) : null,
-    notes: values.notes,
+  const st = {
+    date: p.date,
+    type: p.type || 'easy',
+    km: p.distance_m ? p.distance_m / 1000 : null,
+    pmin: p.pace_min_s || null,
+    pmax: p.pace_max_s || null,
+    notes: p.notes || '',
   };
-  if (body.pace_min_s && !body.pace_max_s) body.pace_max_s = body.pace_min_s;
-  if (body.pace_max_s && !body.pace_min_s) body.pace_min_s = body.pace_max_s;
+  if (!p.id && st.km == null) st.km = PLAN_DEFAULT_KM[st.type] ?? null;
+  const ws0 = weekStart(p.date);
+  const week = [...Array(7)].map((_, i) => addDays(ws0, i));
+  const chip = (attr, val, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" ${attr}="${esc(String(val))}">${esc(label)}</button>`;
+
+  const draw = () => {
+    const def = settings.paces?.[st.type];
+    const shown = st.pmin ? `${pace(st.pmin)}〜${pace(st.pmax)}` : def ? `標準 ${pace(def.min)}〜${pace(def.max)}` : '-';
+    dialogForm.querySelector('#pl-body').innerHTML = `
+      <div class="field"><span class="lbl">日</span><div class="chips">${week.map((d) => chip('data-date', d, `${dow(d)} ${Number(d.slice(8))}`, d === st.date)).join('')}</div></div>
+      <div class="field"><span class="lbl">種別</span><div class="chips">${Object.entries(PLAN_LABELS).map(([k, v]) => chip('data-type', k, v, k === st.type)).join('')}</div></div>
+      ${st.type === 'rest' ? '' : `
+      <div class="field"><span class="lbl">距離</span>
+        <div class="stepper"><button type="button" data-step="-1">−1</button><button type="button" data-step="-0.5">−0.5</button>
+          <b class="num">${st.km != null ? st.km.toFixed(1) : '-'} <small>km</small></b>
+          <button type="button" data-step="0.5">+0.5</button><button type="button" data-step="1">+1</button></div>
+        <div class="chips">${DIST_CHIPS.map((v) => chip('data-km', v, String(v), st.km === v)).join('')}</div></div>
+      <div class="field"><span class="lbl">ペース</span>
+        <div class="stepper"><button type="button" data-pace="-5">−5秒</button><b class="num">${shown}</b><button type="button" data-pace="5">+5秒</button></div>
+        ${st.pmin ? '<button type="button" class="chip" data-pace-reset="1">標準に戻す</button>' : ''}</div>`}
+      <div class="field"><span class="lbl">メモ</span><div class="chips">${(MEMO_TEMPLATES[st.type] || []).map((t) => chip('data-memo', t, t, t === st.notes)).join('')}</div>
+        <input name="notes" value="${esc(st.notes)}" placeholder="自由入力 (任意)"></div>`;
+  };
+
+  const onClick = (e) => {
+    const t = e.target.closest('button');
+    if (!t || !dialogForm.contains(t)) return;
+    const d = t.dataset;
+    const inp = dialogForm.querySelector('[name=notes]');
+    if (inp) st.notes = inp.value;
+    if (d.date) st.date = d.date;
+    else if (d.type) {
+      st.type = d.type;
+      st.km = d.type === 'rest' ? null : (PLAN_DEFAULT_KM[d.type] ?? st.km);
+      st.pmin = st.pmax = null;
+      if (!(MEMO_TEMPLATES[d.type] || []).includes(st.notes)) st.notes = '';
+    } else if (d.km) st.km = Number(d.km);
+    else if (d.step) st.km = Math.max(0.5, (st.km ?? 0) + Number(d.step));
+    else if (d.pace) {
+      const base = st.pmin ? [st.pmin, st.pmax] : [settings.paces?.[st.type]?.min, settings.paces?.[st.type]?.max];
+      if (base[0]) { st.pmin = base[0] + Number(d.pace); st.pmax = base[1] + Number(d.pace); }
+    } else if (d.paceReset) st.pmin = st.pmax = null;
+    else if (d.memo) st.notes = st.notes === d.memo ? '' : d.memo;
+    else return;
+    draw();
+  };
+
+  const wait = openDialog(`<h2>${p.id ? '計画を編集' : '計画を追加'}</h2><div id="pl-body"></div>`,
+    p.id ? { onDelete: async () => { await api(`/plans/${p.id}`, { method: 'DELETE' }); route(); } } : {});
+  draw();
+  dialogForm.addEventListener('click', onClick);
+  const values = await wait;
+  dialogForm.removeEventListener('click', onClick);
+  if (!values) return;
+  st.notes = values.notes ?? st.notes;
+  const body = {
+    date: st.date,
+    type: st.type,
+    distance_m: st.type === 'rest' || st.km == null ? null : Math.round(st.km * 1000),
+    pace_min_s: st.pmin,
+    pace_max_s: st.pmax,
+    hr_max: p.hr_max ?? null,
+    notes: st.notes,
+  };
   await api(p.id ? `/plans/${p.id}` : '/plans', { method: p.id ? 'PUT' : 'POST', body });
   route();
 }
