@@ -37,6 +37,17 @@ api.get('/status', async (c) => {
 api.get('/settings', async (c) => c.json(await getSettings(c.env)));
 api.put('/settings', async (c) => {
   const body = await c.req.json<Settings>();
+  if (body.plan_prefs) {
+    const pp = body.plan_prefs;
+    const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+    body.plan_prefs = {
+      points_per_week: Math.min(3, Math.max(0, Math.round(Number(pp.points_per_week) || 0))),
+      long_per_week: Number(pp.long_per_week) > 0 ? 1 : 0,
+      long_day: Math.min(6, Math.max(0, Math.round(Number(pp.long_day) || 0))),
+      rest_days: [...new Set((pp.rest_days ?? []).map(Number).filter((n) => n >= 0 && n <= 6))],
+      blocked: [...new Set((pp.blocked ?? []).filter((d) => isDate(d) && d >= addDays(today, -1)))].sort(),
+    };
+  }
   await saveSettings(c.env, { ...(await getSettings(c.env)), ...body });
   return c.json(await getSettings(c.env));
 });
@@ -261,7 +272,7 @@ const daysSpan = (a: string, b: string) => Math.round((Date.parse(b) - Date.pars
  * commit が false ならプレビューだけ返し、true なら登録する。
  */
 api.post('/plans/generate', async (c) => {
-  const b = await c.req.json<{ race_id?: number; overwrite?: boolean; commit?: boolean; from?: string }>();
+  const b = await c.req.json<{ race_id?: number; overwrite?: boolean; commit?: boolean; from?: string; to?: string }>();
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
   const start = isDate(b.from) ? b.from : today;
   const race = b.race_id
@@ -281,7 +292,21 @@ api.post('/plans/generate', async (c) => {
     getSettings(c.env),
   ]);
   const weekly = recent && recent.m > 0 ? recent.m / 1000 / 4 : null;
-  const rows = generatePlan({
+  // 週の途中から作る場合、その週にすでに走った分を渡す
+  const wsStart = weekStart(start);
+  let week_done: { km: number; points: number; long: boolean } | undefined;
+  if (start > wsStart) {
+    const { results: did } = await c.env.DB.prepare(
+      `SELECT a.distance_m, p.type FROM activities a LEFT JOIN plans p ON p.id = a.plan_id WHERE a.date >= ? AND a.date < ?`,
+    ).bind(wsStart, start).all<{ distance_m: number; type: string | null }>();
+    week_done = {
+      km: did.reduce((a, r) => a + r.distance_m, 0) / 1000,
+      points: did.filter((r) => r.type && ['m', 'lt', 'interval', 'race'].includes(r.type)).length,
+      long: did.some((r) => r.type === 'long' || r.distance_m >= 18000),
+    };
+  }
+  let rows = generatePlan({
+    week_done,
     start,
     race,
     others,
@@ -290,6 +315,8 @@ api.post('/plans/generate', async (c) => {
     last_race: lastRace?.date ?? null,
     settings,
   });
+  const until = isDate(b.to) ? b.to : race.date;
+  rows = rows.filter((r) => r.date <= until);
 
   // 週ごとの距離 (月曜はじまり)
   const weeks = new Map<string, number>();
@@ -309,12 +336,12 @@ api.post('/plans/generate', async (c) => {
     stmts.push(
       c.env.DB.prepare(
         `DELETE FROM plans WHERE date BETWEEN ? AND ? AND id NOT IN (SELECT plan_id FROM activities WHERE plan_id IS NOT NULL)`,
-      ).bind(start, race.date),
+      ).bind(start, until < race.date ? until : race.date),
     );
   }
   const have = b.overwrite
     ? new Set<string>()
-    : new Set((await c.env.DB.prepare('SELECT DISTINCT date FROM plans WHERE date BETWEEN ? AND ?').bind(start, race.date).all<{ date: string }>()).results.map((r) => r.date));
+    : new Set((await c.env.DB.prepare('SELECT DISTINCT date FROM plans WHERE date BETWEEN ? AND ?').bind(start, until).all<{ date: string }>()).results.map((r) => r.date));
   const ins = c.env.DB.prepare('INSERT INTO plans (date, type, distance_m, pace_min_s, pace_max_s, notes) VALUES (?, ?, ?, ?, ?, ?)');
   const fresh = rows.filter((r) => !have.has(r.date));
   for (let i = 0; i < fresh.length; i += 90) {

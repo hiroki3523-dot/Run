@@ -10,6 +10,7 @@ export async function getSettings(env: Env): Promise<Settings> {
     paces: { ...DEFAULT_SETTINGS.paces, ...saved.paces },
     hr_targets: { ...DEFAULT_SETTINGS.hr_targets, ...saved.hr_targets },
     coros: { ...DEFAULT_SETTINGS.coros, ...saved.coros },
+    plan_prefs: { ...DEFAULT_SETTINGS.plan_prefs, ...saved.plan_prefs },
   };
 }
 

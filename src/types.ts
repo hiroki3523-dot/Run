@@ -56,6 +56,21 @@ export interface Settings {
   hr_targets: Record<Exclude<PlanType, 'rest'>, { min: number; max: number }>;
   /** COROS のランニングレベル画面の値 (表示用・AI の計画づくりの基準) */
   coros: CorosInfo;
+  /** 週のメニューの基本構成 (自動計画の希望) */
+  plan_prefs: PlanPrefs;
+}
+
+export interface PlanPrefs {
+  /** 週のポイント練習 (LT・インターバル・Mペース走) の回数 0〜3 */
+  points_per_week: number;
+  /** ロング走の回数 0〜1 */
+  long_per_week: number;
+  /** ロング走を置きたい曜日 (0=日 … 6=土) */
+  long_day: number;
+  /** 毎週休む曜日 (0=日 … 6=土) */
+  rest_days: number[];
+  /** 予定が入って走れない日 (YYYY-MM-DD) */
+  blocked: string[];
 }
 
 export interface CorosInfo {
@@ -67,6 +82,8 @@ export interface CorosInfo {
   predicted_s: { '5k': number; '10k': number; half: number; full: number };
   zones_s: { aerobic: [number, number]; threshold: [number, number]; speed: [number, number] };
 }
+
+export const DEFAULT_PLAN_PREFS: PlanPrefs = { points_per_week: 2, long_per_week: 1, long_day: 0, rest_days: [1, 5], blocked: [] };
 
 export const DEFAULT_SETTINGS: Settings = {
   max_hr: 180,
@@ -100,6 +117,7 @@ export const DEFAULT_SETTINGS: Settings = {
     predicted_s: { '5k': 1181, '10k': 2441, half: 5403, full: 11249 },
     zones_s: { aerobic: [286, 345], threshold: [242, 265], speed: [222, 241] },
   },
+  plan_prefs: DEFAULT_PLAN_PREFS,
 };
 
 /** Strava streams を key ごとの配列にしたもの */
