@@ -4,6 +4,7 @@ import { ingestActivity, morningBriefing, SHOE_TOTAL_SQL } from './process';
 import { notify } from './notify';
 import { seedInitial } from './seed';
 import { getSettings, saveSettings } from './settings';
+import { DEFAULT_SETTINGS } from './types';
 import { getBackfill, startBackfill, stopBackfill } from './backfill';
 import { calendarSig } from './calendar';
 import { createSubscription, getAthleteId, viewSubscription } from './strava';
@@ -33,6 +34,12 @@ api.get('/settings', async (c) => c.json(await getSettings(c.env)));
 api.put('/settings', async (c) => {
   const body = await c.req.json<Settings>();
   await saveSettings(c.env, { ...(await getSettings(c.env)), ...body });
+  return c.json(await getSettings(c.env));
+});
+
+/** ペース帯・心拍・COROS の値を、標準 (COROS 基準) に戻す */
+api.post('/settings/reset', async (c) => {
+  await saveSettings(c.env, DEFAULT_SETTINGS);
   return c.json(await getSettings(c.env));
 });
 

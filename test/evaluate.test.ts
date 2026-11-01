@@ -52,7 +52,7 @@ const plan = (p: Partial<Plan>): Plan => ({
   ...p,
 });
 
-const S = DEFAULT_SETTINGS; // LTHR 170, cadence 180
+const S = DEFAULT_SETTINGS; // LTHR 174, cadence 180
 
 describe('evaluateRun', () => {
   it('Easy を守った走りは高得点', () => {
@@ -109,8 +109,8 @@ describe('evaluateRun', () => {
   it('インターバルはラップで本数・失速を評価する', () => {
     const rep = (pace: number): Lap => ({ distance: 1000, moving_time: pace, average_speed: 1000 / pace, average_heartrate: 168 });
     const rest: Lap = { distance: 300, moving_time: 120, average_speed: 2.5 };
-    const good = [rep(215), rest, rep(216), rest, rep(214), rest, rep(216), rest, rep(215)];
-    const bad = [rep(212), rest, rep(218), rest, rep(225), rest, rep(232), rest, rep(240)];
+    const good = [rep(232), rest, rep(233), rest, rep(231), rest, rep(233), rest, rep(232)];
+    const bad = [rep(229), rest, rep(235), rest, rep(242), rest, rep(249), rest, rep(257)];
     const segs = [{ sec: 1200, pace: 330, hr: 150, spm: 178 }];
     const evGood = evaluateRun(input(segs, good), plan({ type: 'interval' }), S);
     const evBad = evaluateRun(input(segs, bad), plan({ type: 'interval' }), S);

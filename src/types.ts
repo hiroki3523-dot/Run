@@ -52,20 +52,32 @@ export interface Settings {
   paces: Record<Exclude<PlanType, 'rest'>, PaceBand>;
   /** 種別ごとの心拍目標 (LTHR に対する比率) */
   hr_targets: Record<Exclude<PlanType, 'rest'>, { min: number; max: number }>;
+  /** COROS のランニングレベル画面の値 (表示用・AI の計画づくりの基準) */
+  coros: CorosInfo;
+}
+
+export interface CorosInfo {
+  updated: string;
+  running_level: number;
+  vo2max: number;
+  lt_pace_s: number; // 閾値ペース 秒/km
+  lthr: number;
+  predicted_s: { '5k': number; '10k': number; half: number; full: number };
+  zones_s: { aerobic: [number, number]; threshold: [number, number]; speed: [number, number] };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   max_hr: 180,
   lthr: 174,
   target_cadence: 180,
-  // サブ3 (4:15/km) を基準にした目安
+  // COROS (2026-11-01) の閾値ペース 4:07 と各ゾーンを基準にした目安。race/m はサブ3 (4:15/km)
   paces: {
-    easy: { min: 300, max: 340 },
+    easy: { min: 300, max: 345 },
     jog: { min: 330, max: 390 },
-    long: { min: 275, max: 310 },
+    long: { min: 285, max: 315 },
     m: { min: 250, max: 256 },
-    lt: { min: 232, max: 240 },
-    interval: { min: 210, max: 222 },
+    lt: { min: 242, max: 250 },
+    interval: { min: 225, max: 240 },
     race: { min: 250, max: 255 },
   },
   hr_targets: {
@@ -76,6 +88,15 @@ export const DEFAULT_SETTINGS: Settings = {
     lt: { min: 0.95, max: 1.02 },
     interval: { min: 0.95, max: 1.1 },
     race: { min: 0.9, max: 1.0 },
+  },
+  coros: {
+    updated: '2026-11-01',
+    running_level: 90.0,
+    vo2max: 55,
+    lt_pace_s: 247,
+    lthr: 174,
+    predicted_s: { '5k': 1181, '10k': 2441, half: 5403, full: 11249 },
+    zones_s: { aerobic: [286, 345], threshold: [242, 265], speed: [222, 241] },
   },
 };
 
