@@ -50,6 +50,14 @@ describe('planner', () => {
   const POINTS = ['m', 'lt', 'interval'];
   const weekOf = (rows: ReturnType<typeof kum>, from: string) => rows.filter((r) => r.date >= from && r.date < new Date(Date.parse(from) + 7 * 86400000).toISOString().slice(0, 10));
 
+  it('休みの回数だけ自動で配置: ロング翌日が休みになり、ポイント走とは重ならない', () => {
+    const rows = kum({ points_per_week: 2, long_per_week: 1, rest_per_week: 1, rest_days: [] });
+    const wk = weekOf(rows, '2026-12-14');
+    expect(wk.filter((r) => r.type === 'rest').length).toBe(1);
+    expect(wk.filter((r) => POINTS.includes(r.type)).length).toBe(2);
+    expect(wk.filter((r) => r.type === 'long').length).toBe(1);
+    expect(weekOf(kum({ rest_per_week: 2, rest_days: [] }), '2026-12-14').filter((r) => r.type === 'rest').length).toBe(2);
+  });
   it('希望どおり: ポイント走は週2回・ロング1回・休養日は固定', () => {
     const rows = kum({ points_per_week: 2, long_per_week: 1, rest_days: [1, 5] });
     const wk = weekOf(rows, '2026-12-14'); // 通常週
