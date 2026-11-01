@@ -7,10 +7,10 @@ const PLAN_LABELS = {
   easy: 'Easy', jog: 'Jog', long: 'ロング走', m: 'Mペース走', lt: 'LT走',
   interval: 'インターバル', race: 'レース', rest: '休養',
 };
-const PURPOSE_LABELS = { daily: '普段用', workout: 'ポイント走用', race: '本番用' };
-const PURPOSE_HINTS = { daily: '普段用 (Easy・ジョグ・ロング走)', workout: 'ポイント走用 (LT・インターバル・Mペース走)', race: 'レース本番用 (本番と、本番ペースの練習)' };
+const PURPOSE_LABELS = { daily: '普段用', recovery: 'リカバリー用', workout: 'ポイント走用', race: '本番用' };
+const PURPOSE_HINTS = { daily: '普段用 (Easy・ロング走)', recovery: 'リカバリー用 (ジョグ・疲労抜き。クッション厚め)', workout: 'ポイント走用 (LT・インターバル・Mペース走)', race: 'レース本番用 (本番と、本番ペースの練習)' };
 /** 計画の種類 → 向いている用途の順 */
-const SHOE_PREF = { race: ['race', 'workout'], m: ['workout', 'race', 'daily'], lt: ['workout', 'race', 'daily'], interval: ['workout', 'race', 'daily'] };
+const SHOE_PREF = { jog: ['recovery', 'daily'], race: ['race', 'workout'], m: ['workout', 'race', 'daily'], lt: ['workout', 'race', 'daily'], interval: ['workout', 'race', 'daily'] };
 let SHOES = [];
 /** メニューに合うシューズを、用途 → すり減りの少ない順で 1 足選ぶ */
 function recommendShoe(type) {
@@ -934,8 +934,36 @@ async function editRace(r) {
 
 // ---- シューズ
 
+/** シューズの入れ替え・買い足しの提案 (用途ごとの有無、摩耗、本番前の慣らし) */
+function shoeAdvice(shoes, race) {
+  const live = shoes.filter((x) => !x.retired);
+  const out = [];
+  const daysTo = race ? Math.round((new Date(race.date) - new Date(today())) / 86400000) : null;
+  for (const [pu, why] of [['race', 'ペースを上げた練習と本番に'], ['workout', 'LT走・インターバルに'], ['recovery', 'ジョグ・疲労抜きに'], ['daily', '普段のEasyとロング走に']]) {
+    if (!live.some((x) => x.purpose === pu)) out.push({ tone: 'warn', text: `${PURPOSE_LABELS[pu]}シューズがありません。${why}使う 1 足を用意すると、脚への負担を分散できます (もう持っている場合は、そのシューズをタップして用途を選んでください)` });
+  }
+  for (const x of live) {
+    const left = Math.round(x.limit_km - x.total_km);
+    const pu = PURPOSE_LABELS[x.purpose] ?? x.purpose;
+    if (left <= 0) out.push({ tone: 'bad', text: `${x.name} (${pu}) は目安の ${x.limit_km}km を超えました。入れ替えを検討してください` });
+    else if (x.total_km / x.limit_km >= 0.85) out.push({ tone: 'warn', text: `${x.name} (${pu}) は残り約 ${left}km。次の 1 足を早めに選んでおくと安心です` });
+    if (x.purpose === 'race' && race && daysTo != null && daysTo >= 0 && daysTo <= 56) {
+      if (x.total_km < 30) out.push({ tone: 'warn', text: `${x.name} は ${race.name} (あと ${daysTo} 日) までに 30〜50km 走って足に慣らしておくと安心です (現在 ${Math.round(x.total_km)}km)` });
+      else if (x.total_km / x.limit_km >= 0.75) out.push({ tone: 'warn', text: `${x.name} は走行 ${Math.round(x.total_km)}km で、本番用としては消耗が進んでいます。${race.name} 用に新しい 1 足を、本番の 3〜4 週間前までに用意すると慣らせます` });
+    }
+  }
+  // 同じ用途に 3 足以上あり、距離が少ない足があれば整理を提案
+  for (const pu of Object.keys(PURPOSE_LABELS)) {
+    const same = live.filter((x) => x.purpose === pu);
+    if (same.length >= 3) out.push({ tone: 'info', text: `${PURPOSE_LABELS[pu]}が ${same.length} 足あります。あまり走っていない足は、用途を見直すか引退にすると整理できます` });
+  }
+  return out;
+}
+
 async function shoesView() {
-  const shoes = await api('/shoes');
+  const [shoes, races] = await Promise.all([api('/shoes'), api('/races').catch(() => [])]);
+  const nextRace = races.filter((r) => r.date >= today() && ['A', 'B'].includes(r.priority)).sort((a, b) => a.date.localeCompare(b.date))[0];
+  const advice = shoeAdvice(shoes, nextRace);
   setTimeout(() => {
     view.querySelector('#add-shoe').onclick = () => editShoe({ purpose: 'daily', limit_km: 700, initial_km: 0 });
     view.querySelectorAll('[data-shoe]').forEach((el) => (el.onclick = () => editShoe(shoes.find((s) => s.id === Number(el.dataset.shoe)))));
@@ -943,6 +971,7 @@ async function shoesView() {
   return `
     <div class="row spread" style="margin-bottom:8px"><h2>シューズ</h2><button class="primary" id="add-shoe">＋ 追加</button></div>
     <p class="muted">Strava でギアを設定して走ると自動で登録・加算されます。各シューズをタップして「どんな練習で使うか」(普段用・ポイント走用・本番用) を選ぶと、計画のメニューにおすすめが出ます。</p>
+    <div class="card"><h2>シューズの提案</h2>${advice.length ? `<ul class="advice">${advice.map((a) => `<li class="${a.tone}">${esc(a.text)}</li>`).join('')}</ul>` : '<p class="muted">いまのところ入れ替えの必要はありません。用途もそろっています。</p>'}</div>
     <div class="card"><ul class="list">${shoes.map((s) => {
       const ratio = s.total_km / s.limit_km;
       return `<li data-shoe="${s.id}" class="shoe-row" style="cursor:pointer;${s.retired ? 'opacity:.5' : ''}">

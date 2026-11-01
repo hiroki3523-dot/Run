@@ -338,3 +338,9 @@ h2.sect { margin: 22px 4px 8px; font-size: 18px; }
 .shoe-rec { margin-top: 4px; font-size: 12.5px; color: var(--text); }
 .shoe-rec::before { content: ""; display: inline-block; width: 3px; height: 11px; margin-right: 6px; border-radius: 2px; background: var(--accent); vertical-align: -1px; }
 .tag { white-space: nowrap; }
+
+ul.advice { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 10px; }
+ul.advice li { padding: 10px 12px 10px 14px; border-radius: 12px; background: var(--btn-bg); border-left: 4px solid var(--muted); font-size: 14px; line-height: 1.55; }
+ul.advice li.warn { border-left-color: var(--c-m); }
+ul.advice li.bad { border-left-color: var(--bad); }
+ul.advice li.info { border-left-color: var(--accent); }
