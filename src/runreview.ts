@@ -22,6 +22,8 @@ export interface ReviewIn {
   race: { name: string; date: string; goal_time_s: number | null; distance_m: number } | null;
   today: string;
   rpe: number | null; // 1 かなり余裕 / 2 余裕 / 3 ややきつい / 4 かなりきつい
+  leg?: string | null; // light / normal / heavy / pain
+  tags?: string[];
 }
 
 export interface RunReview {
@@ -33,9 +35,12 @@ export interface RunReview {
   hr: { title: string; rows: [string, number][]; text: string[] } | null;
   form: { title: string; stats: [string, string, string][]; text: string[] } | null;
   verdict: { title: string; text: string[]; table: [string, string][] } | null;
+  /** ふりかえりの答えから出す、体の状態へのコメント */
+  notes: string[];
 }
 
 const RPE_LABEL = ['', 'かなり余裕あり', '余裕あり', 'ややきつい', 'かなりきつい'];
+const TAG_LABEL: Record<string, string> = { hot: '暑さ', cold: '寒さ', wind: '風', sleep: '睡眠不足', hungry: '空腹・補給不足', tired: '疲れの残り' };
 
 export function gradeOf(score: number): string {
   return score >= 95 ? 'A+' : score >= 90 ? 'A' : score >= 85 ? 'A−' : score >= 80 ? 'B+' : score >= 75 ? 'B' : score >= 70 ? 'B−' : score >= 60 ? 'C' : 'D';
@@ -125,6 +130,9 @@ export function buildRunReview(i: ReviewIn): RunReview {
     const ratio = avg / i.lthr;
     if (goalPace && isMarathon && ratio >= 0.93 && Math.abs(avgPace - goalPace) <= 10) text.push(`平均心拍 ${Math.round(avg)} は、フルマラソンの序盤から維持するには少し慎重になりたい数値。本番では、目標ペースを走るのにどれくらいの負荷がかかっているかが重要になる。`);
     if (i.rpe) text.push(`主観は「${RPE_LABEL[i.rpe]}」。${i.rpe <= 2 && ratio >= 0.93 ? '心拍が高めでも楽に感じられていたのは好材料。' : i.rpe >= 3 && ratio >= 0.93 ? '心拍も高く、きつさも感じていたので、疲労が残っていないか注意。' : i.rpe >= 3 ? '心拍のわりにきつく感じていたので、体調や疲労を確認したい。' : ''}`);
+    const why = (i.tags ?? []).filter((t) => ['hot', 'sleep', 'hungry', 'tired'].includes(t)).map((t) => TAG_LABEL[t]);
+    if (why.length && ratio >= 0.93) text.push(`心拍が高めなのは、${why.join('・')}の影響もありそう。同じ条件でなければ、数字だけで比べすぎない。`);
+    if ((i.tags ?? []).includes('wind') && diff >= 5) text.push('風の影響で、後半のペースは楽に出た可能性もある (追い風かどうかも確認)。');
     hr = { title: ratio >= 0.97 ? '心拍数は高め' : ratio >= 0.93 ? '心拍数はやや高め' : ratio >= 0.85 ? '心拍数は想定の範囲内' : '心拍数は余裕あり', rows: rows2, text };
   }
 
@@ -173,11 +181,16 @@ export function buildRunReview(i: ReviewIn): RunReview {
     verdict = { title: `${i.race.name}に向けた判断`, text, table };
   }
 
+  const notes: string[] = [];
+  if (i.leg === 'light') notes.push('脚の状態は良い。このまま疲れをためずに、次の練習へ。');
+  if (i.leg === 'heavy') notes.push(daysLeft != null && daysLeft <= 10 ? '脚の重さが残っている。本番まで強い練習は入れず、睡眠と補給を優先して回復に回したい。' : '脚の重さが残っている。次の練習は軽くして、様子を見たい。');
+  if (i.leg === 'pain') notes.push('違和感・痛みがあるときは、無理に走らず様子を見る。ふつうに歩ける・階段が痛くないかを確認して、続くようなら早めに専門家に相談を。');
+  if (i.rpe && i.rpe >= 3 && (i.tags ?? []).length === 0 && i.leg !== 'pain') notes.push('きつく感じた理由 (暑さ・睡眠・補給など) があれば、下から選ぶとレビューに反映される。');
   return {
     grade: gradeOf(i.score),
     headline,
     race: i.race && daysLeft != null && daysLeft >= 0 ? { name: i.race.name, goal: fmtDuration(i.race.goal_time_s), need_pace: goalPace ? `約 ${mmss(goalPace)}/km` : null, days: daysLeft } : null,
-    rows, pace, hr, form, verdict,
+    rows, pace, hr, form, verdict, notes,
   };
 }
 
