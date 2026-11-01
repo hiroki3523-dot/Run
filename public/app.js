@@ -523,7 +523,7 @@ async function activityDetailView(id) {
     ${ev ? `
     <div class="card">
       <h2>評価 <span class="badge" data-t="${ev.type}">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></h2>
-      ${metric('ペース', ev.pace)}${metric('心拍', ev.hr)}${metric('ケイデンス', ev.cadence)}${metric('距離', ev.volume)}
+      ${metric('ペース', ev.pace)}${metric('心拍', ev.hr)}${metric('ケイデンス', ev.cadence)}${ev.form ? metric('フォーム', ev.form) : ''}
       <ul>${ev.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
       ${ev.pace.details.rep_paces ? `<p class="muted num">各本: ${esc(ev.pace.details.rep_paces)}</p>` : ''}
       ${zones.length ? `<p class="muted num">心拍ゾーン Z1–Z5: ${zones.map((z) => `${Math.round(z)}%`).join(' / ')}</p>` : ''}
@@ -776,6 +776,7 @@ async function settingsView() {
       const days = Math.ceil((Date.now() - Date.parse('2025-01-01T00:00:00+09:00')) / 86400000);
       { const r = bfText(await api(`/strava/backfill/start?days=${days}`, { method: 'POST' })); refreshBackfill(); return r; }
     });
+    run('#reeval-30', async () => { const r = bfText(await api('/strava/backfill/start?days=30&force=1', { method: 'POST' })); refreshBackfill(); return r; });
     run('#backfill-30', async () => { const r = bfText(await api('/strava/backfill/start?days=30', { method: 'POST' })); refreshBackfill(); return r; });
     run('#backfill-status', async () => bfText(await api('/strava/backfill/status')));
     run('#backfill-stop', async () => { const r = bfText(await api('/strava/backfill/stop', { method: 'POST' })); refreshBackfill(); return r; });
@@ -826,7 +827,7 @@ async function settingsView() {
     <div class="card">
       <h2>過去データの取り込み</h2>
       <div id="bf-live" class="bf-live muted">読み込み中…</div>
-      <div class="row"><button id="backfill-2025" class="primary">2025年1月から取り込む</button><button id="backfill-all">全期間</button><button id="backfill-30">直近30日</button><button id="backfill-status">進み具合</button><button id="backfill-stop">停止</button></div>
+      <div class="row"><button id="backfill-2025" class="primary">2025年1月から取り込む</button><button id="backfill-all">全期間</button><button id="backfill-30">直近30日</button><button id="reeval-30">直近30日を再評価</button><button id="backfill-status">進み具合</button><button id="backfill-stop">停止</button></div>
       <p class="muted">直近30日を先に取り込み、そのあと古い記録へ進みます。閉じて大丈夫です。Strava の上限に当たると自動で待って再開します。</p>
     </div>
     <div class="card">
