@@ -192,7 +192,19 @@ function buildWeek(days: { date: string; vol: number; weeksOut: number; w: numbe
   const pointRows = points.map((d, i) => rowFor(d, seq[i]));
   const used = (longRow?.distance_m ?? 0) + pointRows.reduce((a, r) => a + (r.distance_m ?? 0), 0);
 
-  const easyDays = open.filter((d) => d !== longDay && !points.includes(d));
+  // 休養日: ロング走の翌日とポイント走の前日を優先して、回数ぶんを自動で選ぶ
+  const restN = Math.min(Math.round((prefs.rest_per_week ?? 0) * days.length / 7), Math.max(0, open.length - 1 - (longDay ? 1 : 0) - points.length));
+  const autoRest: string[] = [];
+  const afterLong = longDay ? addDays(longDay, 1) : null;
+  while (autoRest.length < restN) {
+    const cand = open.filter((d) => d !== longDay && !points.includes(d) && !autoRest.includes(d));
+    if (cand.length === 0) break;
+    const sc = (d: string) => (d === afterLong ? 10 : 0) + (points.some((x) => addDays(x, -1) === d) ? 6 : 0) + (points.some((x) => addDays(x, 1) === d) ? 3 : 0) - (autoRest.some((x) => Math.abs(monIndex(x) - monIndex(d)) <= 1) ? 8 : 0);
+    cand.sort((a, b) => sc(b) - sc(a) || monIndex(a) - monIndex(b));
+    autoRest.push(cand[0]);
+  }
+  for (const d of autoRest) out.push(rest(d, '休養日'));
+  const easyDays = open.filter((d) => d !== longDay && !points.includes(d) && !autoRest.includes(d));
   const easyKm = easyDays.length ? Math.min(14, Math.max(5, (vol * 1000 - used) / 1000 / easyDays.length)) : 0;
   for (const d of easyDays) {
     const k = km(easyKm);

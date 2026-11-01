@@ -67,8 +67,10 @@ export interface PlanPrefs {
   long_per_week: number;
   /** ロング走を置きたい曜日 (0=日 … 6=土) */
   long_day: number;
-  /** 毎週休む曜日 (0=日 … 6=土) */
+  /** 毎週休む曜日 (0=日 … 6=土)。空なら rest_per_week の回数だけ自動で選ぶ */
   rest_days: number[];
+  /** 1 週間に休む日の数 (走れない日は別) */
+  rest_per_week: number;
   /** 予定が入って走れない日 (YYYY-MM-DD) */
   blocked: string[];
 }
@@ -83,7 +85,7 @@ export interface CorosInfo {
   zones_s: { aerobic: [number, number]; threshold: [number, number]; speed: [number, number] };
 }
 
-export const DEFAULT_PLAN_PREFS: PlanPrefs = { points_per_week: 2, long_per_week: 1, long_day: 0, rest_days: [1, 5], blocked: [] };
+export const DEFAULT_PLAN_PREFS: PlanPrefs = { points_per_week: 2, long_per_week: 1, long_day: 0, rest_days: [], rest_per_week: 1, blocked: [] };
 
 export const DEFAULT_SETTINGS: Settings = {
   max_hr: 180,
