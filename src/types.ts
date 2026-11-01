@@ -37,6 +37,8 @@ export interface Plan {
   pace_max_s: number | null;
   hr_max: number | null;
   notes: string | null;
+  /** メニュー構成 (JSON 文字列)。無ければ null */
+  steps?: string | null;
 }
 
 export interface PaceBand {
