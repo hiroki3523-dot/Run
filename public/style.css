@@ -644,3 +644,19 @@ a.act { display: block; margin-top: 8px; padding: 10px 12px; border-radius: 14px
 .fb-g .muted { font-size: 12px; }
 .fb-g .chip { min-height: 44px; padding: 0 16px; }
 .fb-note { margin: 10px 0 0; padding: 12px 14px; border-radius: 14px; background: var(--accent-soft); font-size: 14px; line-height: 1.7; }
+
+/* 過去12週間グラフ: 選択中の週 (Strava 風) */
+.trend-wrap svg.trend { display: block; touch-action: pan-y; }
+.trend-wrap .tr-hit { cursor: pointer; }
+.trend-wrap .tr-v { stroke: var(--accent); stroke-width: 1.5; }
+.trend-wrap .tr-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
+.trend-wrap .tr-tag rect { fill: var(--accent); }
+.trend-wrap .tr-tag text { fill: #fff; font-size: 11px; font-weight: 700; }
+.trend-wrap .tr-ax { font-size: 12px; margin-top: 4px; }
+.tr-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,.05); color: var(--text); text-decoration: none; min-height: 52px; }
+.tr-row:active { background: rgba(255,255,255,.1); }
+.tr-row .tr-ic { color: var(--accent); display: grid; place-items: center; }
+.tr-row .tr-txt { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.tr-row .tr-txt b { font-size: 15px; }
+.tr-row .tr-txt small { color: var(--muted); font-size: 12px; }
+.tr-row .tr-go { color: var(--muted); font-size: 22px; }

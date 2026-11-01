@@ -1269,18 +1269,63 @@ function bubbles(days, linkBase) {
   }).join('')}</div>`;
 }
 
-/** 過去12週間の距離 (面グラフ) */
-function trendChart(rows) {
-  const W = 320, H = 110, pad = 6;
-  const max = Math.max(60, ...rows.map((r) => r.km)) * 1.1;
-  const pts = rows.map((r, i) => [pad + (i * (W - pad * 2)) / (rows.length - 1), H - pad - (r.km / max) * (H - pad * 2)]);
-  const line = pts.map((p) => p.join(',')).join(' ');
+/** 過去12週間の距離 (面グラフ)。タップ / なぞると週を選び、下の行からその週へ飛べる */
+function trendChart(rows, selWeek) {
+  const W = 320, H = 120, pad = 8, top = 26;
+  const max = Math.max(60, ...rows.map((r) => r.km)) * 1.05;
+  const pts = rows.map((r, i) => [pad + (i * (W - pad * 2)) / (rows.length - 1), H - pad - (r.km / max) * (H - pad - top)]);
+  const line = pts.map((p) => p.map((v) => v.toFixed(1)).join(',')).join(' ');
   const last = pts[pts.length - 1];
-  const colW = (W - pad * 2) / (rows.length - 1);
-  const hit = rows.map((r, i) => `<a href="#/activities?view=week&date=${r.week}"><rect x="${pts[i][0] - colW / 2}" y="0" width="${colW}" height="${H}" fill="transparent"/></a>`).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" class="trend"><polygon points="${pad},${H - pad} ${line} ${last[0]},${H - pad}" class="area"/><polyline points="${line}" class="ln"/>${pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="${i === pts.length - 1 ? 4 : 2.5}"/>`).join('')}${hit}</svg>
-    <div class="row spread muted num"><span>${md(rows[0].week)}〜</span><span>最高 ${Math.max(...rows.map((r) => r.km)).toFixed(0)}km/週</span><span>今週 ${rows[rows.length - 1].km}km</span></div>
-    <p class="muted hint">グラフをタップすると、その週の評価が開きます</p>`;
+  let sel = rows.findIndex((r) => r.week === selWeek);
+  if (sel < 0) sel = rows.length - 1;
+  const data = esc(JSON.stringify({ rows, pts: pts.map((p) => p.map((v) => +v.toFixed(1))), W, H }));
+  return `<div class="trend-wrap" data-trend="${data}" data-sel="${sel}">
+    <svg viewBox="0 0 ${W} ${H}" class="trend">
+      <polygon points="${pad},${H - pad} ${line} ${last[0].toFixed(1)},${H - pad}" class="area"/><polyline points="${line}" class="ln"/>
+      ${pts.map((p) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.5"/>`).join('')}
+      <g class="tr-cur"><line class="tr-v" y1="${top - 4}" y2="${H - pad}"/><circle class="tr-dot" r="5"/><g class="tr-tag"><rect rx="5" height="18"/><text text-anchor="middle"></text></g></g>
+      <rect class="tr-hit" x="0" y="0" width="${W}" height="${H}" fill="transparent"/>
+    </svg>
+    <div class="row spread muted num tr-ax"><span>${md(rows[0].week)}</span><span>最高 ${Math.max(...rows.map((r) => r.km)).toFixed(0)}km/週</span><span>今週</span></div>
+    <a class="tr-row" href="#"><span class="tr-ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></span><span class="tr-txt"><b></b><small></small></span><span class="tr-go">›</span></a>
+  </div>`;
+}
+
+/** 過去12週間グラフの選択操作 (タップ・なぞり) */
+function bindTrend(root) {
+  root.querySelectorAll('.trend-wrap').forEach((wrap) => {
+    const { rows, pts, W } = JSON.parse(wrap.dataset.trend);
+    const svg = wrap.querySelector('svg');
+    const g = wrap.querySelector('.tr-cur');
+    const set = (i) => {
+      const [x, y] = pts[i], r = rows[i];
+      g.querySelector('.tr-v').setAttribute('x1', x); g.querySelector('.tr-v').setAttribute('x2', x);
+      const dot = g.querySelector('.tr-dot'); dot.setAttribute('cx', x); dot.setAttribute('cy', y);
+      const label = `${r.km}km`, w = label.length * 7 + 12;
+      const tx = Math.min(W - w / 2 - 1, Math.max(w / 2 + 1, x));
+      const rect = g.querySelector('rect'); rect.setAttribute('x', tx - w / 2); rect.setAttribute('y', 2); rect.setAttribute('width', w);
+      const t = g.querySelector('text'); t.setAttribute('x', tx); t.setAttribute('y', 15); t.textContent = label;
+      const end = addDays(r.week, 6);
+      const row = wrap.querySelector('.tr-row');
+      row.href = `#/activities?view=week&date=${r.week}`;
+      row.querySelector('b').textContent = `${md(r.week)} 〜 ${md(end)}${i === rows.length - 1 ? ' (今週)' : ''}`;
+      row.querySelector('small').textContent = `${r.km}km${r.runs != null ? `・${r.runs}回` : ''}・この週を開く`;
+      wrap.dataset.sel = i;
+    };
+    const pick = (e) => {
+      const b = svg.getBoundingClientRect();
+      const x = ((e.clientX - b.left) / b.width) * W;
+      let best = 0;
+      pts.forEach((p, i) => { if (Math.abs(p[0] - x) < Math.abs(pts[best][0] - x)) best = i; });
+      if (String(best) !== wrap.dataset.sel) set(best);
+    };
+    let down = false;
+    svg.addEventListener('pointerdown', (e) => { down = true; pick(e); });
+    svg.addEventListener('pointermove', (e) => { if (down) pick(e); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach((t) => svg.addEventListener(t, () => { down = false; }));
+    svg.style.touchAction = 'pan-y';
+    set(Number(wrap.dataset.sel));
+  });
 }
 
 const REVIEW_TABS = [['list', '一覧'], ['day', '日'], ['week', '週'], ['month', '月']];
@@ -1332,7 +1377,7 @@ async function activitiesView(params) {
       </div>
     </div>
     ${kind === 'week' ? `<div class="card"><h2>日ごとの距離</h2>${bubbles(r.days)}</div>` : ''}
-    ${trend ? `<div class="card"><h2>過去12週間</h2>${trendChart(trend)}</div>` : ''}
+    ${trend ? `<div class="card"><h2>過去12週間</h2>${trendChart(trend, weekStart(anchor))}</div>` : ''}
     <div class="card"><h2>コメント</h2><ul class="bullets">${r.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>
     ${r.next.length ? `<div class="card"><h2>次にやること</h2><ul class="bullets">${r.next.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>` : ''}
     <div class="card"><h2>ラン</h2>${r.list.length === 0 ? '<p class="muted">記録なし</p>' : `<ul class="list">${r.list.map((a) => `
@@ -2285,6 +2330,7 @@ async function route() {
       : tab === 'settings' ? await settingsView()
       : await homeView();
     view.innerHTML = html;
+    bindTrend(view);
   } catch (e) {
     view.innerHTML = `<div class="card error">${esc(e.message)}</div>`;
   }
