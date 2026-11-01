@@ -498,3 +498,8 @@ a.linkcard { display: block; text-decoration: none; color: inherit; }
 .why-row{margin-top:8px;font-size:16px}
 .why-row .bad{color:#ff5d6c}
 .why-sub{font-size:13px;margin-top:2px}
+
+.slide{display:flex;flex-direction:column;gap:10px;padding:6px 2px 4px}
+.slide b{font-size:30px;line-height:1}
+.slide b small{font-size:14px;color:var(--muted)}
+.slide input[type=range]{width:100%;height:44px;accent-color:#5b5bff;margin:0}
