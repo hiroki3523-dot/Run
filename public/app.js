@@ -855,188 +855,255 @@ const MEMO_TEMPLATES = {
 };
 
 /** タップだけで計画を作る・直す */
-async function editPlan(p, settings) {
-  const st = {
-    date: p.date,
-    type: p.type || 'easy',
-    km: p.distance_m ? p.distance_m / 1000 : null,
-    pmin: p.pace_min_s || null,
-    pmax: p.pace_max_s || null,
-    notes: p.notes || '',
-    steps: [],
-    open: null,
-  };
-  try { st.steps = p.steps ? JSON.parse(p.steps) : []; } catch { st.steps = []; }
-  if (st.steps.length) {
-    const sum = stepsSummary(st.steps);
-    st.notes = (p.notes || '').startsWith(sum) ? (p.notes || '').slice(sum.length).replace(/^ \/ /, '') : p.notes || '';
-  }
-  if (!p.id && st.km == null) st.km = PLAN_DEFAULT_KM[st.type] ?? null;
-  const ws0 = weekStart(p.date);
-  const week = [...Array(7)].map((_, i) => addDays(ws0, i));
-  const chip = (attr, val, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" ${attr}="${esc(String(val))}">${esc(label)}</button>`;
+// ---- ワークアウト作成 (COROS 風): ステップのカードを並べて、タップで編集する全画面
+const KIND_COLOR = { warmup: '#c9a227', work: '#2e9e5b', rest: '#8a8f9c', cooldown: '#2b9a9a', interval: '#2e9e5b' };
+const REF_LABEL = { easy: 'E', m: 'M', lt: 'LT', interval: 'I' };
 
-  PACES = settings.paces;
-  const lthr = settings.coros?.lthr || settings.lthr || 174;
-  const zoneLine = (z, ref, t) => {
-    if (t?.pmin && t?.pmax) return `ペース ${pace(t.pmin)}〜${pace(t.pmax)} (自分で決めた範囲)`;
-    if (ref && PACES?.[ref]) return `${REFS[ref].label}ペース ${pace(PACES[ref].min)}〜${pace(PACES[ref].max)} (設定の値)`;
-    const Z = ZONES[z];
-    const pc = z === 0 ? `${pace(Z.pace[0])}より遅い` : z === 5 ? `${pace(Z.pace[1])}より速い` : `${pace(Z.pace[0])}〜${pace(Z.pace[1])}`;
-    const hr = z === 0 ? `${Math.round(lthr * Z.hr[1])}bpm未満` : z === 5 ? `${Math.round(lthr * Z.hr[0])}bpm超` : `${Math.round(lthr * Z.hr[0])}〜${Math.round(lthr * Z.hr[1])}bpm`;
-    return `${Z.n} ${pc}・${hr}`;
-  };
-  const partEditor = (i, part, t, label) => `
-    <div class="part">${label ? `<span class="lbl">${label}</span>` : ''}
-      <div class="chips">${chip('data-sby', `${i}:${part}:dist`, '距離', t.by === 'dist')}${chip('data-sby', `${i}:${part}:time`, '時間', t.by === 'time')}</div>
-      <div class="slide"><b class="num" id="sv-${i}-${part}">${fmtTarget(t)}</b>
-        <input type="range" data-rng="sval:${i}:${part}" ${t.by === 'dist' ? `min="0.2" max="20" step="0.1" value="${(t.value / 1000).toFixed(1)}"` : `min="30" max="3600" step="30" value="${t.value}"`}></div>
-      <div class="chips">${Object.entries(REFS).map(([k, R]) => chip('data-sref', `${i}:${part}:${k}`, `${R.label}ペース`, t.ref === k)).join('')}</div>
-      <div class="chips">${ZONES.map((Z, z) => chip('data-szone', `${i}:${part}:${z}`, Z.short, !t.ref && t.zone === z)).join('')}</div>
-      <div class="slide pr-range"><span class="lbl">ペース範囲 (速い側 / 遅い側)</span><b class="num" id="sp-${i}-${part}">${pace(bandOf(t)[0])}〜${pace(bandOf(t)[1])}<small> /km</small></b>
-        <input type="range" data-rng="spmin:${i}:${part}" min="170" max="480" step="1" value="${Math.round(bandOf(t)[0])}" aria-label="速い側">
-        <input type="range" data-rng="spmax:${i}:${part}" min="170" max="480" step="1" value="${Math.round(bandOf(t)[1])}" aria-label="遅い側"></div>
-      <p class="muted zone-note">${esc(zoneLine(t.zone, t.ref, t))}</p></div>`;
-  const stepsHtml = () => {
-    const cards = st.steps.map((sp, i) => {
-      const open = st.open === i;
-      return `<div class="step ${open ? 'open' : ''}" data-k="${sp.kind}">
-        <button type="button" class="step-head" data-sopen="${i}"><span class="step-name">${STEP_KINDS[sp.kind]}</span><span class="step-meta num">${esc(stepText(sp))}</span></button>
-        ${open ? `<div class="step-body">
-          ${sp.kind === 'interval'
-            ? `<div class="slide"><b class="num" id="sr-${i}">${sp.reps} <small>本</small></b><input type="range" data-rng="reps:${i}" min="1" max="20" step="1" value="${sp.reps}"></div>
-               ${partEditor(i, 'work', sp.work, '走る')}${partEditor(i, 'rest', sp.rest, '休憩')}`
-            : partEditor(i, '', sp, '')}
-          <div class="chips"><button type="button" class="chip" data-smove="${i}:-1">上へ</button><button type="button" class="chip" data-smove="${i}:1">下へ</button><button type="button" class="chip danger" data-sdel="${i}">削除</button></div>
-        </div>` : ''}</div>`;
-    }).join('');
-    const total = st.steps.length ? `<div class="step-total num">合計 約 ${(stepsTotalM(st.steps) / 1000).toFixed(1)}km</div>` : '';
-    return `<div class="field"><span class="lbl">メニューを組む (任意)</span>
-      <div class="chips">${Object.keys(STEP_PRESETS).map((n) => chip('data-spreset', n, n, false)).join('')}</div>
-      ${cards}${total}
-      <div class="chips">${Object.entries(STEP_KINDS).map(([k, v]) => chip('data-sadd', k, `+ ${v}`, false)).join('')}</div></div>`;
-  };
+function editPlan(p, settings) {
+  return new Promise((resolve) => {
+    const st = {
+      date: p.date,
+      type: p.type || 'easy',
+      km: p.distance_m ? p.distance_m / 1000 : null,
+      pmin: p.pace_min_s || null,
+      pmax: p.pace_max_s || null,
+      notes: p.notes || '',
+      steps: [],
+    };
+    try { st.steps = p.steps ? JSON.parse(p.steps) : []; } catch { st.steps = []; }
+    if (st.steps.length) {
+      const sum = stepsSummary(st.steps);
+      st.notes = (p.notes || '').startsWith(sum) ? (p.notes || '').slice(sum.length).replace(/^ \/ /, '') : p.notes || '';
+    }
+    if (!p.id && st.km == null) st.km = PLAN_DEFAULT_KM[st.type] ?? null;
+    PACES = settings.paces;
+    const lthr = settings.coros?.lthr || settings.lthr || 174;
+    const ws0 = weekStart(p.date);
+    const week = [...Array(7)].map((_, i) => addDays(ws0, i));
+    const chip = (attr, val, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" ${attr}="${esc(String(val))}">${esc(label)}</button>`;
+    let scr = { name: 'list' };
+    let openRow = null;
 
-  const draw = () => {
-    const def = settings.paces?.[st.type];
-    const poff = def && st.pmin ? Math.max(-30, Math.min(30, st.pmin - def.min)) : 0;
-    const shown = st.pmin ? `${pace(st.pmin)}〜${pace(st.pmax)}` : def ? `標準 ${pace(def.min)}〜${pace(def.max)}` : '-';
-    dialogForm.querySelector('#pl-body').innerHTML = `
-      <div class="field"><span class="lbl">日</span><div class="chips">${week.map((d) => chip('data-date', d, `${dow(d)} ${Number(d.slice(8))}`, d === st.date)).join('')}</div></div>
-      <div class="field"><span class="lbl">種別</span><div class="chips">${Object.entries(PLAN_LABELS).map(([k, v]) => chip('data-type', k, v, k === st.type)).join('')}</div></div>
-      ${st.type === 'rest' || st.steps.length ? '' : `
-      <div class="field"><span class="lbl">距離</span>
-        <div class="slide"><b class="num" id="km-out">${(st.km ?? 10).toFixed(1)} <small>km</small></b>
-          <input type="range" data-rng="km" min="3" max="42" step="0.5" value="${st.km ?? 10}"></div></div>
-      <div class="field"><span class="lbl">ペース</span>
-        <div class="slide"><b class="num" id="pace-out">${shown}</b>
-          <input type="range" data-rng="pace" min="-30" max="30" step="5" value="${poff}"></div>
-        <p class="muted zone-note" style="margin:2px 0 0">左へ速く、右へ遅く。真ん中が標準です。</p></div>`}
-      ${st.type === 'rest' ? '' : stepsHtml()}
-      <div class="field"><span class="lbl">メモ (任意)</span>
-        <input name="notes" value="${esc(st.notes)}" placeholder="気をつけたいこと など"></div>`;
-  };
+    const root = document.createElement('div');
+    root.className = 'wk';
+    document.body.appendChild(root);
+    document.body.classList.add('wk-open');
+    const close = (v) => { root.remove(); document.body.classList.remove('wk-open'); resolve(v); };
 
-  const onClick = (e) => {
-    const t = e.target.closest('button');
-    if (!t || !dialogForm.contains(t)) return;
-    const d = t.dataset;
-    const inp = dialogForm.querySelector('[name=notes]');
-    if (inp) st.notes = inp.value;
-    if (d.date) st.date = d.date;
-    else if (d.type) {
-      st.type = d.type;
-      st.km = d.type === 'rest' ? null : (PLAN_DEFAULT_KM[d.type] ?? st.km);
-      st.pmin = st.pmax = null;
-      if (Object.values(MEMO_TEMPLATES).some((l) => l.includes(st.notes))) st.notes = '';
-    } else if (d.sadd) { st.steps.push(mkStep[d.sadd]()); st.open = st.steps.length - 1; }
-    else if (d.spreset) { st.steps = STEP_PRESETS[d.spreset](); st.open = null; }
-    else if (d.sopen != null) st.open = st.open === Number(d.sopen) ? null : Number(d.sopen);
-    else if (d.sdel != null) { st.steps.splice(Number(d.sdel), 1); st.open = null; }
-    else if (d.smove) {
-      const [i, dir] = d.smove.split(':').map(Number);
-      const j = i + dir;
-      if (j >= 0 && j < st.steps.length) { [st.steps[i], st.steps[j]] = [st.steps[j], st.steps[i]]; st.open = j; }
-    } else if (d.sby || d.szone || d.sref) {
-      const [i, part, v] = (d.sby || d.szone || d.sref).split(':');
-      const sp = st.steps[Number(i)];
-      const t = part ? sp[part] : sp;
-      if (d.sby) { if (t.by !== v) { t.by = v; t.value = v === 'dist' ? 1000 : 120; } }
-      else if (d.sref) { t.ref = v; t.zone = REFS[v].zone; delete t.pmin; delete t.pmax; }
-      else { t.zone = Number(v); t.ref = null; delete t.pmin; delete t.pmax; }
-    } else return;
-    draw();
-  };
+    const partOf = (sp, part) => (part ? sp[part] : sp);
+    const paceText = (t) => {
+      const b = bandOf(t);
+      const lab = t.pmin && t.pmax ? '' : t.ref ? `${REF_LABEL[t.ref]} ` : `${ZONES[t.zone].short} `;
+      return `${lab}${pace(b[0])}〜${pace(b[1])}`;
+    };
+    const subLine = (sp) => sp.kind === 'interval'
+      ? `${sp.reps}本 × ${fmtTarget(sp.work)} ${paceText(sp.work)} / 休憩 ${fmtTarget(sp.rest)}`
+      : `${sp.by === 'dist' ? '距離' : '時間'} ${fmtTarget(sp)}${sp.kind === 'rest' ? '' : ` | ${paceText(sp)}`}`;
+    const plus = (at) => `<button type="button" class="wk-plus" data-add-at="${at}" aria-label="ステップを追加"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>`;
 
-  const wait = openDialog(`<h2>${p.id ? '計画を編集' : '計画を追加'}</h2><div id="pl-body"></div>`,
-    p.id ? { onDelete: async () => { await api(`/plans/${p.id}`, { method: 'DELETE' }); route(); } } : {});
-  // スライダー: ドラッグ中は画面を作り直さず、数字だけ更新する
-  const onInput = (e) => {
-    const r = e.target.closest('[data-rng]');
-    if (!r) return;
-    const [k, i, part] = r.dataset.rng.split(':');
-    const v = Number(r.value);
-    if (k === 'km') { st.km = v; dialogForm.querySelector('#km-out').innerHTML = `${v.toFixed(1)} <small>km</small>`; }
-    else if (k === 'pace') {
+    const header = (title, left, right) => `<div class="wk-top"><button type="button" class="wk-btn" data-act="${left[0]}">${left[1]}</button><b>${title}</b>${right ? `<button type="button" class="wk-btn primary" data-act="${right[0]}">${right[1]}</button>` : '<span style="width:64px"></span>'}</div>`;
+
+    // ---------------- 一覧
+    const listHtml = () => {
+      const simple = !st.steps.length && st.type !== 'rest';
       const def = settings.paces?.[st.type];
-      if (!def) return;
-      if (v === 0) st.pmin = st.pmax = null; else { st.pmin = def.min + v; st.pmax = def.max + v; }
-      dialogForm.querySelector('#pace-out').textContent = st.pmin ? `${pace(st.pmin)}〜${pace(st.pmax)}` : `標準 ${pace(def.min)}〜${pace(def.max)}`;
-    } else if (k === 'reps') {
-      st.steps[Number(i)].reps = v; dialogForm.querySelector(`#sr-${i}`).innerHTML = `${v} <small>本</small>`;
-      dialogForm.querySelector(`[data-sopen="${i}"] .step-meta`).textContent = stepText(st.steps[Number(i)]);
-    } else if (k === 'spmin' || k === 'spmax') {
-      const sp = st.steps[Number(i)];
-      const t = part ? sp[part] : sp;
-      const [lo, hi] = bandOf(t);
-      let a = k === 'spmin' ? v : lo, b = k === 'spmax' ? v : hi;
-      if (a > b) { if (k === 'spmin') b = a; else a = b; }
-      t.pmin = a; t.pmax = b; t.ref = null;
-      dialogForm.querySelector(`#sp-${i}-${part}`).innerHTML = `${pace(a)}〜${pace(b)}<small> /km</small>`;
-      dialogForm.querySelectorAll(`[data-rng$=":${i}:${part}"]`).forEach((r) => { if (r.dataset.rng.startsWith('spmin')) r.value = a; else if (r.dataset.rng.startsWith('spmax')) r.value = b; });
-      dialogForm.querySelector(`[data-sopen="${i}"] .step-meta`).textContent = stepText(sp);
-    } else if (k === 'sval') {
-      const sp = st.steps[Number(i)];
-      const t = part ? sp[part] : sp;
-      t.value = t.by === 'dist' ? Math.round(v * 1000) : v;
-      dialogForm.querySelector(`#sv-${i}-${part}`).textContent = fmtTarget(t);
-      dialogForm.querySelector(`[data-sopen="${i}"] .step-meta`).textContent = stepText(sp);
-      const tot = dialogForm.querySelector('.step-total'); if (tot) tot.textContent = `合計 約 ${(stepsTotalM(st.steps) / 1000).toFixed(1)}km`;
-    }
-  };
-  draw();
-  dialogForm.addEventListener('click', onClick);
-  dialogForm.addEventListener('input', onInput);
-  const values = await wait;
-  dialogForm.removeEventListener('click', onClick);
-  dialogForm.removeEventListener('input', onInput);
-  if (!values) return;
-  st.notes = values.notes ?? st.notes;
-  let stepKm = null;
-  if (st.steps.length && st.type !== 'rest') {
-    stepKm = Math.round(stepsTotalM(st.steps));
-    const main = st.steps.find((x) => x.kind === 'interval' || x.kind === 'work');
-    if (main) {
-      const band = bandOf(main.kind === 'interval' ? main.work : main);
-      st.pmin = band[0]; st.pmax = band[1];
-    }
-    // 評価で使えるように、各ステップのペース範囲を確定して保存する
-    const freeze = (t) => { if (!(t.pmin && t.pmax)) { const bd = bandOf(t); t.pmin = Math.round(bd[0]); t.pmax = Math.round(bd[1]); } };
-    st.steps.forEach((sp) => { if (sp.kind === 'interval') { freeze(sp.work); freeze(sp.rest); } else freeze(sp); });
-    st.notes = [stepsSummary(st.steps), st.notes].filter(Boolean).join(' / ');
-  }
-  const body = {
-    steps: st.steps.length ? st.steps : null,
-    date: st.date,
-    type: st.type,
-    distance_m: st.type === 'rest' ? null : stepKm ?? (st.km == null ? null : Math.round(st.km * 1000)),
-    pace_min_s: st.pmin,
-    pace_max_s: st.pmax,
-    hr_max: p.hr_max ?? null,
-    notes: st.notes,
-  };
-  await api(p.id ? `/plans/${p.id}` : '/plans', { method: p.id ? 'PUT' : 'POST', body });
-  route();
+      const poff = def && st.pmin ? Math.max(-30, Math.min(30, st.pmin - def.min)) : 0;
+      const shown = st.pmin ? `${pace(st.pmin)}〜${pace(st.pmax)}` : def ? `標準 ${pace(def.min)}〜${pace(def.max)}` : '-';
+      return `${header(p.id ? '計画を編集' : '計画を追加', ['back', '‹ 戻る'], ['save', '保存'])}
+      <div class="wk-body">
+        <div class="wk-card">
+          <div class="field"><span class="lbl">日</span><div class="chips">${week.map((d) => chip('data-date', d, `${dow(d)} ${Number(d.slice(8))}`, d === st.date)).join('')}</div></div>
+          <div class="field"><span class="lbl">種別</span><div class="chips">${Object.entries(PLAN_LABELS).map(([k, v]) => chip('data-type', k, v, k === st.type)).join('')}</div></div>
+        </div>
+        ${st.type === 'rest' ? '' : st.steps.length ? `
+          <div class="wk-steps">
+            ${plus(0)}
+            ${st.steps.map((sp, i) => `<div class="wk-step" data-i="${i}" style="--kc:${KIND_COLOR[sp.kind]}">
+                <button type="button" class="wk-grip" data-grip="${i}" aria-label="並べ替え">⠿</button>
+                <button type="button" class="wk-card-main" data-edit="${i}"><b>${i + 1} ${STEP_KINDS[sp.kind]}</b><span class="muted">${esc(subLine(sp))}</span></button>
+                <svg class="chev" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+              </div>${plus(i + 1)}`).join('')}
+          </div>
+          <div class="step-total num">合計 約 ${(stepsTotalM(st.steps) / 1000).toFixed(1)}km</div>` : `
+          <div class="wk-card">
+            <div class="field"><span class="lbl">距離</span><div class="slide"><b class="num" id="km-out">${(st.km ?? 10).toFixed(1)} <small>km</small></b><input type="range" data-rng="km" min="3" max="42" step="0.5" value="${st.km ?? 10}"></div></div>
+            <div class="field"><span class="lbl">ペース</span><div class="slide"><b class="num" id="pace-out">${shown}</b><input type="range" data-rng="pace" min="-30" max="30" step="5" value="${poff}"></div>
+              <p class="muted zone-note" style="margin:2px 0 0">左へ速く、右へ遅く。真ん中が標準です。</p></div>
+          </div>
+          <div class="wk-card"><span class="lbl">アップ・ダウンを分けて組むときは</span>
+            <div class="chips" style="margin-top:8px">${Object.keys(STEP_PRESETS).map((n) => chip('data-preset', n, n, false)).join('')}</div>
+            ${plus(0)}</div>`}
+        <div class="wk-card"><div class="field"><span class="lbl">メモ (任意)</span><input name="notes" value="${esc(st.notes)}" placeholder="気をつけたいこと など"></div></div>
+        ${p.id ? '<button type="button" class="danger wide" data-act="del">この計画を削除</button>' : ''}
+      </div>`;
+    };
+
+    // ---------------- ステップを選ぶ
+    const addHtml = () => `${header('ステップを選ぶ', ['list', 'キャンセル'], null)}
+      <div class="wk-body"><div class="wk-grid">${Object.keys(STEP_KINDS).map((k) => {
+        const sp = mkStep[k]();
+        return `<button type="button" class="wk-kind" data-kind="${k}" style="--kc:${KIND_COLOR[k]}"><b>${STEP_KINDS[k]}</b><span class="muted">${esc(subLine(sp))}</span><i></i></button>`;
+      }).join('')}</div></div>`;
+
+    // ---------------- ステップ編集
+    const row = (key, label, value, body) => `<div class="wk-rowwrap"><button type="button" class="wk-row ${openRow === key ? 'open' : ''}" data-row="${key}"><span>${label}</span><span class="v" data-val="${key}">${value}</span><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>${openRow === key ? `<div class="wk-open">${body}</div>` : ''}</div>`;
+    const targetRows = (sp, part, i) => {
+      const t = partOf(sp, part);
+      const k = (s) => `${part}:${s}`;
+      const rows = [
+        row(k('by'), '目標タイプ', t.by === 'dist' ? '距離' : '時間', `<div class="chips">${chip('data-sby', `${part}:dist`, '距離', t.by === 'dist')}${chip('data-sby', `${part}:time`, '時間', t.by === 'time')}</div>`),
+        row(k('val'), '目標', fmtTarget(t), `<div class="slide"><input type="range" data-rng="sval:${part}" ${t.by === 'dist' ? `min="0.1" max="30" step="0.1" value="${(t.value / 1000).toFixed(1)}"` : `min="30" max="3600" step="30" value="${t.value}"`}></div>`),
+      ];
+      if (!(sp.kind === 'rest' || (sp.kind === 'interval' && part === 'rest'))) {
+        const b = bandOf(t);
+        rows.push(row(k('pace'), 'ペース範囲', paceText(t), `
+          <div class="chips">${Object.entries(REFS).map(([r, R]) => chip('data-sref', `${part}:${r}`, `${R.label}ペース`, t.ref === r && !(t.pmin && t.pmax))).join('')}</div>
+          <div class="chips">${ZONES.map((Z, z) => chip('data-szone', `${part}:${z}`, Z.short, !t.ref && !(t.pmin && t.pmax) && t.zone === z)).join('')}</div>
+          <div class="slide pr-range"><span class="lbl">速い側 / 遅い側 (1秒ずつ)</span>
+            <input type="range" data-rng="spmin:${part}" min="170" max="480" step="1" value="${Math.round(b[0])}" aria-label="速い側">
+            <input type="range" data-rng="spmax:${part}" min="170" max="480" step="1" value="${Math.round(b[1])}" aria-label="遅い側"></div>`));
+      }
+      return rows.join('');
+    };
+    const stepHtml = () => {
+      const i = scr.i, sp = st.steps[i];
+      if (!sp) return listHtml();
+      const kindRow = sp.kind === 'interval' ? '' : row('kind', 'ステップ', STEP_KINDS[sp.kind], `<div class="chips">${['warmup', 'work', 'rest', 'cooldown'].map((k) => chip('data-skind', k, STEP_KINDS[k], sp.kind === k)).join('')}</div>`);
+      const body = sp.kind === 'interval'
+        ? `${row('reps', '本数', `${sp.reps}本`, `<div class="slide"><input type="range" data-rng="reps" min="1" max="20" step="1" value="${sp.reps}"></div>`)}
+           <div class="wk-sub">走る</div><div class="wk-group">${targetRows(sp, 'work', i)}</div>
+           <div class="wk-sub">休憩</div><div class="wk-group">${targetRows(sp, 'rest', i)}</div>`
+        : `<div class="wk-group">${kindRow}</div><div class="wk-group">${targetRows(sp, '', i)}</div>`;
+      return `${header(`${i + 1} ${STEP_KINDS[sp.kind]}`, ['list', '‹ 戻る'], ['list', '完了'])}<div class="wk-body">${body}
+        <button type="button" class="danger wide" data-sdel="${i}">このステップを削除</button></div>`;
+    };
+
+    const render = () => {
+      root.innerHTML = scr.name === 'add' ? addHtml() : scr.name === 'step' ? stepHtml() : listHtml();
+      // ステップ編集中は開いている行へスクロール
+    };
+
+    // ---------------- 並べ替え (⠿ をつかんで上下)
+    const startDrag = (e, i) => {
+      const cards = [...root.querySelectorAll('.wk-step')];
+      const el = cards[i];
+      const rects = cards.map((c) => c.getBoundingClientRect());
+      const y0 = e.clientY;
+      el.classList.add('drag');
+      el.setPointerCapture(e.pointerId);
+      let to = i;
+      const move = (ev) => {
+        const dy = ev.clientY - y0;
+        el.style.transform = `translateY(${dy}px)`;
+        const mid = rects[i].top + rects[i].height / 2 + dy;
+        to = rects.findIndex((r) => mid < r.top + r.height);
+        if (to < 0) to = rects.length - 1;
+      };
+      const up = () => {
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+        el.removeEventListener('pointercancel', up);
+        if (to !== i) { const [m] = st.steps.splice(i, 1); st.steps.splice(to, 0, m); }
+        render();
+      };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+    };
+    root.addEventListener('pointerdown', (e) => {
+      const g = e.target.closest('[data-grip]');
+      if (g) { e.preventDefault(); startDrag(e, Number(g.dataset.grip)); }
+    });
+
+    // ---------------- 保存
+    const save = async () => {
+      let stepKm = null;
+      if (st.steps.length && st.type !== 'rest') {
+        stepKm = Math.round(stepsTotalM(st.steps));
+        const main = st.steps.find((x) => x.kind === 'interval' || x.kind === 'work');
+        if (main) { const band = bandOf(main.kind === 'interval' ? main.work : main); st.pmin = band[0]; st.pmax = band[1]; }
+        // 評価で使えるように、各ステップのペース範囲を確定して保存する
+        const freeze = (t) => { if (!(t.pmin && t.pmax)) { const bd = bandOf(t); t.pmin = Math.round(bd[0]); t.pmax = Math.round(bd[1]); } };
+        st.steps.forEach((sp) => { if (sp.kind === 'interval') { freeze(sp.work); freeze(sp.rest); } else freeze(sp); });
+        st.notes = [stepsSummary(st.steps), st.notes].filter(Boolean).join(' / ');
+      }
+      const body = {
+        steps: st.steps.length ? st.steps : null,
+        date: st.date,
+        type: st.type,
+        distance_m: st.type === 'rest' ? null : stepKm ?? (st.km == null ? null : Math.round(st.km * 1000)),
+        pace_min_s: st.pmin,
+        pace_max_s: st.pmax,
+        hr_max: p.hr_max ?? null,
+        notes: st.notes,
+      };
+      try { await api(p.id ? `/plans/${p.id}` : '/plans', { method: p.id ? 'PUT' : 'POST', body }); } catch (e) { alert(e.message); return; }
+      close(true);
+      route();
+    };
+
+    // ---------------- クリック
+    root.addEventListener('click', async (e) => {
+      const t = e.target.closest('button');
+      if (!t || !root.contains(t)) return;
+      const d = t.dataset;
+      const inp = root.querySelector('[name=notes]');
+      if (inp) st.notes = inp.value;
+      if (d.act === 'back') return close(null);
+      if (d.act === 'save') return save();
+      if (d.act === 'list') { scr = { name: 'list' }; openRow = null; return render(); }
+      if (d.act === 'del') { if (confirm('削除しますか？')) { await api(`/plans/${p.id}`, { method: 'DELETE' }); close(null); route(); } return; }
+      if (d.date) st.date = d.date;
+      else if (d.type) { st.type = d.type; if (!st.steps.length) { st.km = d.type === 'rest' ? null : (PLAN_DEFAULT_KM[d.type] ?? st.km); st.pmin = st.pmax = null; } }
+      else if (d.preset) st.steps = STEP_PRESETS[d.preset]();
+      else if (d.addAt != null) { scr = { name: 'add', at: Number(d.addAt) }; }
+      else if (d.kind) { st.steps.splice(scr.at, 0, mkStep[d.kind]()); scr = { name: 'step', i: scr.at }; openRow = null; }
+      else if (d.edit != null) { scr = { name: 'step', i: Number(d.edit) }; openRow = null; }
+      else if (d.row) openRow = openRow === d.row ? null : d.row;
+      else if (d.sdel != null) { st.steps.splice(Number(d.sdel), 1); scr = { name: 'list' }; }
+      else if (d.skind) { st.steps[scr.i].kind = d.skind; if (d.skind === 'rest') { st.steps[scr.i].by = 'time'; } }
+      else if (d.sby || d.sref || d.szone) {
+        const [part, v] = (d.sby || d.sref || d.szone).split(':');
+        const tt = partOf(st.steps[scr.i], part);
+        if (d.sby) { if (tt.by !== v) { tt.by = v; tt.value = v === 'dist' ? 1000 : 120; } }
+        else if (d.sref) { tt.ref = v; tt.zone = REFS[v].zone; delete tt.pmin; delete tt.pmax; }
+        else { tt.zone = Number(v); tt.ref = null; delete tt.pmin; delete tt.pmax; }
+      } else return;
+      render();
+    });
+
+    // ---------------- スライダー (ドラッグ中は作り直さず、数字だけ更新)
+    root.addEventListener('input', (e) => {
+      const r = e.target.closest('[data-rng]');
+      if (!r) return;
+      const [k, part = ''] = r.dataset.rng.split(':');
+      const v = Number(r.value);
+      const setVal = (key, text) => { const el = root.querySelector(`[data-val="${key}"]`); if (el) el.textContent = text; };
+      if (k === 'km') { st.km = v; root.querySelector('#km-out').innerHTML = `${v.toFixed(1)} <small>km</small>`; return; }
+      if (k === 'pace') {
+        const def = settings.paces?.[st.type];
+        if (!def) return;
+        if (v === 0) st.pmin = st.pmax = null; else { st.pmin = def.min + v; st.pmax = def.max + v; }
+        root.querySelector('#pace-out').textContent = st.pmin ? `${pace(st.pmin)}〜${pace(st.pmax)}` : `標準 ${pace(def.min)}〜${pace(def.max)}`;
+        return;
+      }
+      const sp = st.steps[scr.i];
+      if (k === 'reps') { sp.reps = v; setVal('reps', `${v}本`); return; }
+      const tt = partOf(sp, part);
+      if (k === 'sval') { tt.value = tt.by === 'dist' ? Math.round(v * 1000) : v; setVal(`${part}:val`, fmtTarget(tt)); }
+      else if (k === 'spmin' || k === 'spmax') {
+        const [lo, hi] = bandOf(tt);
+        let a = k === 'spmin' ? v : lo, b = k === 'spmax' ? v : hi;
+        if (a > b) { if (k === 'spmin') b = a; else a = b; }
+        tt.pmin = a; tt.pmax = b; tt.ref = null;
+        setVal(`${part}:pace`, paceText(tt));
+        root.querySelectorAll('[data-rng^="spmin"]').forEach((x) => (x.value = a));
+        root.querySelectorAll('[data-rng^="spmax"]').forEach((x) => (x.value = b));
+      }
+    });
+
+    render();
+  });
 }
 
 // 計画ダイアログで種別に応じた既定ペースを表示
