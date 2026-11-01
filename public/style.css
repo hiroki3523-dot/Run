@@ -390,3 +390,29 @@ details.card summary { cursor: pointer; font-weight: 700; min-height: 36px; disp
 .chips.mini .chip { min-height: 34px; padding: 5px 11px; font-size: 12.5px; }
 .shoe-item { padding: 0; }
 .shoe-fg { padding: 14px 0; }
+
+/* ---- ペース表 */
+.ptable { display: grid; gap: 2px; }
+.ph, .pr { display: grid; grid-template-columns: 62px 74px 1fr; gap: 10px; align-items: center; }
+.ph { font-size: 11px; color: var(--muted); padding: 0 4px 6px; }
+.pr { padding: 9px 4px; border-radius: 10px; min-height: 44px; }
+.pr:nth-child(even) { background: var(--btn-bg); }
+.pr.half, .pr.fin { background: var(--accent-soft); font-weight: 700; }
+.pr .pk { font-weight: 600; }
+.pbar { position: relative; height: 26px; border-radius: 8px; background: color-mix(in srgb, var(--text) 6%, transparent); overflow: hidden; }
+.pbar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; background: linear-gradient(90deg, #2b3dff, #7a5cff); opacity: .85; }
+.pbar em { position: absolute; right: 8px; top: 0; bottom: 0; display: flex; align-items: center; font-style: normal; font-size: 13px; font-weight: 700; color: #fff; }
+.herolink { display: inline-block; margin-top: 10px; color: #fff; font-weight: 700; text-decoration: none; padding: 10px 14px; border-radius: 999px; background: rgb(255 255 255 / .18); }
+/* ---- チェックリスト */
+.ck-group { margin-top: 14px; }
+.ck-title { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+.ck { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.ck input { position: absolute; opacity: 0; pointer-events: none; }
+.ck .box { flex: 0 0 24px; width: 24px; height: 24px; border-radius: 8px; border: 2px solid var(--btn-line); background: var(--btn-bg); position: relative; }
+.ck.on .box { background: linear-gradient(135deg, #2b3dff, #7a5cff); border-color: transparent; }
+.ck.on .box::after { content: ""; position: absolute; left: 7px; top: 3px; width: 6px; height: 12px; border: solid #fff; border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); }
+.ck.on .ck-text { color: var(--muted); text-decoration: line-through; }
+.ck-text { flex: 1; font-size: 15px; line-height: 1.4; }
+.ck-del { min-height: 36px; min-width: 36px; padding: 0; border-radius: 50%; font-size: 18px; }
+.bar.mg { position: relative; height: 12px; overflow: visible; }
+.bar.mg i { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--text); opacity: .7; }

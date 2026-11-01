@@ -146,7 +146,7 @@ async function homeView() {
         <div><span class="big">${daysBetween(t, next.date)}</span> 日</div>
         <div class="muted num">${md(next.date)}・${km(next.distance_m)}km${next.goal_time_s ? `<br>目標 ${dur(next.goal_time_s)} (${pace(next.goal_time_s / (next.distance_m / 1000))}/km)` : ''}</div>
       </div>
-      ${next.goal_time_s ? splitTable(next) : ''}
+      <a class="herolink" href="#/races/${next.id}">ペース表・準備物チェック ›</a>
     </div>
     ${weatherCard(weather)}
     ${goalCard(settings, next)}` : ''}
@@ -158,6 +158,7 @@ async function homeView() {
         <div class="muted">タップで詳細・スプリットを見る ›</div></a>
         <a class="card" href="#/activities?view=week" style="display:block;text-decoration:none;color:inherit"><h2>今週の振り返り ›</h2><div class="muted">日・週・月の評価はここから</div></a>` : '';
     })()}
+    ${await monthGoalCard(t)}
     <div class="card week">
       <h2>今週</h2>
       <div class="row spread num"><span>${km(thisWeek.actual_m)} / ${km(thisWeek.planned_m)} km</span><span class="muted">ポイント練 ${thisWeek.points_done}/${thisWeek.points_planned}</span></div>
@@ -174,14 +175,87 @@ async function homeView() {
 }
 
 /** 等ペースで走った場合の 5km ごとの通過タイム */
-function splitTable(race) {
-  const per = race.goal_time_s / (race.distance_m / 1000);
+/** ペース戦略: 区間ペース (秒/km) を位置 (km) の関数で返す。どれも合計タイムは目標と同じ */
+const PACE_PLANS = {
+  even: { label: '等ペース', note: '最初から最後まで同じペース。いちばん安定します。', f: (per) => () => per },
+  negative: { label: '後半上げる', note: '前半を 4 秒/km 抑え、後半を 4 秒/km 上げる (ネガティブスプリット)。', f: (per) => (k, dist) => per + (k < dist / 2 ? 4 : -4) },
+  late: { label: '30km から勝負', note: '30km までは 3 秒/km 抑え、30km 以降で上げる。給水と脚を残す作戦。', f: (per, dist) => { const a = 3; const b = (a * 30) / (dist - 30); return (k) => (k < 30 ? per + a : per - b); } },
+};
+function paceRows(race, mode) {
+  const dist = race.distance_m / 1000;
+  const per = race.goal_time_s / dist;
+  const f = (PACE_PLANS[mode] || PACE_PLANS.even).f(per, dist);
+  // 1km ずつ積み上げ、最後の端数 (0.195km) も足して、ゴールが目標タイムになるよう微調整
+  let t = 0;
+  const at = new Map();
+  const marks = [];
+  for (let k = 5; k < dist; k += 5) marks.push(k);
+  if (dist > 21.1 && dist < 21.2 + 21) marks.push(dist / 2);
+  marks.sort((x, y) => x - y);
+  let pos = 0;
+  const raw = (to) => { let tt = 0; for (let k = 0; k < to; ) { const step = Math.min(1, to - k); tt += f(k + step / 2, dist) * step; k += step; } return tt; };
+  const scale = race.goal_time_s / raw(dist);
   const rows = [];
-  for (let k = 5; k < race.distance_m / 1000; k += 5) rows.push([`${k}km`, per * k]);
-  rows.push([`${km(race.distance_m, 1)}km`, race.goal_time_s]);
-  return `<details class="splits"><summary>ペース表 (等ペース ${pace(per)}/km)</summary>
-    <div class="split-grid num">${rows.map(([l, t]) => `<span>${l}</span><b>${dur(t)}</b>`).join('')}</div>
-    <p class="muted">30km までは目標ペースを守り、残りで上げるのが基本です。</p></details>`;
+  let prevT = 0, prevK = 0;
+  for (const k of [...marks, dist]) {
+    const tt = raw(k) * scale;
+    const lapPace = (tt - prevT) / (k - prevK);
+    rows.push({ k, t: tt, lap: lapPace, half: Math.abs(k - dist / 2) < 0.01 && dist > 40, fin: k === dist });
+    prevT = tt; prevK = k;
+  }
+  return rows;
+}
+function splitTable(race, mode = 'even') {
+  if (!race.goal_time_s) return '<p class="muted">目標タイムを設定すると、ペース表が出ます。</p>';
+  const rows = paceRows(race, mode);
+  const paces = rows.map((r) => r.lap);
+  const fast = Math.min(...paces), slow = Math.max(...paces);
+  const w = (p) => (slow - fast < 1 ? 78 : 62 + ((slow - p) / (slow - fast)) * 38);
+  return `<div class="ptable">
+    <div class="ph"><span>地点</span><span>通過</span><span>この区間のペース</span></div>
+    ${rows.map((r) => `<div class="pr ${r.half ? 'half' : ''} ${r.fin ? 'fin' : ''}">
+      <span class="pk">${r.fin ? 'ゴール' : r.half ? 'ハーフ' : `${Math.round(r.k)}km`}</span>
+      <b class="num">${dur(r.t)}</b>
+      <span class="pbar"><i style="width:${w(r.lap)}%"></i><em class="num">${pace(r.lap)}</em></span>
+    </div>`).join('')}
+  </div>`;
+}
+
+/** 今月の目標距離。目標が未設定なら、計画の合計を提案する */
+async function monthGoalCard(t) {
+  const month = t.slice(0, 7);
+  const first = `${month}-01`;
+  const lastD = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+  const last = `${month}-${String(lastD).padStart(2, '0')}`;
+  const [goal, plans, acts] = await Promise.all([
+    api(`/goals/${month}`).catch(() => ({ km: null })),
+    api(`/plans?from=${first}&to=${last}`).catch(() => []),
+    api(`/activities?from=${first}&to=${last}`).catch(() => []),
+  ]);
+  const actual = acts.reduce((a, r) => a + r.distance_m, 0) / 1000;
+  const planned = uniqPlans(plans).filter((p) => p.type !== 'rest').reduce((a, p) => a + (p.distance_m || 0), 0) / 1000;
+  const suggest = Math.round(planned / 10) * 10;
+  setTimeout(() => {
+    const set = async (v) => { await api(`/goals/${month}`, { method: 'PUT', body: { km: v } }); route(); };
+    view.querySelectorAll('[data-mg]').forEach((b) => (b.onclick = () => set(Math.max(0, (goal.km || 0) + Number(b.dataset.mg)))));
+    const sg = view.querySelector('#mg-suggest'); if (sg) sg.onclick = () => set(suggest || 200);
+  });
+  const daysLeft = lastD - Number(t.slice(8)) + 1;
+  if (goal.km == null) {
+    return `<div class="card"><h2>${Number(month.slice(5))}月の目標</h2><p class="muted" style="margin-top:0">今月の走行距離の目標を決めておくと、毎日の進み具合が分かります。</p>
+      <p class="num">今月ここまで <b>${actual.toFixed(1)}km</b>${planned ? `・計画の合計 ${Math.round(planned)}km` : ''}</p>
+      <button id="mg-suggest" class="primary wide">${suggest ? `計画に合わせて ${suggest}km に設定` : '200km に設定'}</button></div>`;
+  }
+  const ratio = goal.km ? Math.min(1, actual / goal.km) : 0;
+  const left = Math.max(0, goal.km - actual);
+  // 月の経過に対して、どれだけ進んでいるか
+  const expected = goal.km * ((Number(t.slice(8)) - 1) / lastD);
+  const ahead = actual - expected;
+  return `<div class="card"><div class="row spread"><h2>${Number(month.slice(5))}月の目標</h2><b class="num">${goal.km}km</b></div>
+    <div class="row spread num" style="margin:6px 0"><span><b>${actual.toFixed(1)}</b> km 走った</span><span class="muted">残り ${left.toFixed(0)}km</span></div>
+    <div class="bar mg"><div style="width:${ratio * 100}%"></div><i style="left:${Math.min(100, (expected / goal.km) * 100)}%"></i></div>
+    <p class="muted" style="margin:8px 0 0">${left <= 0 ? '目標を達成しました。' : `あと${daysLeft}日で 1 日平均 ${(left / daysLeft).toFixed(1)}km。ペース配分の目安 (縦線) より ${ahead >= 0 ? `${ahead.toFixed(0)}km 先行` : `${(-ahead).toFixed(0)}km 遅れ`}。`}</p>
+    <div class="chips mini" style="margin-top:10px"><button type="button" class="chip" data-mg="-50">−50</button><button type="button" class="chip" data-mg="-10">−10</button><button type="button" class="chip" data-mg="10">+10</button><button type="button" class="chip" data-mg="50">+50</button></div></div>`;
 }
 
 function weatherCard(w) {
@@ -972,18 +1046,128 @@ async function activityDetailView(id) {
 
 // ---- レース
 
+const CHECK_CATS = { prep: '前日までに', morning: '当日の朝', start: 'スタート前', after: 'ゴール後', other: 'その他 (追加分)' };
+const CHECK_ITEMS = [
+  ['prep', 'p1', '参加案内・ゼッケン引換証・本人確認'],
+  ['prep', 'p2', '本番用シューズ (慣らし済み) と替えの靴下'],
+  ['prep', 'p3', 'ウェア上下・ゼッケンを留める安全ピン'],
+  ['prep', 'p4', '防寒 (捨てるウェア・ポンチョ・手袋)'],
+  ['prep', 'p5', 'GPSウォッチを充電・ペース表を設定'],
+  ['prep', 'p6', 'ジェルなど補給食 (本数を決めて)'],
+  ['prep', 'p7', '塩・電解質タブレット'],
+  ['prep', 'p8', 'ワセリン・絆創膏 (擦れ止め)'],
+  ['prep', 'p9', 'キャップ・サングラス'],
+  ['prep', 'p10', '会場・スタート時間・荷物預けの場所を確認'],
+  ['prep', 'p11', '天気予報を見て、ウェアを最終決定'],
+  ['prep', 'p12', '前日は炭水化物中心の食事・早めに就寝'],
+  ['morning', 'm1', 'スタートの 2〜3 時間前に朝食 (消化のよいもの)'],
+  ['morning', 'm2', '水分をとる・トイレを済ませる'],
+  ['morning', 'm3', '荷物を預ける'],
+  ['morning', 'm4', '軽いジョグと動的ストレッチ'],
+  ['start', 's1', 'GPSの電波をつかむ'],
+  ['start', 's2', 'スタート 15 分前に整列・ジェル 1 本目の時間を決める'],
+  ['start', 's3', '捨てウェアを脱ぐタイミングを決める'],
+  ['after', 'a1', '防寒着に着替え、すぐ補給 (水分・糖質・塩分)'],
+  ['after', 'a2', '記録を確認し、Strava に反映'],
+];
+
+async function raceDetailView(id) {
+  const [races, state, weather] = await Promise.all([
+    api('/races'),
+    api(`/checklist/${id}`).catch(() => ({ checked: [], custom: [] })),
+    api('/race-weather').catch(() => null),
+  ]);
+  const r = races.find((x) => x.id === Number(id));
+  if (!r) return '<div class="card error">レースが見つかりません</div>';
+  let mode = 'even';
+  const t = today();
+  const items = [...CHECK_ITEMS.map(([cat, iid, text]) => ({ cat, id: iid, text })), ...(state.custom || [])];
+  const done = () => items.filter((x) => state.checked.includes(x.id)).length;
+  const save = () => api(`/checklist/${id}`, { method: 'PUT', body: state }).catch(() => {});
+
+  const drawChecks = () => {
+    const box = view.querySelector('#checks');
+    if (!box) return;
+    box.innerHTML = Object.entries(CHECK_CATS).map(([cat, label]) => {
+      const list = items.filter((x) => x.cat === cat);
+      if (!list.length) return '';
+      return `<div class="ck-group"><div class="ck-title">${label} <span class="muted num">${list.filter((x) => state.checked.includes(x.id)).length}/${list.length}</span></div>
+        ${list.map((x) => `<label class="ck ${state.checked.includes(x.id) ? 'on' : ''}"><input type="checkbox" data-ck="${x.id}" ${state.checked.includes(x.id) ? 'checked' : ''}><span class="box"></span><span class="ck-text">${esc(x.text)}</span>${x.cat === 'other' ? `<button type="button" class="ck-del" data-del="${x.id}" aria-label="削除">×</button>` : ''}</label>`).join('')}</div>`;
+    }).join('');
+    view.querySelector('#ck-prog').textContent = `${done()} / ${items.length}`;
+    view.querySelector('#ck-bar').style.width = `${(done() / items.length) * 100}%`;
+  };
+  setTimeout(() => {
+    drawChecks();
+    view.querySelector('#checks').addEventListener('change', (e) => {
+      const id2 = e.target.dataset.ck;
+      if (!id2) return;
+      state.checked = e.target.checked ? [...state.checked, id2] : state.checked.filter((x) => x !== id2);
+      drawChecks(); save();
+    });
+    view.querySelector('#checks').addEventListener('click', (e) => {
+      const d = e.target.closest('[data-del]');
+      if (!d) return;
+      e.preventDefault();
+      state.custom = state.custom.filter((x) => x.id !== d.dataset.del);
+      state.checked = state.checked.filter((x) => x !== d.dataset.del);
+      items.splice(0, items.length, ...CHECK_ITEMS.map(([cat, iid, text]) => ({ cat, id: iid, text })), ...state.custom);
+      drawChecks(); save();
+    });
+    view.querySelector('#ck-add').onsubmit = (e) => {
+      e.preventDefault();
+      const inp = view.querySelector('#ck-new');
+      const text = inp.value.trim();
+      if (!text) return;
+      const it = { id: `c${Date.now().toString(36)}`, cat: 'other', text };
+      state.custom = [...(state.custom || []), it];
+      items.push(it);
+      inp.value = '';
+      drawChecks(); save();
+    };
+    view.querySelectorAll('[data-pm]').forEach((b) => (b.onclick = () => {
+      mode = b.dataset.pm;
+      view.querySelectorAll('[data-pm]').forEach((x) => x.classList.toggle('on', x === b));
+      view.querySelector('#pace-out').innerHTML = splitTable(r, mode);
+      view.querySelector('#pace-note').textContent = PACE_PLANS[mode].note;
+    }));
+    view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
+  });
+  const dleft = r.date >= t ? daysBetween(t, r.date) : null;
+  return `
+    <div class="card hero">
+      <div class="row spread"><h2>${esc(r.name)}</h2><span class="badge">${esc(r.priority)}</span></div>
+      <div class="row spread">
+        <div>${dleft != null ? `<span class="big">${dleft}</span> 日` : '<span class="muted">終了</span>'}</div>
+        <div class="muted num">${md(r.date)}・${km(r.distance_m)}km${r.goal_time_s ? `<br>目標 ${dur(r.goal_time_s)} (${pace(r.goal_time_s / (r.distance_m / 1000))}/km)` : ''}</div>
+      </div>
+    </div>
+    ${weather && weather.race === r.name ? weatherCard(weather) : ''}
+    <div class="card"><h2>ペース表</h2>
+      ${r.goal_time_s ? `<div class="chips" style="margin-bottom:10px">${Object.entries(PACE_PLANS).map(([k, v]) => `<button type="button" class="chip ${k === 'even' ? 'on' : ''}" data-pm="${k}">${v.label}</button>`).join('')}</div>
+      <p class="muted" id="pace-note" style="margin-top:0">${PACE_PLANS.even.note}</p>` : ''}
+      <div id="pace-out">${splitTable(r, 'even')}</div>
+    </div>
+    <div class="card"><div class="row spread"><h2>準備物チェックリスト</h2><b class="num" id="ck-prog"></b></div>
+      <div class="bar" style="margin:6px 0 14px"><div id="ck-bar" style="width:0"></div></div>
+      <div id="checks"></div>
+      <form id="ck-add" class="row" style="margin-top:14px;gap:8px"><input id="ck-new" placeholder="持ち物を追加 (例: 梅干し)" style="flex:1" maxlength="60"><button class="primary">追加</button></form>
+    </div>
+    <button id="edit-race" class="wide">レースの情報を編集</button>`;
+}
+
 async function racesView() {
   const races = await api('/races');
   const t = today();
   setTimeout(() => {
     view.querySelector('#add-race').onclick = () => editRace({ priority: 'A', distance_m: 42195 });
-    view.querySelectorAll('[data-race]').forEach((el) => (el.onclick = () => editRace(races.find((r) => r.id === Number(el.dataset.race)))));
+    view.querySelectorAll('[data-race]').forEach((el) => (el.onclick = () => (location.hash = `#/races/${el.dataset.race}`)));
   });
   const row = (r) => {
     const goalPace = r.goal_time_s ? pace(r.goal_time_s / (r.distance_m / 1000)) : null;
     const diff = r.goal_time_s && r.result_time_s ? r.result_time_s - r.goal_time_s : null;
     return `<li data-race="${r.id}" style="cursor:pointer">
-      <div class="row spread"><span><span class="badge">${esc(r.priority)}</span> ${esc(r.name)}</span><span class="muted num">${r.date}</span></div>
+      <div class="row spread"><span><span class="badge">${esc(r.priority)}</span> ${esc(r.name)}</span><span class="muted num">${r.date} ›</span></div>
       <div class="muted num">${km(r.distance_m, 3)}km・目標 ${dur(r.goal_time_s)}${goalPace ? ` (${goalPace}/km)` : ''}${r.date >= t ? `・あと${daysBetween(t, r.date)}日` : ''}</div>
       ${r.result_time_s ? `<div class="num">結果 <strong>${dur(r.result_time_s)}</strong>${diff != null ? ` <span class="score ${diff <= 0 ? 'good' : 'bad'}">${diff <= 0 ? '-' : '+'}${dur(Math.abs(diff))}</span>` : ''}${r.activity_id ? ` <a href="#/activities/${r.activity_id}">記録</a>` : ''}</div>` : ''}
     </li>`;
@@ -1441,7 +1625,7 @@ async function route() {
     const html =
       tab === 'plans' ? await plansView(params)
       : tab === 'activities' ? (parts[1] ? await activityDetailView(parts[1]) : await activitiesView(params))
-      : tab === 'races' ? await racesView()
+      : tab === 'races' ? (parts[1] ? await raceDetailView(parts[1]) : await racesView())
       : tab === 'shoes' ? await shoesView()
       : tab === 'settings' ? await settingsView()
       : await homeView();
