@@ -344,3 +344,5 @@ ul.advice li { padding: 10px 12px 10px 14px; border-radius: 12px; background: va
 ul.advice li.warn { border-left-color: var(--c-m); }
 ul.advice li.bad { border-left-color: var(--bad); }
 ul.advice li.info { border-left-color: var(--accent); }
+
+.actual-mini { text-decoration: none; color: var(--text); white-space: nowrap; }
