@@ -272,11 +272,12 @@ api.get('/trend', async (c) => {
   const { results } = await c.env.DB.prepare(
     'SELECT date, distance_m, moving_time_s, avg_hr FROM activities WHERE date >= ?',
   ).bind(first).all<{ date: string; distance_m: number; moving_time_s: number; avg_hr: number | null }>();
-  const out = Array.from({ length: weeks }, (_, i) => ({ week: addDays(first, i * 7), km: 0, tl: 0 }));
+  const out = Array.from({ length: weeks }, (_, i) => ({ week: addDays(first, i * 7), km: 0, tl: 0, runs: 0 }));
   for (const r of results) {
     const i = Math.floor(daysSpan(first, r.date) - 1) / 7 | 0;
     if (out[i]) {
       out[i].km += r.distance_m / 1000;
+      out[i].runs += 1;
       out[i].tl += trainingLoad(r.moving_time_s, r.avg_hr, lthr);
     }
   }
