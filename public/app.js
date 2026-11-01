@@ -257,7 +257,8 @@ async function plansView(params) {
     }));
     wirePrefs(view, settings);
     wireAutoPlan(view);
-    view.querySelector('#bulk-toggle').onclick = () => view.querySelector('#bulk-box').classList.toggle('hidden');
+    wireTools(view);
+    wireDrag(view, plans, ws);
     view.querySelector('#bulk-go').onclick = async () => {
       const out = view.querySelector('#bulk-out');
       try {
@@ -276,6 +277,13 @@ async function plansView(params) {
     };
   });
 
+  const prefsOf = settings.plan_prefs;
+  const dayTag = (d) => {
+    const wd = new Date(d + 'T00:00:00').getDay();
+    if (prefsOf.blocked.includes(d)) return '<span class="tag">予定あり</span>';
+    if (prefsOf.rest_days.includes(wd)) return '<span class="tag">休み</span>';
+    return '';
+  };
   return `
     <div class="row spread" style="margin-bottom:8px">
       <a class="btn" href="#/plans?week=${addDays(ws, -7)}">‹ 前週</a>
@@ -284,40 +292,109 @@ async function plansView(params) {
     </div>
     <div class="card">
       <div class="row spread num"><span>計画 ${km(total)}km・実績 ${km(actual)}km</span><button id="copy-week">この週を翌週へコピー</button></div>
+      <p class="muted hint" style="margin:10px 0 0">左の「⠿」を押したまま別の日へ動かすと、その日と予定が入れ替わります。メニューをタップすると中身を直せます。</p>
     </div>
-    <div class="card" id="prefs-card"><h2>週の基本構成</h2><div id="prefs-body"></div></div>
-    <div class="card" id="auto-card">
-      <button id="auto-toggle">実績と目標から計画を自動で作る</button>
-      <div id="auto-box" class="hidden" style="margin-top:12px">
-        <p class="muted">直近4週間の走行距離と、先週の達成度、レースの目標ペースから、レース当日までの毎日のメニューを作ります。</p>
+    <div class="card" id="cal">
+      ${days.map((d) => {
+        const dp = plans.filter((p) => p.date === d);
+        return `
+        <div class="week-day ${d === t ? 'today' : ''}" data-day="${d}">
+          <div class="daycol">${dp.length ? '<span class="grip" data-grip="' + d + '" aria-label="ドラッグして入れ替え">⠿</span>' : '<span class="grip off"></span>'}<div><strong>${md(d)}</strong><div class="muted">${dow(d)}</div>${dayTag(d)}</div></div>
+          <div>
+            ${dp.map((p) => planLine(p, true)).join('')}
+            ${weekActs.filter((a) => a.date === d).map(actLine).join('')}
+            ${dayDiff(d, dp, weekActs.filter((a) => a.date === d))}
+            <button data-add="${d}" style="margin-top:4px;font-size:12px">＋ 追加</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    <h2 class="sect">予定を組む</h2>
+    <div class="card tools">
+      <div class="tool-tabs">
+        <button type="button" data-tool="prefs">週の条件</button>
+        <button type="button" data-tool="auto">自動で作る</button>
+        <button type="button" data-tool="bulk">貼り付け</button>
+      </div>
+      <div class="tool-pane hidden" id="pane-prefs"><div id="prefs-body"></div></div>
+      <div class="tool-pane hidden" id="pane-auto">
+        <p class="muted">直近4週間の走行距離と先週の達成度、レースの目標ペースから、レース当日までの毎日のメニューを作ります。</p>
         <label>目標レース<select id="auto-race"></select></label>
         <label class="row"><input type="checkbox" id="auto-over"> すでにある計画を置き換える (走った日の計画は残します)</label>
         <div class="row"><button id="auto-preview" class="primary">プレビュー</button><button id="auto-commit" class="hidden">この計画を登録</button></div>
         <div id="auto-out"></div>
       </div>
-    </div>
-    <div class="card">
-      <button id="bulk-toggle">メニューを貼り付けて登録</button>
-      <div id="bulk-box" class="hidden" style="margin-top:8px">
+      <div class="tool-pane hidden" id="pane-bulk">
         <p class="muted">Claude が作った JSON を貼り付けます。</p>
         <textarea id="bulk-text" rows="8" style="width:100%" placeholder='[{"date":"2026-11-03","type":"jog","distance_m":8000,"notes":"..."}]'></textarea>
         <label class="row"><input type="checkbox" id="bulk-replace"> 期間内の既存メニューを置き換える</label>
         <div class="row"><button id="bulk-go" class="primary">登録</button></div>
         <p id="bulk-out"></p>
       </div>
-    </div>
-    <div class="card">
-      ${days.map((d) => `
-        <div class="week-day ${d === t ? 'today' : ''}">
-          <div><strong>${md(d)}</strong><div class="muted">${dow(d)}</div></div>
-          <div>
-            ${plans.filter((p) => p.date === d).map((p) => planLine(p, true)).join('')}
-            ${weekActs.filter((a) => a.date === d).map(actLine).join('')}
-            ${dayDiff(d, plans.filter((p) => p.date === d), weekActs.filter((a) => a.date === d))}
-            <button data-add="${d}" style="margin-top:4px;font-size:12px">＋ 追加</button>
-          </div>
-        </div>`).join('')}
     </div>`;
+}
+
+/** 「週の条件」「自動で作る」「貼り付け」の切り替え (選んだ1つだけ開く) */
+function wireTools(root) {
+  const tabs = root.querySelectorAll('[data-tool]');
+  tabs.forEach((b) => (b.onclick = async () => {
+    const was = b.classList.contains('on');
+    tabs.forEach((x) => x.classList.remove('on'));
+    root.querySelectorAll('.tool-pane').forEach((x) => x.classList.add('hidden'));
+    if (was) return;
+    b.classList.add('on');
+    root.querySelector('#pane-' + b.dataset.tool).classList.remove('hidden');
+    if (b.dataset.tool === 'auto') await root._loadRaces();
+  }));
+}
+
+/** 日ごとのメニューをドラッグで入れ替え (指でもマウスでも動く) */
+function wireDrag(root, plans, ws) {
+  const cal = root.querySelector('#cal');
+  const dayAt = (x, y) => document.elementsFromPoint(x, y).map((e) => e.closest?.('.week-day')).find((e) => e && cal.contains(e));
+  cal.querySelectorAll('[data-grip]').forEach((g) => {
+    g.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      const from = g.dataset.grip;
+      const src = g.closest('.week-day');
+      const ghost = document.createElement('div');
+      ghost.className = 'drag-ghost';
+      ghost.textContent = `${md(from)}(${dow(from)}) のメニュー`;
+      document.body.appendChild(ghost);
+      src.classList.add('dragging');
+      let over = null;
+      const place = (ev) => { ghost.style.left = ev.clientX + 'px'; ghost.style.top = ev.clientY + 'px'; };
+      place(e);
+      g.setPointerCapture(e.pointerId);
+      const move = (ev) => {
+        place(ev);
+        const d = dayAt(ev.clientX, ev.clientY);
+        if (over && over !== d) over.classList.remove('drop');
+        over = d && d !== src ? d : null;
+        if (over) over.classList.add('drop');
+        const m = 70;
+        if (ev.clientY < m) window.scrollBy(0, -12); else if (ev.clientY > innerHeight - 150) window.scrollBy(0, 12);
+      };
+      const end = async (ev) => {
+        g.removeEventListener('pointermove', move); g.removeEventListener('pointerup', end); g.removeEventListener('pointercancel', end);
+        ghost.remove(); src.classList.remove('dragging');
+        cal.querySelectorAll('.drop').forEach((x) => x.classList.remove('drop'));
+        const d = ev.type === 'pointerup' ? dayAt(ev.clientX, ev.clientY) : null;
+        if (!d || d === src) return;
+        const to = d.dataset.day;
+        const a = plans.filter((p) => p.date === from);
+        const b = plans.filter((p) => p.date === to);
+        const label = b.length ? `${md(from)}と${md(to)}のメニューを入れ替えます` : `${md(from)}のメニューを${md(to)}へ移します`;
+        if (!confirm(label)) return;
+        try {
+          const put = (p, date) => api(`/plans/${p.id}`, { method: 'PUT', body: { ...p, date } });
+          await Promise.all([...a.map((p) => put(p, to)), ...b.map((p) => put(p, from))]);
+        } catch (err) { alert(`入れ替えできませんでした: ${err.message}`); }
+        route();
+      };
+      g.addEventListener('pointermove', move); g.addEventListener('pointerup', end); g.addEventListener('pointercancel', end);
+    });
+  });
 }
 
 const WEEKDAYS = [['月', 1], ['火', 2], ['水', 3], ['木', 4], ['金', 5], ['土', 6], ['日', 0]];
@@ -331,12 +408,12 @@ function wirePrefs(root, settings) {
   const chip = (attr, val, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" ${attr}="${val}">${label}</button>`;
   const draw = () => {
     body.innerHTML = `
-      <div class="field"><span class="lbl">ポイント走 (LT・インターバル・Mペース走) 週あたり</span><div class="chips">${[0, 1, 2, 3].map((n) => chip('data-pp', n, `${n}回`, prefs.points_per_week === n)).join('')}</div></div>
-      <div class="field"><span class="lbl">ロング走 週あたり</span><div class="chips">${[0, 1].map((n) => chip('data-lp', n, `${n}回`, prefs.long_per_week === n)).join('')}</div></div>
-      <div class="field"><span class="lbl">ロング走の曜日</span><div class="chips">${WEEKDAYS.map(([l, n]) => chip('data-ld', n, l, prefs.long_day === n)).join('')}</div></div>
-      <div class="field"><span class="lbl">毎週の休養日 (複数選べます)</span><div class="chips">${WEEKDAYS.map(([l, n]) => chip('data-rd', n, l, prefs.rest_days.includes(n))).join('')}</div></div>
-      <div class="field"><span class="lbl">予定があって走れない日 (今後2週間)</span><div class="chips">${next14.map((d) => chip('data-bl', d, `${dow(d)}${Number(d.slice(8))}`, prefs.blocked.includes(d))).join('')}</div></div>
-      <button type="button" id="regen" class="primary wide">今週の残りをこの条件で作り直す</button>
+      <div class="field"><span class="lbl">きつい練習の回数 (1週間あたり)</span><span class="sub">LT走・インターバル・Mペース走など</span><div class="chips">${[0, 1, 2, 3].map((n) => chip('data-pp', n, `${n}回`, prefs.points_per_week === n)).join('')}</div></div>
+      <div class="field"><span class="lbl">長く走る日の回数 (1週間あたり)</span><span class="sub">ロング走</span><div class="chips">${[0, 1].map((n) => chip('data-lp', n, `${n}回`, prefs.long_per_week === n)).join('')}</div></div>
+      <div class="field"><span class="lbl">長く走る曜日</span><div class="chips">${WEEKDAYS.map(([l, n]) => chip('data-ld', n, l, prefs.long_day === n)).join('')}</div></div>
+      <div class="field"><span class="lbl">毎週、走らない曜日</span><span class="sub">複数選べます</span><div class="chips">${WEEKDAYS.map(([l, n]) => chip('data-rd', n, l, prefs.rest_days.includes(n))).join('')}</div></div>
+      <div class="field"><span class="lbl">今回だけ走れない日</span><span class="sub">仕事や用事がある日 (今後2週間)</span><div class="chips">${next14.map((d) => chip('data-bl', d, `${Number(d.slice(5, 7))}/${Number(d.slice(8))}(${dow(d)})`, prefs.blocked.includes(d))).join('')}</div></div>
+      <button type="button" id="regen" class="primary wide">この条件で今週の残りを作り直す</button>
       <p class="muted" id="prefs-msg"></p>`;
   };
   const save = async () => {
@@ -369,8 +446,7 @@ function wirePrefs(root, settings) {
 
 function wireAutoPlan(root) {
   const q = (id) => root.querySelector(id);
-  q('#auto-toggle').onclick = async () => {
-    q('#auto-box').classList.toggle('hidden');
+  root._loadRaces = async () => {
     const sel = q('#auto-race');
     if (sel.options.length) return;
     const races = (await api('/races')).filter((r) => r.date >= today());
