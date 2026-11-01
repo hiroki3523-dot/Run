@@ -169,11 +169,11 @@ function goalCard(settings, next) {
   </div>`;
 }
 
-function planLine(p) {
+function planLine(p, hideActual = false) {
   const target = p.type === 'rest' ? '' : [p.distance_m ? `${km(p.distance_m)}km` : '', p.pace_min_s ? `${pace(p.pace_min_s)}-${pace(p.pace_max_s)}` : '', p.hr_max ? `≤${p.hr_max}bpm` : ''].filter(Boolean).join(' ');
   return `<div class="plan-item" data-plan="${p.id}">
     <div><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type]}</span> <span class="num">${target}</span>${p.notes ? `<div class="muted">${esc(p.notes)}</div>` : ''}</div>
-    <div class="num">${p.activity_id ? `<a href="#/activities/${p.activity_id}">${km(p.actual_distance_m)}km ${scoreHtml(p.score)}</a>` : ''}</div>
+    <div class="num">${p.activity_id && !hideActual ? `<a href="#/activities/${p.activity_id}">${km(p.actual_distance_m)}km ${scoreHtml(p.score)}</a>` : ''}</div>
   </div>`;
 }
 
@@ -207,8 +207,34 @@ async function plansView(params) {
     api(`/activities?from=${ws}&to=${addDays(ws, 6)}`),
     api('/settings'),
   ]);
-  const linkedIds = new Set(plans.map((p) => p.activity_id).filter(Boolean));
   const actLine = (a) => `<a class="actual" href="#/activities/${a.id}"><span>実績 ${km(a.distance_m, 1)}km ${pace(a.moving_time_s / (a.distance_m / 1000))}/km${a.avg_hr ? ` ${Math.round(a.avg_hr)}bpm` : ''}</span>${scoreHtml(a.score)}</a>`;
+  /** 1 日ぶんの 計画 と 実績 の差 */
+  const dayDiff = (d, dayPlans, dayActs) => {
+    const runPlans = dayPlans.filter((p) => p.type !== 'rest');
+    const planned = runPlans.reduce((a, p) => a + (p.distance_m || 0), 0);
+    const done = dayActs.reduce((a, r) => a + r.distance_m, 0);
+    const past = d < today();
+    if (runPlans.length === 0) {
+      return dayPlans.length && done > 0 ? `<div class="diff over">休養日に ${km(done, 1)}km 走りました</div>` : '';
+    }
+    if (done === 0) return past ? '<div class="diff gap">未実施</div>' : '';
+    const diff = done - planned;
+    const rate = planned ? Math.abs(diff) / planned : 0;
+    const cls = !planned || rate <= 0.1 ? 'ok' : diff < 0 ? 'gap' : 'over';
+    let paceNote = '';
+    if (runPlans.length === 1 && dayActs.length === 1) {
+      const p = runPlans[0];
+      const band = p.pace_min_s ? { min: p.pace_min_s, max: p.pace_max_s } : settings.paces?.[p.type];
+      const avg = dayActs[0].moving_time_s / (dayActs[0].distance_m / 1000);
+      if (band) {
+        paceNote = avg < band.min - 1 ? ` ・平均ペースは目安より ${Math.round(band.min - avg)}秒/km 速い`
+          : avg > band.max + 1 ? ` ・平均ペースは目安より ${Math.round(avg - band.max)}秒/km 遅い`
+          : ' ・平均ペースは目安の範囲内';
+      }
+    }
+    const sign = diff >= 0 ? '+' : '−';
+    return `<div class="diff ${cls}">差 ${sign}${km(Math.abs(diff), 1)}km${planned ? ` (計画 ${km(planned, 1)}km → 実績 ${km(done, 1)}km)` : ''}${paceNote}</div>`;
+  };
   const days = [...Array(7)].map((_, i) => addDays(ws, i));
   const t = today();
   const total = plans.reduce((a, p) => a + (p.distance_m || 0), 0);
@@ -263,8 +289,9 @@ async function plansView(params) {
         <div class="week-day ${d === t ? 'today' : ''}">
           <div><strong>${md(d)}</strong><div class="muted">${dow(d)}</div></div>
           <div>
-            ${plans.filter((p) => p.date === d).map(planLine).join('')}
-            ${weekActs.filter((a) => a.date === d && !linkedIds.has(a.id)).map(actLine).join('')}
+            ${plans.filter((p) => p.date === d).map((p) => planLine(p, true)).join('')}
+            ${weekActs.filter((a) => a.date === d).map(actLine).join('')}
+            ${dayDiff(d, plans.filter((p) => p.date === d), weekActs.filter((a) => a.date === d))}
             <button data-add="${d}" style="margin-top:4px;font-size:12px">＋ 追加</button>
           </div>
         </div>`).join('')}
