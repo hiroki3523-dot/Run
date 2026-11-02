@@ -12,6 +12,7 @@ import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
 import { corosDisconnect, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns } from './insights';
+import { applyDerived } from './derive-apply';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
 import { getBackfill, startBackfill, stopBackfill } from './backfill';
@@ -60,6 +61,9 @@ api.put('/settings', async (c) => {
     body.predict = { source: pr.source === 'manual' ? 'manual' : pr.source === 'coros' ? 'coros' : 'auto', full_s: fs >= 3600 && fs <= 8 * 3600 ? Math.round(fs) : null };
   }
   if (body.source !== undefined) body.source = body.source === 'coros' ? 'coros' : 'strava';
+  if (body.paces_auto !== undefined) body.paces_auto = !!body.paces_auto;
+  // 手でペース帯などを保存したら、自動はやめる
+  if (body.paces && body.paces_auto === undefined) body.paces_auto = false;
   if ((body as any).checklist_template !== undefined) {
     const t = (body as any).checklist_template;
     (body as any).checklist_template = Array.isArray(t)
@@ -74,6 +78,8 @@ api.put('/settings', async (c) => {
     body.weather_place = { name: String(w.name || '現在地').slice(0, 30), lat: Math.round(lat * 1000) / 1000, lon: Math.round(lon * 1000) / 1000 };
   }
   await saveSettings(c.env, { ...(await getSettings(c.env)), ...body });
+  // 自動のときは、出どころ (予測・取り込み元) を変えたらすぐ決め直す
+  if ((await getSettings(c.env)).paces_auto !== false && (body.predict || body.source || body.paces_auto)) await applyDerived(c.env, false).catch(() => null);
   return c.json(await getSettings(c.env));
 });
 
@@ -106,6 +112,7 @@ api.post('/races', async (c) => {
   )
     .bind(...raceValues(await c.req.json()))
     .first();
+  await applyDerived(c.env, false).catch(() => null); // M ペース・レースのペース帯は目標タイムから
   return c.json(row, 201);
 });
 
@@ -116,6 +123,7 @@ api.put('/races/:id', async (c) => {
   )
     .bind(...raceValues(await c.req.json()), c.req.param('id'))
     .first();
+  await applyDerived(c.env, false).catch(() => null);
   return row ? c.json(row) : c.notFound();
 });
 
@@ -623,6 +631,9 @@ api.get('/coros/debug', async (c) => {
   const r = await corosTool(c.env, tool, args);
   return c.json({ text: r.text.slice(0, 6000), structured: r.structured });
 });
+
+/** 評価の基準をデータから決めて保存 (自動のとき) */
+api.post('/settings/derive', async (c) => c.json(await applyDerived(c.env, true)));
 
 /** 実績から見た課題と、次にやる練習 (目標タイムのある次のレースに向けて) */
 api.get('/insights', async (c) => {

@@ -2277,7 +2277,7 @@ async function settingsView() {
           <p class="muted coros-msg" style="margin:6px 0 0"></p>
           <details class="coros-dbg"><summary>うまく取り込めないとき (診断)</summary>
             <div class="row"><button type="button" data-dbg="querySportRecords">ランの一覧</button><button type="button" data-dbg="queryFitnessAssessmentOverview">体力評価</button><button type="button" data-probe="1">取得テスト</button><button type="button" data-cs="off" class="danger">連携を解除</button></div>
-            <pre class="coros-raw"></pre></details>`
+            <pre class="coros-raw"></pre><button type="button" class="chip" data-copyraw="1">結果をコピー</button></details>`
           : `<div class="coros-st"><span class="dot"></span><b>COROS は未連携</b></div>
              <a class="btn primary wide" style="margin-top:8px;display:block;text-align:center" href="/auth/coros?key=${encodeURIComponent(getToken())}">COROS と連携</a>
              <p class="muted" style="margin:6px 0 0">COROS のアカウントでログインして「許可」を押すと戻ってきます。申請や費用は不要です。</p>`;
@@ -2287,6 +2287,7 @@ async function settingsView() {
         const b = e.target.closest('button');
         if (!b) return;
         const act = b.dataset.cs, dbg = b.dataset.dbg, probe = b.dataset.probe;
+        if (b.dataset.copyraw) { try { await navigator.clipboard.writeText(box.querySelector('.coros-raw').textContent); msg('コピーしました'); } catch { msg('コピーできませんでした'); } return; }
         b.disabled = true;
         try {
           if (probe) { box.querySelector('.coros-raw').textContent = '調べています (20 秒ほど)…'; const r = await api('/coros/probe'); box.querySelector('.coros-raw').textContent = r.text; }
@@ -2384,6 +2385,12 @@ async function settingsView() {
     });
     run('#open-cal', async () => { location.href = status.calendar_url.replace(/^https?:/, 'webcal:'); return 'カレンダーを開きます'; });
     const sf = view.querySelector('#settings-form');
+    if (sf) sf.querySelectorAll('[data-pa]').forEach((b) => (b.onclick = async () => {
+      b.disabled = true;
+      if (b.dataset.pa === '1') await api('/settings/derive', { method: 'POST' });
+      else await api('/settings', { method: 'PUT', body: { paces_auto: false } });
+      cachedSettings = null; route();
+    }));
     if (sf) sf.onsubmit = async (e) => {
       e.preventDefault();
       const f = new FormData(sf);
@@ -2475,6 +2482,11 @@ async function settingsView() {
     </div>` : ''}
     <form class="card" id="settings-form">
       <h2>評価の基準</h2>
+      <div class="pf-seg pred-seg" style="--n:2;margin-bottom:10px"><button type="button" class="${settings.paces_auto !== false ? 'on' : ''}" data-pa="1">データから自動</button><button type="button" class="${settings.paces_auto === false ? 'on' : ''}" data-pa="0">手で設定</button></div>
+      <p class="muted" style="margin:0 0 12px">${settings.paces_auto !== false
+        ? `${settings.source === 'coros' || settings.predict?.source === 'coros' ? 'COROS の閾値・ゾーン' : '予測タイム'}、次のレースの目標タイム、最近の最大心拍から決めます。COROS の値やレースの目標が変わると自動で直ります。`
+        : '下の値で評価します。数字を直したら保存してください。'}</p>
+      <fieldset ${settings.paces_auto !== false ? 'disabled' : ''} class="sf-fields">
       <div class="grid2">
         <label>最大心拍<input name="max_hr" inputmode="numeric" value="${settings.max_hr}"></label>
         <label>LTHR (閾値心拍)<input name="lthr" inputmode="numeric" value="${settings.lthr}"></label>
@@ -2484,6 +2496,7 @@ async function settingsView() {
       ${Object.entries(settings.paces).map(([k, b]) => `<tr><td>${PLAN_LABELS[k]}</td><td><input name="${k}_min" value="${pace(b.min)}"></td><td><input name="${k}_max" value="${pace(b.max)}"></td></tr>`).join('')}
       </table>
       <p style="margin-top:12px"><button class="primary">保存</button></p>
+      </fieldset>
     </form>` : ''}
     `;
 }

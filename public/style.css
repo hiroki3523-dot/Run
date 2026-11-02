@@ -918,3 +918,6 @@ body::after {
 .ck-add { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .ck-add select { min-height: 44px; border-radius: 12px; }
 .ext-links { display: flex; gap: 14px; white-space: nowrap; }
+.sf-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.sf-fields:disabled { opacity: .6; }
+.sf-fields:disabled button.primary { display: none; }
