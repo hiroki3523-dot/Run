@@ -565,7 +565,16 @@ api.post('/coros/backfill', async (c) => {
   const added = await enqueueCoros(c.env, addDays(today, -n), today);
   return c.json({ added, ...(await corosStatus(c.env)) });
 });
-api.post('/coros/fitness', async (c) => c.json(await syncCorosFitness(c.env)));
+api.post('/coros/fitness', async (c) => {
+  try {
+    const f = await syncCorosFitness(c.env);
+    await kvSet(c.env, 'coros_fitness_err', '');
+    return c.json(f);
+  } catch (e) {
+    await kvSet(c.env, 'coros_fitness_err', (e as Error).message.slice(0, 200));
+    throw e;
+  }
+});
 api.post('/coros/disconnect', async (c) => { await corosDisconnect(c.env); return c.json({ ok: true }); });
 /** 診断用: COROS の応答をそのまま見る (読み取りのツールだけ) */
 api.get('/coros/debug', async (c) => {
