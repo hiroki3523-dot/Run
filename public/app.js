@@ -1044,13 +1044,12 @@ function editPlan(p, settings) {
     const listHtml = () => {
       const simple = !st.steps.length && st.type !== 'rest';
       const def = settings.paces?.[st.type];
-      const poff = def && st.pmin ? Math.max(-30, Math.min(30, st.pmin - def.min)) : 0;
-      const shown = st.pmin ? `${pace(st.pmin)}〜${pace(st.pmax)}` : def ? `標準 ${pace(def.min)}〜${pace(def.max)}` : '-';
+      const pdisp = () => (st.pmin ? `${pace(st.pmin)}〜${pace(st.pmax)}` : def ? `${pace(def.min)}〜${pace(def.max)}` : '-');
       return `${header(p.id ? '計画を編集' : '計画を追加', ['back', '‹ 戻る'], ['save', '保存'])}
       <div class="wk-body">
         <div class="wk-card">
-          <div class="field"><span class="lbl">日</span><div class="chips">${week.map((d) => chip('data-date', d, `${dow(d)} ${Number(d.slice(8))}`, d === st.date)).join('')}</div></div>
-          <div class="field"><span class="lbl">種別</span><div class="chips">${Object.entries(PLAN_LABELS).map(([k, v]) => chip('data-type', k, v, k === st.type)).join('')}</div></div>
+          <div class="field"><span class="lbl">日</span><div class="wk-days">${week.map((d) => `<button type="button" class="wk-day ${d === st.date ? 'on' : ''}" data-date="${d}"><small>${dow(d)}</small><b class="num">${Number(d.slice(8))}</b></button>`).join('')}</div></div>
+          <div class="field"><span class="lbl">種別</span><div class="wk-types">${Object.entries(PLAN_LABELS).map(([k, v]) => `<button type="button" class="wk-type ${k === st.type ? 'on' : ''}" data-type="${k}" style="--tc:var(--c-${k})"><i></i>${esc(v)}</button>`).join('')}</div></div>
         </div>
         ${st.type === 'rest' ? '' : st.steps.length ? `
           <div class="wk-steps">
@@ -1063,13 +1062,15 @@ function editPlan(p, settings) {
           </div>
           <div class="step-total num">合計 約 ${(stepsTotalM(st.steps) / 1000).toFixed(1)}km</div>` : `
           <div class="wk-card">
-            <div class="field"><span class="lbl">距離</span><div class="slide"><button type="button" class="wk-pick inline" id="km-out" data-wheel="km">${(st.km ?? 10).toFixed(1)} <small>km</small></button><input type="range" data-rng="km" min="3" max="42" step="0.5" value="${st.km ?? 10}"></div></div>
-            <div class="field"><span class="lbl">ペース</span><div class="slide"><b class="num" id="pace-out">${shown}</b><input type="range" data-rng="pace" min="-30" max="30" step="5" value="${poff}"></div>
-              <p class="muted zone-note" style="margin:2px 0 0">左へ速く、右へ遅く。真ん中が標準です。</p></div>
+            <div class="wk-tiles">
+              <button type="button" class="wk-tile" data-wheel="km"><small>距離</small><b class="num">${(st.km ?? 10).toFixed(1)}<span>km</span></b></button>
+              <button type="button" class="wk-tile" data-wheel="prange"><small>ペース${st.pmin ? '' : ' (標準)'}</small><b class="num">${pdisp()}<span>/km</span></b></button>
+            </div>
+            <p class="muted zone-note" style="margin:8px 0 0">タップして選びます。${st.pmin ? '<button type="button" class="linkbtn" data-pdef="1">ペースを標準に戻す</button>' : ''}</p>
           </div>
-          <div class="wk-card"><span class="lbl">アップ・ダウンを分けて組むときは</span>
-            <div class="chips" style="margin-top:8px">${Object.keys(STEP_PRESETS).map((n) => chip('data-preset', n, n, false)).join('')}</div>
-            ${plus(0)}</div>`}
+          <div class="wk-card"><span class="lbl">アップ・メイン・ダウンで組む</span>
+            <div class="wk-presets">${Object.keys(STEP_PRESETS).map((n) => `<button type="button" class="wk-preset" data-preset="${esc(n)}">${esc(n)}</button>`).join('')}</div>
+            <button type="button" class="wk-own" data-add-at="0"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>自分でステップを組む</button></div>`}
         <div class="wk-card"><div class="field"><span class="lbl">メモ (任意)</span><input name="notes" value="${esc(st.notes)}" placeholder="気をつけたいこと など"></div></div>
         ${p.id ? '<button type="button" class="danger wide" data-act="del">この計画を削除</button>' : ''}
       </div>`;
@@ -1089,16 +1090,14 @@ function editPlan(p, settings) {
       const k = (s) => `${part}:${s}`;
       const rows = [
         row(k('by'), '目標タイプ', t.by === 'dist' ? '距離' : '時間', `<div class="chips">${chip('data-sby', `${part}:dist`, '距離', t.by === 'dist')}${chip('data-sby', `${part}:time`, '時間', t.by === 'time')}</div>`),
-        row(k('val'), '目標', fmtTarget(t), `<button type="button" class="wk-pick" data-wheel="val:${part}">${fmtTarget(t)}<small>タップして細かく指定</small></button><div class="slide"><input type="range" data-rng="sval:${part}" ${t.by === 'dist' ? `min="0.5" max="30" step="0.5" value="${Math.round(t.value / 500) / 2}"` : `min="30" max="3600" step="30" value="${t.value}"`}></div>`),
+        row(k('val'), '目標', fmtTarget(t), `<button type="button" class="wk-pick" data-wheel="val:${part}">${fmtTarget(t)}<small>タップして選ぶ</small></button>`),
       ];
       if (!(sp.kind === 'rest' || (sp.kind === 'interval' && part === 'rest'))) {
         const b = bandOf(t);
         rows.push(row(k('pace'), 'ペース範囲', paceText(t), `
           <div class="chips">${Object.entries(REFS).map(([r, R]) => chip('data-sref', `${part}:${r}`, `${R.label}ペース`, t.ref === r && !(t.pmin && t.pmax))).join('')}</div>
           <div class="chips">${ZONES.map((Z, z) => chip('data-szone', `${part}:${z}`, Z.short, !t.ref && !(t.pmin && t.pmax) && t.zone === z)).join('')}</div>
-          <div class="slide pr-range"><div class="wk-pick2"><button type="button" class="wk-pick" data-wheel="pmin:${part}"><small>速い側</small>${pace(Math.round(b[0]))}</button><button type="button" class="wk-pick" data-wheel="pmax:${part}"><small>遅い側</small>${pace(Math.round(b[1]))}</button></div><span class="lbl">ざっくり動かす (5秒ずつ)</span>
-            <input type="range" data-rng="spmin:${part}" min="170" max="480" step="5" value="${Math.round(b[0])}" aria-label="速い側">
-            <input type="range" data-rng="spmax:${part}" min="170" max="480" step="5" value="${Math.round(b[1])}" aria-label="遅い側"></div>`));
+          <div class="wk-pick2"><button type="button" class="wk-pick" data-wheel="pmin:${part}"><small>速い側</small>${pace(Math.round(b[0]))}</button><button type="button" class="wk-pick" data-wheel="pmax:${part}"><small>遅い側</small>${pace(Math.round(b[1]))}</button></div>`));
       }
       return rows.join('');
     };
@@ -1107,7 +1106,7 @@ function editPlan(p, settings) {
       if (!sp) return listHtml();
       const kindRow = sp.kind === 'interval' ? '' : row('kind', 'ステップ', STEP_KINDS[sp.kind], `<div class="chips">${['warmup', 'work', 'rest', 'cooldown'].map((k) => chip('data-skind', k, STEP_KINDS[k], sp.kind === k)).join('')}</div>`);
       const body = sp.kind === 'interval'
-        ? `${row('reps', '本数', `${sp.reps}本`, `<button type="button" class="wk-pick" data-wheel="reps">${sp.reps}本<small>タップして指定</small></button><div class="slide"><input type="range" data-rng="reps" min="1" max="20" step="1" value="${sp.reps}"></div>`)}
+        ? `${row('reps', '本数', `${sp.reps}本`, `<button type="button" class="wk-pick" data-wheel="reps">${sp.reps}本<small>タップして選ぶ</small></button>`)}
            <div class="wk-sub">走る</div><div class="wk-group">${targetRows(sp, 'work', i)}</div>
            <div class="wk-sub">休憩</div><div class="wk-group">${targetRows(sp, 'rest', i)}</div>`
         : `<div class="wk-group">${kindRow}</div><div class="wk-group">${targetRows(sp, '', i)}</div>`;
@@ -1194,6 +1193,15 @@ function editPlan(p, settings) {
         if (k === 'reps') {
           const r = await wheelPick('本数', [{ items: range(1, 30), value: st.steps[scr.i].reps, unit: '本' }]);
           if (r) st.steps[scr.i].reps = r[0];
+        } else if (k === 'prange') {
+          const def = settings.paces?.[st.type] || { min: 300, max: 345 };
+          const lo = st.pmin || def.min, hi = st.pmax || def.max;
+          const sec = range(0, 59, (x) => String(x).padStart(2, '0'));
+          const r = await wheelPick('ペース', [
+            { items: range(2, 9), value: Math.floor(lo / 60), unit: ':' }, { items: sec, value: lo % 60, unit: '〜' },
+            { items: range(2, 9), value: Math.floor(hi / 60), unit: ':' }, { items: sec, value: hi % 60 },
+          ]);
+          if (r) { let a = r[0] * 60 + r[1], b = r[2] * 60 + r[3]; if (a > b) [a, b] = [b, a]; st.pmin = a; st.pmax = b; }
         } else if (k === 'km') {
           const m = await pickDist('距離', Math.round((st.km ?? 10) * 1000));
           if (m != null) { st.km = m / 1000; if (!st.steps.length) st.pmin = st.pmin; }
@@ -1208,7 +1216,8 @@ function editPlan(p, settings) {
             if (v != null) { let a = k === 'pmin' ? v : lo, b = k === 'pmax' ? v : hi; if (a > b) { if (k === 'pmin') b = a; else a = b; } tt.pmin = Math.round(a); tt.pmax = Math.round(b); tt.ref = null; }
           }
         }
-      } else if (d.date) st.date = d.date;
+      } else if (d.pdef) { st.pmin = st.pmax = null; }
+      else if (d.date) st.date = d.date;
       else if (d.type) {
         st.type = d.type;
         const PRE = { m: 'Mペース走', lt: 'LT走', interval: 'インターバル' };
