@@ -170,18 +170,9 @@ async function homeView() {
     </div>
     ${weatherCard(weather)}
     ${goalCard()}` : ''}
-    ${(() => {
-      const srt = [...acts].sort((a, b) => b.date.localeCompare(a.date) || (b.start_date_local || '').localeCompare(a.start_date_local || '') || b.id - a.id);
-      // その日のランが複数あるときは、メイン (アップ・ダウンではない方) を出す
-      const l = srt.length ? (srt.filter((x) => x.date === srt[0].date).find((x) => x.role === 'work') || srt[0]) : null;
-      return l ? `<a class="card" href="#/activities/${l.id}" style="display:block;text-decoration:none;color:inherit">
-        <div class="row spread"><h2>最新ランの評価</h2>${scoreHtml(l.score)}</div>
-        <div class="muted num">${md(l.date)}(${dow(l.date)}) ${km(l.distance_m, 2)}km・${pace(l.moving_time_s / (l.distance_m / 1000))}/km${l.avg_hr ? `・${Math.round(l.avg_hr)}bpm` : ''}</div>
-        <div class="muted">タップで詳細・スプリットを見る ›</div></a>` : '';
-    })()}
     ${await monthGoalCard(t)}
     <div class="card">
-      <h2>週間距離${next ? `と、${esc(next.name)}まで` : ''}</h2>
+      <h2>週間距離</h2>
       ${weeklyChart(summary)}
     </div>
     <div class="card news"><h2>ランニングニュース</h2><div id="news-list"><p class="muted">読み込み中…</p></div></div>`;
@@ -458,13 +449,16 @@ async function loadInsights() {
     const r = await api('/insights');
     const g = r.gap_s;
     const head = r.race ? `<div class="ins-head">
-        <div><small>${esc(r.race.name)}の目標</small><b class="num">${r.race.goal_s ? dur(r.race.goal_s) : '未設定'}</b></div>
-        <div><small>COROS 予測</small><b class="num">${r.predicted_s ? dur(r.predicted_s) : '-'}</b></div>
+        <div><small>目標 (${esc(r.race.name)})</small><b class="num">${r.race.goal_s ? dur(r.race.goal_s) : '未設定'}</b></div>
+        <div><small>${esc(r.predicted_label || '予測')}</small><b class="num">${r.predicted_s ? dur(r.predicted_s) : '-'}</b></div>
         ${g != null ? `<span class="ins-gap ${g <= 0 ? 'ok' : 'ng'}">${g <= 0 ? `${dur(-g)} 余裕` : `あと ${dur(g)}`}</span>` : ''}
       </div>` : '<p class="muted">レースと目標タイムを登録すると、目標との差が出ます。</p>';
+    const issues = r.items.filter((x) => x.level !== 'ok').sort((x, y) => (x.level === 'bad' ? 0 : 1) - (y.level === 'bad' ? 0 : 1)).slice(0, 3);
+    const row = (x) => `<div class="ins-row"><i style="background:${LV_COLOR[x.level]}"></i><span>${esc(x.label)}</span><b class="num">${esc(x.value)}<small> / ${esc(x.target)}</small></b></div>`;
     box.innerHTML = `${head}
-      <div class="ins-list">${r.items.map((x) => `<div class="ins-row"><i style="background:${LV_COLOR[x.level]}"></i><span>${esc(x.label)}</span><b class="num">${esc(x.value)}<small> / ${esc(x.target)}</small></b></div>`).join('')}</div>
-      ${r.actions.length ? `<div class="ins-act"><b>次にやる練習</b><ol>${r.actions.map((a) => `<li>${esc(a)}</li>`).join('')}</ol></div>` : ''}`;
+      ${issues.length ? `<div class="ins-sub">課題</div><div class="ins-list">${issues.map(row).join('')}</div>` : '<p class="ins-okmsg">大きな課題はありません。今の練習を続けましょう。</p>'}
+      ${r.actions[0] ? `<div class="ins-next"><b>次の練習</b><span>${esc(r.actions[0])}</span></div>` : ''}
+      <details class="ins-all"><summary>すべての項目</summary><div class="ins-list">${r.items.map(row).join('')}</div></details>`;
   } catch { box.innerHTML = '<p class="muted">読み込めませんでした。</p>'; }
 }
 
@@ -560,17 +554,29 @@ function planLine(p, hideActual = false, mark = '') {
   </div>`;
 }
 
+/** 週ごとの距離 (棒)。上に km を書き、目盛り線を引く。先の週は計画 (点線) */
 function weeklyChart(weeks) {
   if (weeks.length === 0) return '<p class="muted">データなし</p>';
-  const max = Math.max(...weeks.map((w) => Math.max(w.planned_m, w.actual_m)), 1);
-  const h = (m) => `${(m / max) * 90}px`;
-  return `<div class="chart">${weeks.map((w) => `
-    <a class="col" href="#/activities?view=week&date=${w.week}" title="${md(w.week)}週 実績 ${km(w.actual_m)}km / 計画 ${km(w.planned_m)}km">
-      ${w.planned_m ? `<div class="plan" style="height:${h(w.planned_m)}"></div>` : ''}
-      <div class="act" style="height:${h(w.actual_m)}"></div>
-      <div class="lbl">${md(w.week)}</div>
-    </a>`).join('')}</div>
-    <p class="muted hint">棒をタップすると、その週の評価が開きます</p>`;
+  const ws = weekStart(today());
+  const top = Math.max(...weeks.map((w) => Math.max(w.planned_m, w.actual_m)), 1) / 1000;
+  const step = top > 120 ? 50 : top > 60 ? 20 : 10;
+  const max = Math.ceil(top / step) * step || step;
+  const H = 120;
+  const h = (m) => `${(m / 1000 / max) * H}px`;
+  const grid = [...Array(max / step + 1)].map((_, i) => i * step).map((v) => `<div class="wg" style="bottom:${(v / max) * H + 18}px"><span>${v}</span></div>`).join('');
+  return `<div class="wchart" style="--H:${H}px">${grid}<div class="wcols">${weeks.map((w) => {
+    const future = w.week > ws, cur = w.week === ws;
+    const val = future ? w.planned_m : w.actual_m;
+    const label = cur && w.planned_m ? `${Math.round(w.actual_m / 1000)}/${Math.round(w.planned_m / 1000)}` : val ? Math.round(val / 1000) : '';
+    const bars = future ? `<div class="wplan" style="height:${h(w.planned_m)}"></div>`
+      : cur ? `<div class="wstack" style="height:${h(Math.max(w.planned_m, w.actual_m))}">${w.planned_m ? '<div class="wplan full"></div>' : ''}<div class="wact" style="height:${h(w.actual_m)}"></div></div>`
+      : `<div class="wact" style="height:${h(w.actual_m)}"></div>`;
+    return `<a class="wcol ${cur ? 'cur' : ''} ${future ? 'fut' : ''}" href="#/activities?view=week&date=${w.week}">
+      <span class="wv num">${label}</span>
+      ${bars}
+      <div class="wl">${md(w.week)}</div></a>`;
+  }).join('')}</div></div>
+    <p class="muted hint">km・点線は計画・タップで週の評価</p>`;
 }
 
 function activityList(acts) {
@@ -2179,6 +2185,16 @@ async function settingsView() {
   }
 
   setTimeout(() => {
+    // 予測タイムの出どころ
+    const pc = view.querySelector('#pred-card');
+    if (pc) {
+      const pr = { source: settings.predict?.source || 'auto', full_s: settings.predict?.full_s ?? settings.coros?.predicted_s?.full ?? 11400 };
+      const save = async () => { await api('/settings', { method: 'PUT', body: { predict: pr } }); route(); };
+      pc.querySelectorAll('[data-pred]').forEach((b) => (b.onclick = async () => { pr.source = b.dataset.pred; await save(); }));
+      const tb = pc.querySelector('[data-pred-time]');
+      if (tb) tb.onclick = async () => { const v = await pickGoal('フルの予測タイム', pr.full_s); if (v) { pr.full_s = v; await save(); } };
+      api('/insights').then((r) => { const o = pc.querySelector('#pred-auto'); if (o) o.textContent = r.predicted_s ? `いまの推定: ${dur(r.predicted_s)}` : '推定に使えるランがまだ足りません (心拍つき・5km以上が3本)'; }).catch(() => {});
+    }
     view.querySelector('#token-form').onsubmit = (e) => {
       e.preventDefault();
       setToken(new FormData(e.target).get('token'));
@@ -2307,6 +2323,16 @@ async function settingsView() {
       <p class="muted">ntfy: ${status.ntfy_topic_set ? '設定済み' : '未設定'}・Bark: ${status.bark_set ? '設定済み' : '未設定'}</p>
       <div class="row"><button id="test-notify">テスト通知</button><button id="morning">朝の通知を今すぐ送る</button></div>
     </div>
+    ${settings ? (() => {
+      const src = settings.predict?.source || 'auto';
+      const fs = settings.predict?.full_s ?? settings.coros?.predicted_s?.full ?? 11400;
+      return `<div class="card" id="pred-card"><h2>フルマラソンの予測タイム</h2>
+        <div class="pf-seg pred-seg" style="--n:2"><button type="button" class="${src === 'auto' ? 'on' : ''}" data-pred="auto">Strava から推定</button><button type="button" class="${src === 'manual' ? 'on' : ''}" data-pred="manual">時計の予測を入力</button></div>
+        ${src === 'auto'
+          ? `<p class="muted" style="margin:10px 0 0">直近8週の、心拍つき・5km以上のランのペースと心拍から推定します。最大心拍の設定が正しいほど正確です。</p><p class="num" id="pred-auto" style="margin:6px 0 0"></p>`
+          : `<button type="button" class="wk-tile" data-pred-time style="margin-top:10px;width:100%"><small>COROS・Garmin などの予測 (タップして変更)</small><b class="num">${dur(fs)}</b></button>`}
+      </div>`;
+    })() : ''}
     ${settings.coros ? `<div class="card">
       <h2>COROS の基準 (${esc(settings.coros.updated)})</h2>
       <div class="grid2 num">

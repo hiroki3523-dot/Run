@@ -10,7 +10,7 @@ import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './re
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
-import { buildInsights } from './insights';
+import { buildInsights, predictFromRuns } from './insights';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
 import { getBackfill, startBackfill, stopBackfill } from './backfill';
@@ -52,6 +52,11 @@ api.put('/settings', async (c) => {
       rest_days: [...new Set((pp.rest_days ?? []).map(Number).filter((n) => n >= 0 && n <= 6))],
       blocked: [...new Set((pp.blocked ?? []).filter((d) => isDate(d) && d >= addDays(today, -1)))].sort(),
     };
+  }
+  if (body.predict) {
+    const pr = body.predict;
+    const fs = Number(pr.full_s);
+    body.predict = { source: pr.source === 'manual' ? 'manual' : 'auto', full_s: fs >= 3600 && fs <= 8 * 3600 ? Math.round(fs) : null };
   }
   if (body.weather_place) {
     const w = body.weather_place;
@@ -549,9 +554,15 @@ api.get('/insights', async (c) => {
     ).bind(addDays(today, -56), today).all<any>(),
     c.env.DB.prepare('SELECT name, date, distance_m, goal_time_s FROM races WHERE date >= ? ORDER BY goal_time_s IS NULL, date LIMIT 1').bind(today).first<any>(),
   ]);
+  // 予測タイム: 入力した値 (COROS など) か、Strava の記録 (ペースと心拍) からの推定
+  const manual = st.predict?.source === 'manual';
+  const auto = manual ? null : predictFromRuns(runs.results, st.max_hr || 190, today);
+  const predicted = manual ? st.predict?.full_s ?? null : auto?.full_s ?? null;
   return c.json(buildInsights({
     today, runs: runs.results, race: race ?? null,
-    predicted_full_s: st.coros?.predicted_s?.full ?? null, target_cadence: st.target_cadence ?? 180,
+    predicted_full_s: predicted,
+    predicted_label: manual ? '予測 (入力)' : auto ? '予測 (Strava から)' : '予測',
+    target_cadence: st.target_cadence ?? 180,
   }));
 });
 
