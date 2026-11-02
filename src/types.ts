@@ -59,7 +59,9 @@ export interface Settings {
   /** 週のメニューの基本構成 (自動計画の希望) */
   plan_prefs: PlanPrefs;
   /** フルマラソンの予測タイムの出どころ。auto = Strava の記録から推定 / manual = 時計 (COROS など) の予測を入力 */
-  predict?: { source: 'auto' | 'manual'; full_s: number | null };
+  predict?: { source: 'coros' | 'auto' | 'manual'; full_s: number | null };
+  /** ランの取り込み元 (未設定なら Strava) */
+  source?: 'strava' | 'coros';
   /** 天気の場所 (未設定なら福岡) */
   weather_place?: { name: string; lat: number; lon: number };
 }

@@ -1719,7 +1719,7 @@ async function activityDetailView(id) {
 
   return `
     <div class="card hd">
-      <div class="row spread"><h2>${esc(a.name)}</h2><a class="muted" href="https://www.strava.com/activities/${a.id}" target="_blank" rel="noopener">Strava ↗</a></div>
+      <div class="row spread"><h2>${esc(a.name)}</h2>${a.id > 0 ? `<a class="muted" href="https://www.strava.com/activities/${a.id}" target="_blank" rel="noopener">Strava ↗</a>` : '<span class="muted">COROS</span>'}</div>
       <div class="muted">${a.start_date_local.slice(0, 16).replace('T', ' ')}${ev?.role ? `<span class="role">${{ warmup: 'アップ', work: 'メイン', cooldown: 'ダウン' }[ev.role]}</span>` : ''}</div>
       <div class="row spread hd-main"><div class="num"><span class="hd-km">${km(a.distance_m, 2)}</span><span class="hd-u">km</span></div>
         <div style="text-align:right"><div class="muted">総合</div><div class="big">${scoreHtml(a.score)}</div></div></div>
@@ -2185,10 +2185,50 @@ async function settingsView() {
   }
 
   setTimeout(() => {
+    // ランの取り込み元と COROS 連携
+    const sc = view.querySelector('#src-card');
+    if (sc) {
+      sc.querySelectorAll('[data-src]').forEach((b) => (b.onclick = async () => {
+        if (b.dataset.src === 'coros' && !confirm('ランの取り込み元を COROS にします。Strava からは取り込まなくなります。よろしいですか？')) return;
+        await api('/settings', { method: 'PUT', body: { source: b.dataset.src } }); route();
+      }));
+      const box = sc.querySelector('#coros-box');
+      const msg = (t) => { const m = box.querySelector('.coros-msg'); if (m) m.textContent = t; };
+      const draw = (cs) => {
+        const when = (iso) => (iso ? new Date(iso).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-');
+        box.innerHTML = cs.connected ? `
+          <div class="coros-st"><span class="dot ok"></span><b>COROS と連携済み</b><span class="muted">${esc((cs.region || '').replace('https://', ''))}</span></div>
+          <div class="muted num coros-q">取り込み待ち ${cs.queue} 件・取り込み済み ${cs.done} 件・最後の確認 ${when(cs.last_sync)}${cs.pause_until ? `・${when(cs.pause_until)} から再開` : ''}</div>
+          ${cs.last_error ? `<p class="coros-err">${esc(cs.last_error)}</p>` : ''}
+          <div class="row coros-btns"><button type="button" data-cs="sync" class="primary">今すぐ確認</button><button type="button" data-cs="b30">過去30日</button><button type="button" data-cs="b180">過去半年</button><button type="button" data-cs="fit">体力データ</button></div>
+          <p class="muted coros-msg" style="margin:6px 0 0"></p>
+          <details class="coros-dbg"><summary>うまく取り込めないとき (診断)</summary>
+            <div class="row"><button type="button" data-dbg="querySportRecords">ランの一覧</button><button type="button" data-dbg="queryFitnessAssessmentOverview">体力評価</button><button type="button" data-cs="off" class="danger">連携を解除</button></div>
+            <pre class="coros-raw"></pre></details>`
+          : `<div class="coros-st"><span class="dot"></span><b>COROS は未連携</b></div>
+             <a class="btn primary wide" style="margin-top:8px;display:block;text-align:center" href="/auth/coros?key=${encodeURIComponent(getToken())}">COROS と連携</a>
+             <p class="muted" style="margin:6px 0 0">COROS のアカウントでログインして「許可」を押すと戻ってきます。申請や費用は不要です。</p>`;
+      };
+      api('/coros/status').then(draw).catch((e) => { box.innerHTML = `<p class="coros-err">${esc(e.message)}</p>`; });
+      box.addEventListener('click', async (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        const act = b.dataset.cs, dbg = b.dataset.dbg;
+        b.disabled = true;
+        try {
+          if (dbg) { const r = await api(`/coros/debug?tool=${dbg}`); box.querySelector('.coros-raw').textContent = r.text || JSON.stringify(r.structured, null, 1); }
+          else if (act === 'sync') { const r = await api('/coros/sync', { method: 'POST' }); draw(r); msg(`新しいラン ${r.added} 件・取り込み ${r.imported} 件`); }
+          else if (act === 'b30' || act === 'b180') { const r = await api('/coros/backfill', { method: 'POST', body: { days: act === 'b30' ? 30 : 180 } }); draw(r); msg(`${r.added} 件を取り込み待ちにしました。毎分少しずつ取り込みます (1 日 50 件まで)`); }
+          else if (act === 'fit') { const f = await api('/coros/fitness', { method: 'POST' }); msg(`予測 フル ${f.predicted_s?.full ? dur(f.predicted_s.full) : '-'}・閾値ペース ${f.lt_pace_s ? pace(f.lt_pace_s) : '-'}・閾値心拍 ${f.lthr ?? '-'}`); }
+          else if (act === 'off') { if (confirm('COROS との連携を解除します')) { await api('/coros/disconnect', { method: 'POST' }); route(); } }
+        } catch (err) { msg(`エラー: ${err.message}`); }
+        b.disabled = false;
+      });
+    }
     // 予測タイムの出どころ
     const pc = view.querySelector('#pred-card');
     if (pc) {
-      const pr = { source: settings.predict?.source || 'auto', full_s: settings.predict?.full_s ?? settings.coros?.predicted_s?.full ?? 11400 };
+      const pr = { source: settings.predict?.source || 'auto', full_s: settings.predict?.full_s ?? 11400 };
       const save = async () => { await api('/settings', { method: 'PUT', body: { predict: pr } }); route(); };
       pc.querySelectorAll('[data-pred]').forEach((b) => (b.onclick = async () => { pr.source = b.dataset.pred; await save(); }));
       const tb = pc.querySelector('[data-pred-time]');
@@ -2297,6 +2337,12 @@ async function settingsView() {
       ${err ? `<p class="error">${esc(err)}</p>` : ''}
     </div>
     <pre id="out" style="white-space:pre-wrap;word-break:break-all;margin:8px 4px"></pre>
+    ${status && settings ? `
+    <div class="card" id="src-card"><h2>ランの取り込み元</h2>
+      <div class="pf-seg pred-seg" style="--n:2"><button type="button" class="${(settings.source || 'strava') === 'strava' ? 'on' : ''}" data-src="strava">Strava</button><button type="button" class="${settings.source === 'coros' ? 'on' : ''}" data-src="coros">COROS</button></div>
+      <p class="muted" style="margin:10px 0 0">${settings.source === 'coros' ? 'COROS から 15 分ごとに新しいランを取り込みます。Strava からは取り込みません (二重にならないように)。' : 'Strava に同期されたランを、すぐに取り込みます。'}</p>
+      <div id="coros-box" class="coros-box"><p class="muted">COROS: 読み込み中…</p></div>
+    </div>` : ''}
     ${status ? `
     <div class="card">
       <h2>Strava</h2>
@@ -2325,12 +2371,15 @@ async function settingsView() {
     </div>
     ${settings ? (() => {
       const src = settings.predict?.source || 'auto';
-      const fs = settings.predict?.full_s ?? settings.coros?.predicted_s?.full ?? 11400;
+      const fs = settings.predict?.full_s ?? 11400;
       return `<div class="card" id="pred-card"><h2>フルマラソンの予測タイム</h2>
-        <div class="pf-seg pred-seg" style="--n:2"><button type="button" class="${src === 'auto' ? 'on' : ''}" data-pred="auto">Strava から推定</button><button type="button" class="${src === 'manual' ? 'on' : ''}" data-pred="manual">時計の予測を入力</button></div>
-        ${src === 'auto'
+        <div class="pf-seg pred-seg" style="--n:3"><button type="button" class="${src === 'coros' ? 'on' : ''}" data-pred="coros">COROS</button><button type="button" class="${src === 'auto' ? 'on' : ''}" data-pred="auto">Strava で推定</button><button type="button" class="${src === 'manual' ? 'on' : ''}" data-pred="manual">手で入力</button></div>
+        ${src === 'coros'
+          ? `<div class="wk-tile" style="margin-top:10px;width:100%"><small>COROS の予測 (${esc(settings.coros?.updated || '-')} 時点・毎日自動で更新)</small><b class="num">${settings.coros?.predicted_s?.full ? dur(settings.coros.predicted_s.full) : '-'}</b></div>
+             <p class="muted" style="margin:8px 0 0">COROS と連携すると、予測タイム・閾値ペース・閾値心拍・VO2max を毎日取り込みます。</p>`
+          : src === 'auto'
           ? `<p class="muted" style="margin:10px 0 0">直近8週の、心拍つき・5km以上のランのペースと心拍から推定します。最大心拍の設定が正しいほど正確です。</p><p class="num" id="pred-auto" style="margin:6px 0 0"></p>`
-          : `<button type="button" class="wk-tile" data-pred-time style="margin-top:10px;width:100%"><small>COROS・Garmin などの予測 (タップして変更)</small><b class="num">${dur(fs)}</b></button>`}
+          : `<button type="button" class="wk-tile" data-pred-time style="margin-top:10px;width:100%"><small>時計 (Garmin など) の予測 (タップして変更)</small><b class="num">${dur(fs)}</b></button>`}
       </div>`;
     })() : ''}
     ${settings.coros ? `<div class="card">
