@@ -1540,21 +1540,23 @@ function reviewHtml(rv) {
     const L = { warmup: 'アップ', cooldown: 'ダウン' }[rv.role];
     return `<div class="card rv"><h2>レビュー</h2><p class="muted">このランは ${L} です。評価はメインのランで見ます。</p>${rv.main_id ? `<a class="btn" href="#/activities/${rv.main_id}">メインのレビューを見る ›</a>` : ''}</div>`;
   }
-  const sec = (t, body) => `<div class="rv-sec"><h3>${t}</h3>${body}</div>`;
+  // 1 枚のカードに: 総合 → 各項目は見出しだけ (タップで開く)
   const ps = (arr) => arr.map((t) => `<p>${esc(t)}</p>`).join('');
-  let h = `<div class="card rv"><h2>レビュー</h2>
-    <div class="rv-top"><div><span class="muted">今回の評価</span><div class="rv-grade">${esc(rv.grade)}</div><span class="muted">${esc(rv.headline)}</span></div>
+  const acc = (title, body, open = false) => `<details class="rv-acc" ${open ? 'open' : ''}><summary>${esc(title)}</summary><div class="rv-acc-b">${body}</div></details>`;
+  let h = `<div class="card rv"><h2>評価</h2>
+    <div class="rv-top"><div><div class="rv-grade">${esc(rv.grade)}</div><span class="muted">${esc(rv.headline)}</span></div>
     ${rv.race ? `<div><span class="muted">${esc(rv.race.name)}</span><div class="rv-goal num">${esc(rv.race.goal)}</div><span class="muted">${rv.race.need_pace ? `必要ペース ${esc(rv.race.need_pace)}` : `あと${rv.race.days}日`}</span></div>` : ''}</div>
-    <table class="rv-t num">${rv.rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table></div>`;
+    <table class="rv-t num">${rv.rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>`;
   if (rv.pace) {
     const n = rv.pace.laps.length;
-    h += `<div class="card rv">${sec(esc(rv.pace.title), `
+    h += acc(`ペース: ${rv.pace.title}`, `
       ${areaChart(rv.pace.laps, rv.pace.laps.map((_, i) => i + 1), n, { color: '#4a90e2', invert: true, fmt: (v) => pace(Math.round(v)), avg: null, minSpan: 16, label: 'ラップ推移' })}
-      <div class="rv-chips">${rv.pace.chips.map(([t, v, d]) => `<div><span class="muted">${esc(t)}</span><b class="num">${esc(v)}</b><span class="muted">${esc(d)}</span></div>`).join('')}</div>${ps(rv.pace.text)}`)}</div>`;
+      <div class="rv-chips">${rv.pace.chips.map(([t, v, d]) => `<div><span class="muted">${esc(t)}</span><b class="num">${esc(v)}</b><span class="muted">${esc(d)}</span></div>`).join('')}</div>${ps(rv.pace.text)}`);
   }
-  if (rv.hr) h += `<div class="card rv">${sec(esc(rv.hr.title), `<table class="rv-t num"><tr><th>区間</th><th>平均心拍</th></tr>${rv.hr.rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join('')}</table>${ps(rv.hr.text)}`)}</div>`;
-  if (rv.form) h += `<div class="card rv">${sec(esc(rv.form.title), `<div class="rv-chips">${rv.form.stats.map(([t, v, u]) => `<div><span class="muted">${esc(t)}</span><b class="num">${esc(v)}<small>${esc(u)}</small></b></div>`).join('')}</div>${ps(rv.form.text)}`)}</div>`;
-  if (rv.verdict) h += `<div class="card rv">${sec(esc(rv.verdict.title), `${ps(rv.verdict.text)}${rv.verdict.table.length ? `<table class="rv-t num"><tr><th>区間</th><th>推奨ペース</th></tr>${rv.verdict.table.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>` : ''}`)}</div>`;
+  if (rv.hr) h += acc(`心拍: ${rv.hr.title}`, `<table class="rv-t num"><tr><th>区間</th><th>平均心拍</th></tr>${rv.hr.rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join('')}</table>${ps(rv.hr.text)}`);
+  if (rv.form) h += acc(`フォーム: ${rv.form.title}`, `<div class="rv-chips">${rv.form.stats.map(([t, v, u]) => `<div><span class="muted">${esc(t)}</span><b class="num">${esc(v)}<small>${esc(u)}</small></b></div>`).join('')}</div>${ps(rv.form.text)}`);
+  if (rv.verdict) h += acc(rv.verdict.title, `${ps(rv.verdict.text)}${rv.verdict.table.length ? `<table class="rv-t num"><tr><th>区間</th><th>推奨ペース</th></tr>${rv.verdict.table.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>` : ''}`);
+  h += '<div id="rv-score"></div></div>';
   return h;
 }
 
@@ -1589,6 +1591,21 @@ function feedbackHtml(fb, notes) {
     <button type="button" class="fbx-save" disabled>この評価を保存<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     <div id="fb-notes">${(notes || []).map((t) => `<p class="fb-note">${esc(t)}</p>`).join('')}</div></div>`;
 }
+
+/** 保存したふりかえりの表示 (スライダーは出さない。「修正」で入力に戻る) */
+function feedbackSummary(fb, notes) {
+  const SHORT = { breath: '呼吸', leg: '脚', rpe: 'きつさ', form: 'フォーム', pain: '痛み' };
+  const items = FB_SLIDERS.filter(([k]) => fb[k] != null).map(([k]) => `<div><span class="muted">${SHORT[k]}</span><b class="num">${fb[k]}<small>/10</small></b></div>`);
+  const rs = FB_RESERVE.find(([v]) => v === fb.reserve);
+  if (rs) items.push(`<div><span class="muted">余裕</span><b class="num fbs-rs">あと${rs[1]}</b></div>`);
+  const tags = FB_TAG.filter(([v]) => (fb.tags || []).includes(v)).map(([, l]) => `<span class="chip on mini">${l}</span>`).join('');
+  return `<div class="card rv fbx"><div class="row spread"><h3>ふりかえり</h3><button type="button" class="chip" data-fb-edit>修正</button></div>
+    <div class="fbs-grid">${items.join('')}</div>
+    ${tags ? `<div class="chips mini" style="margin-top:8px">${tags}</div>` : ''}
+    ${fb.memo ? `<p class="fbs-memo">${esc(fb.memo)}</p>` : ''}
+    <div id="fb-notes">${(notes || []).map((t) => `<p class="fb-note">${esc(t)}</p>`).join('')}</div></div>`;
+}
+const hasFeedback = (fb) => FB_SLIDERS.some(([k]) => fb[k] != null) || !!fb.reserve || (fb.tags || []).length > 0 || !!fb.memo;
 
 /** ふりかえりの操作 (スライダー・選択・保存) */
 function bindFeedback(fbox, state, onSave) {
@@ -1678,22 +1695,36 @@ async function activityDetailView(id) {
       if (!box || !Array.isArray(sp) || !sp.length) { if (box) box.innerHTML = '<span class="muted">取得できませんでした</span>'; return; }
       box.innerHTML = lapTable(sp);
     }).catch(() => {});
+    // 点数の内訳 (配点・内訳・コメント) は、評価カードの中に折りたたんで入れる
+    const scoreTpl = view.querySelector('#score-detail');
+    const moveScore = () => { const slot = view.querySelector('#rv-score'); if (slot && scoreTpl) slot.innerHTML = scoreTpl.innerHTML; };
     const loadReview = () => api(`/activities/${id}/review`).then((rv) => {
       const box = view.querySelector('#review'), fbox = view.querySelector('#fb');
       if (!box || !rv || rv.error) { if (box) box.innerHTML = ''; return; }
       box.innerHTML = reviewHtml(rv);
+      moveScore();
       if (rv.main_id !== undefined) { if (fbox) fbox.innerHTML = ''; return; }
       const st = { breath: null, leg: null, rpe: null, form: null, pain: null, reserve: null, memo: '', tags: [], ...(rv.fb || {}) };
       if (fbox) {
-        fbox.innerHTML = feedbackHtml(st, rv.notes);
-        bindFeedback(fbox, st, async (body) => {
-          await api(`/activities/${id}/feedback`, { method: 'PUT', body });
-          const r2 = await api(`/activities/${id}/review`).catch(() => null);
-          if (r2 && !r2.error && r2.main_id === undefined) {
-            view.querySelector('#review').innerHTML = reviewHtml(r2);
-            view.querySelector('#fb-notes').innerHTML = (r2.notes || []).map((t) => `<p class="fb-note">${esc(t)}</p>`).join('');
-          }
-        });
+        let notes = rv.notes;
+        const showSummary = () => {
+          fbox.innerHTML = feedbackSummary(st, notes);
+          fbox.querySelector('[data-fb-edit]').onclick = showForm;
+        };
+        const showForm = () => {
+          fbox.innerHTML = feedbackHtml(st, notes);
+          bindFeedback(fbox, st, async (body) => {
+            await api(`/activities/${id}/feedback`, { method: 'PUT', body });
+            const r2 = await api(`/activities/${id}/review`).catch(() => null);
+            if (r2 && !r2.error && r2.main_id === undefined) {
+              view.querySelector('#review').innerHTML = reviewHtml(r2);
+              moveScore();
+              notes = r2.notes;
+            }
+            showSummary();
+          });
+        };
+        hasFeedback(st) ? showSummary() : showForm();
       }
     }).catch(() => { const box = view.querySelector('#review'); if (box) box.innerHTML = ''; });
     loadReview();
@@ -1738,20 +1769,27 @@ async function activityDetailView(id) {
         <div><b id="st-cal">-</b><span>カロリー kcal</span></div>
       </div>
     </div>
+    <div id="series"><div class="card"><span class="muted">グラフを読み込み中…</span></div></div>
+    <div class="card"><h2>ラップ詳細</h2><div id="splits"><span class="muted">読み込み中…</span></div></div>
+    ${sib.length > 1 ? `<div class="card"><h2>この日のラン (${sib.length}本)</h2>
+      <p class="muted" style="margin-top:0">アップ・本体・ダウンなど、同じ日のランは 1 つのメニューとして見ます</p>
+      <div class="num" style="margin:8px 0"><span class="big">${km(sumD, 2)}</span> km・${dur(sumT)}・${pace(sumT / (sumD / 1000))}/km</div>
+      <ul class="list">${sib.map((r) => `<li class="${r.id === a.id ? 'cur' : ''}"><a href="#/activities/${r.id}"><div class="row spread"><span>${r.start_date_local.slice(11, 16)} ${esc(r.name)}${r.role ? `<span class="role">${{ warmup: 'アップ', work: 'メイン', cooldown: 'ダウン' }[r.role]}</span>` : ''}${r.id === a.id ? ' <span class="badge">いま見ているラン</span>' : ''}</span>${scoreHtml(r.score)}</div><div class="muted num">${km(r.distance_m, 2)}km・${pace(r.moving_time_s / (r.distance_m / 1000))}/km${r.avg_hr ? `・${Math.round(r.avg_hr)}bpm` : ''}</div></a></li>`).join('')}</ul></div>` : ''}
     <div id="review"><div class="card"><span class="muted">レビューをつくっています…</span></div></div>
     <div id="fb"></div>
+    <template id="score-detail"><details class="rv-acc"><summary>点数の内訳</summary><div class="rv-acc-b">
     ${ev && W && a.score != null && a.score < 85 ? (() => {
       const NM = { pace: 'ペース', hr: '心拍', cadence: 'ケイデンス', form: 'フォーム' };
       const lost = ['pace', 'hr', 'cadence', 'form'].filter((k) => W[k] > 0 && ev[k]?.score != null)
         .map((k) => ({ k, loss: Math.round(W[k] * (100 - ev[k].score) / 100) })).filter((x) => x.loss >= 3).sort((x, y) => y.loss - x.loss);
-      return lost.length ? `<div class="card why"><h2>${a.score}点の内訳</h2>
+      return lost.length ? `<div class="why"><h3 class="sub">${a.score}点の内訳</h3>
         <p class="muted" style="margin:0 0 6px">100点から引かれた点</p>
         ${lost.map((x) => `<div class="row spread why-row"><b>${NM[x.k]}</b><b class="num bad">−${x.loss}</b></div><div class="muted why-sub">${esc(ev[x.k].summary)}</div>`).join('')}
       </div>` : '';
     })() : ''}
     ${ev ? `
-    <div class="card">
-      <h2>評価 <span class="badge" data-t="${ev.type}">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></h2>
+    <div>
+      <p class="muted">評価の種類: <span class="badge" data-t="${ev.type}">${ev.type === 'free' ? 'フリーラン' : PLAN_LABELS[ev.type]}</span></p>
       ${metric('ペース', ev.pace, W?.pace)}${metric('心拍', ev.hr, W?.hr)}${metric('ケイデンス', ev.cadence, W?.cadence)}${ev.form ? metric('フォーム', ev.form, W?.form) : ''}
       ${howCard(ev)}
       <ul class="bullets">${ev.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
@@ -1759,18 +1797,13 @@ async function activityDetailView(id) {
       ${ev.pace.details.rep_paces ? `<p class="muted num">各本: ${esc(ev.pace.details.rep_paces)}</p>` : ''}
       ${zones.some((z) => z != null) ? `<h3 class="sub">心拍ゾーン (走った時間の割合)</h3>${zoneBars(zones)}` : ''}
     </div>` : ''}
-    ${sib.length > 1 ? `<div class="card"><h2>この日のラン (${sib.length}本)</h2>
-      <p class="muted" style="margin-top:0">アップ・本体・ダウンなど、同じ日のランは 1 つのメニューとして見ます</p>
-      <div class="num" style="margin:8px 0"><span class="big">${km(sumD, 2)}</span> km・${dur(sumT)}・${pace(sumT / (sumD / 1000))}/km</div>
-      <ul class="list">${sib.map((r) => `<li class="${r.id === a.id ? 'cur' : ''}"><a href="#/activities/${r.id}"><div class="row spread"><span>${r.start_date_local.slice(11, 16)} ${esc(r.name)}${r.role ? `<span class="role">${{ warmup: 'アップ', work: 'メイン', cooldown: 'ダウン' }[r.role]}</span>` : ''}${r.id === a.id ? ' <span class="badge">いま見ているラン</span>' : ''}</span>${scoreHtml(r.score)}</div><div class="muted num">${km(r.distance_m, 2)}km・${pace(r.moving_time_s / (r.distance_m / 1000))}/km${r.avg_hr ? `・${Math.round(r.avg_hr)}bpm` : ''}</div></a></li>`).join('')}</ul></div>` : ''}
+    </div></details></template>
     ${(() => {
       const cur = shoes.find((x) => x.id === a.shoe_id);
       return `<div class="card shoe-card"><div class="row spread"><h2>${cur ? esc(cur.name) : 'シューズを追加'}</h2><button type="button" class="chip" id="shoe-open">${cur ? '変更' : '選ぶ'}</button></div>
       ${cur ? `<div class="shoe-img big">${cur.image ? `<img src="${cur.image}" alt="">` : '<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div><div class="muted num">累計 ${Math.round(cur.total_km)}km / ${cur.limit_km}km</div>` : '<p class="muted" style="margin:0">このランで履いたシューズを選びます。</p>'}
       </div>`;
     })()}
-    <div id="series"><div class="card"><span class="muted">グラフを読み込み中…</span></div></div>
-    <div class="card"><h2>ラップ詳細</h2><div id="splits"><span class="muted">読み込み中…</span></div></div>
     <div class="card">
       <h2>この練習のメニュー</h2>
       <p class="muted" style="margin-top:0">${a.plan ? `いまは「${md(a.date)} ${planName(a.plan)}」として評価しています` : 'いまはメニューなし (フリーラン) として評価しています'}。別のメニューに変えるときは下から選んでください。同じ日のランはまとめて変わります。</p>
