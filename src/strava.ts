@@ -109,18 +109,19 @@ export interface StravaActivity {
 export const RUN_TYPES = ['Run', 'TrailRun', 'VirtualRun'];
 
 /** id が負の数のものは COROS から取り込んだラン (ext_activities に保存してある) */
+/** COROS のデータがあれば、そちらを優先する (Strava の id のランでも、COROS で置き換えたものは COROS のデータ) */
 export const getActivity = async (env: Env, id: number): Promise<StravaActivity> => {
-  if (id < 0) {
-    const x = await loadExt(env, id);
-    if (!x) throw new Error('このランの元データがありません');
-    return x.act as StravaActivity;
-  }
+  const x = await loadExt(env, id);
+  if (x?.act) return { ...x.act, id } as StravaActivity;
+  if (id < 0) throw new Error('このランの元データがありません');
   return get<StravaActivity>(env, `/activities/${id}?include_all_efforts=false`);
 };
 
 /** streams (time・distance・速度・心拍・ピッチ・標高)。COROS のランは保存した記録から */
 async function rawStreams(env: Env, id: number, keys: string): Promise<Record<string, { data: number[] }> | null> {
-  if (id < 0) return (await loadExt(env, id))?.raw ?? null;
+  const x = await loadExt(env, id);
+  if (x?.act) return x.raw ?? null;
+  if (id < 0) return null;
   return get<Record<string, { data: number[] }>>(env, `/activities/${id}/streams?keys=${keys}&key_by_type=true`);
 }
 
@@ -195,7 +196,7 @@ export async function getSeries(env: Env, id: number, paceBounds: number[], hrBo
   const keys = 'time,distance,velocity_smooth,heartrate,cadence,altitude';
   const [raw, act] = await Promise.all([
     rawStreams(env, id, keys).catch(() => null),
-    (id < 0 ? getActivity(env, id) : get<{ calories?: number; total_elevation_gain?: number }>(env, `/activities/${id}`)).catch(() => null) as Promise<{ calories?: number; total_elevation_gain?: number } | null>,
+    getActivity(env, id).catch(() => null) as Promise<{ calories?: number; total_elevation_gain?: number } | null>,
   ]);
   if (!raw || !raw.time || !raw.distance) return null;
   const t = raw.time.data, dist = raw.distance.data, v = raw.velocity_smooth?.data, hr = raw.heartrate?.data, cad = raw.cadence?.data, alt = raw.altitude?.data;

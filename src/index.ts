@@ -5,7 +5,7 @@ import { buildIcs, calendarSig, type CalRace } from './calendar';
 import { deleteActivity, ingestActivity, sendMorning } from './process';
 import { kvGet, kvSet } from './settings';
 import { authorizeUrl, exchangeCode, getAthleteId } from './strava';
-import { corosAuthorizeUrl, corosFinishAuth, corosTick, enqueueCoros, syncCorosFitness } from './coros';
+import { corosAuthorizeUrl, corosFinishAuth, corosTick, enqueueCoros, mergeCorosTwins, syncCorosFitness } from './coros';
 import { getSettings } from './settings';
 import type { Env, Plan } from './types';
 
@@ -44,11 +44,11 @@ app.post('/webhook', async (c) => {
     (async () => {
       if (ev.object_type !== 'activity') return;
       if (ev.owner_id !== (await getAthleteId(c.env))) return;
-      // 取り込み元を COROS にしているときは、Strava からは取り込まない (二重になるため)
-      if ((await getSettings(c.env)).source === 'coros') return;
       if (ev.aspect_type === 'delete') return deleteActivity(c.env, ev.object_id);
       // update は公開範囲の変更なども来るが、再評価しても害はない (通知は 1 回のみ)
       await ingestActivity(c.env, ev.object_id, { notify: true });
+      // COROS 優先のとき: 先に COROS から入っていた同じランがあれば 1 件にまとめる (COROS のデータを残す)
+      if ((await getSettings(c.env)).source === 'coros') await mergeCorosTwins(c.env);
     })().catch((e) => console.error('webhook processing failed', ev, e)),
   );
   return c.text('ok');

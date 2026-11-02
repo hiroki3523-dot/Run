@@ -67,7 +67,7 @@ export async function corosAuthorizeUrl(env: Env): Promise<string> {
 }
 
 export async function corosFinishAuth(env: Env, code: string, state: string): Promise<void> {
-  const p = JSON.parse((await kvGet(env, 'coros_pending')) ?? '{}') as { state?: string; verifier: string; client_id: string; issuer: string; redirect: string };
+  const p = JSON.parse((await kvGet(env, 'coros_pending')) || '{}') as { state?: string; verifier: string; client_id: string; issuer: string; redirect: string };
   if (!p.state || p.state !== state) throw new Error('state が一致しません。もう一度連携してください');
   const res = await fetch(`${p.issuer}/oauth2/token`, {
     method: 'POST',
@@ -256,7 +256,7 @@ export async function syncCorosFitness(env: Env): Promise<CorosFitness> {
 // ---------------------------------------------------------------- ランの取り込み
 
 interface Queue { items: CorosRecord[]; pause_until?: number; last_sync?: string; last_error?: string; done: number; skipped?: number; scan_to?: string | null; scan_empty?: number }
-const loadQueue = async (env: Env): Promise<Queue> => ({ items: [], done: 0, ...JSON.parse((await kvGet(env, 'coros_queue')) ?? '{}') });
+const loadQueue = async (env: Env): Promise<Queue> => ({ items: [], done: 0, ...JSON.parse((await kvGet(env, 'coros_queue')) || '{}') });
 const saveQueue = (env: Env, q: Queue) => kvSet(env, 'coros_queue', JSON.stringify(q));
 const ymd = (d: string) => d.replace(/-/g, '');
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400_000).toISOString().slice(0, 10);
@@ -275,21 +275,16 @@ export async function enqueueCoros(env: Env, from: string, to: string): Promise<
   const have = new Set<string>();
   for (let i = 0; i < ids.length; i += 50) {
     const part = ids.slice(i, i + 50);
-    const { results } = await env.DB.prepare(`SELECT ext_id FROM ext_activities WHERE ext_id IN (${part.map(() => '?').join(',')})`).bind(...part).all<{ ext_id: string }>();
+    // 「Strava と重複」の印だけのもの (前の版) は、取り込み直して COROS のデータに置き換える
+    const { results } = await env.DB.prepare(`SELECT ext_id FROM ext_activities WHERE ext_id IN (${part.map(() => '?').join(',')}) AND data NOT LIKE '{"dup_of"%'`).bind(...part).all<{ ext_id: string }>();
     results.forEach((r) => have.add(r.ext_id));
   }
   const q = await loadQueue(env);
   const queued = new Set(q.items.map((x) => x.labelId));
-  let add = found.filter((x) => !have.has(x.labelId) && !queued.has(x.labelId));
-  // Strava から取り込み済みの同じラン (同じ日・距離がほぼ同じ) は取り込まない。COROS の上限も使わない
-  const keep: CorosRecord[] = [];
-  for (const x of add) {
-    const dup = x.date && x.dist_m ? await stravaTwin(env, x.date, x.dist_m) : null;
-    if (dup) { await markDuplicate(env, x.labelId, dup); q.skipped = (q.skipped ?? 0) + 1; } else keep.push(x);
-  }
-  add = keep;
-  const uniq = [...new Map(add.map((x) => [x.labelId, x])).values()].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
-  q.items = [...uniq, ...q.items]; // 新しいものを先に
+  const add = found.filter((x) => !have.has(x.labelId) && !queued.has(x.labelId));
+  const uniq = [...new Map(add.map((x) => [x.labelId, x])).values()];
+  // 新しいランから順に取り込む (全期間をさかのぼっている間も、最近のぶんが先)
+  q.items = [...uniq, ...q.items].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
   q.last_sync = new Date().toISOString();
   await saveQueue(env, q);
   return uniq.length;
@@ -304,27 +299,38 @@ async function stravaTwin(env: Env, date: string, distM: number, startLocal?: st
   return hit?.id ?? null;
 }
 
-/** Strava と重なった COROS のランは「取り込み済み (重複)」として記録だけ残す (次から調べない) */
-async function markDuplicate(env: Env, labelId: string, stravaId: number): Promise<void> {
-  await env.DB.prepare('INSERT INTO ext_activities (id, ext_id, data) VALUES (?, ?, ?) ON CONFLICT(ext_id) DO NOTHING')
-    .bind(extIdToNumber(labelId), labelId, JSON.stringify({ dup_of: stravaId }))
-    .run();
-}
-
-/** 前に COROS から取り込んで、Strava と重なっているランを消す (Strava のほうは残す) */
-export async function removeCorosDuplicates(env: Env): Promise<number> {
+/**
+ * COROS と Strava の両方にあるランを 1 件にまとめる (COROS が正、Strava は補完)。
+ * Strava の id の行は残し (計画・シューズ・ふりかえりはそのまま)、中身を COROS のデータに置き換える。COROS 側の行は消す
+ */
+export async function mergeCorosTwins(env: Env): Promise<number> {
   const { results } = await env.DB.prepare(
-    `SELECT c.id AS cid, s.id AS sid, e.ext_id FROM activities c
+    `SELECT c.id AS cid, s.id AS sid FROM activities c
      JOIN activities s ON s.date = c.date AND s.id > 0 AND ABS(s.distance_m - c.distance_m) <= MAX(80, MIN(300, c.distance_m * 0.03))
-     JOIN ext_activities e ON e.id = c.id
+       AND ABS(strftime('%s', s.start_date_local) - strftime('%s', c.start_date_local)) <= 900
      WHERE c.id < 0`,
-  ).all<{ cid: number; sid: number; ext_id: string }>();
+  ).all<{ cid: number; sid: number }>();
+  let n = 0;
   for (const r of results) {
+    const row = await env.DB.prepare('SELECT ext_id, data FROM ext_activities WHERE id = ?').bind(r.cid).first<{ ext_id: string; data: string }>();
+    if (!row) continue;
+    const ext = JSON.parse(row.data) as ExtActivity;
+    const strava = await env.DB.prepare('SELECT name FROM activities WHERE id = ?').bind(r.sid).first<{ name: string }>();
+    ext.act.id = r.sid;
+    if (strava?.name) ext.act.name = strava.name; // Strava で付けた名前を残す
+    await env.DB.prepare('DELETE FROM ext_activities WHERE id = ?').bind(r.cid).run();
+    await saveExt(env, r.sid, row.ext_id, ext);
+    // COROS 側に付いていたふりかえりは、Strava の行に無ければ移す
+    const fb = await kvGet(env, `fb:${r.cid}`);
+    if (fb && !(await kvGet(env, `fb:${r.sid}`))) await kvSet(env, `fb:${r.sid}`, fb);
     await env.DB.prepare('DELETE FROM activities WHERE id = ?').bind(r.cid).run();
-    await env.DB.prepare('UPDATE ext_activities SET data = ? WHERE id = ?').bind(JSON.stringify({ dup_of: r.sid }), r.cid).run();
+    await ingestActivity(env, r.sid, {});
+    n++;
   }
-  return results.length;
+  return n;
 }
+/** 以前の名前 (API から呼ばれる) */
+export const removeCorosDuplicates = mergeCorosTwins;
 
 const timeName = (h: number) => (h < 10 ? '朝のランニング' : h < 14 ? 'ランチタイム ランニング' : h < 17 ? '午後のランニング' : h < 20 ? '夕方のランニング' : '夜のランニング');
 
@@ -416,8 +422,17 @@ async function importOne(env: Env, rec: CorosRecord, notifyNew: boolean): Promis
   }
   if (!fit && !lapsJson) throw new Error(`COROS のラン ${rec.labelId} のデータを取得できませんでした`);
   const ext = buildExt(rec, fit, lapsJson);
+  // Strava に同じランがあれば、その行の中身を COROS のデータに置き換える (計画・シューズ・ふりかえりは残る)
   const twin = await stravaTwin(env, ext.act.start_date_local.slice(0, 10), ext.act.distance, ext.act.start_date_local);
-  if (twin) { await markDuplicate(env, rec.labelId, twin); return; }
+  await env.DB.prepare('DELETE FROM ext_activities WHERE ext_id = ?').bind(rec.labelId).run(); // 前の版の「重複」の印
+  if (twin) {
+    const strava = await env.DB.prepare('SELECT name FROM activities WHERE id = ?').bind(twin).first<{ name: string }>();
+    ext.act.id = twin;
+    if (strava?.name) ext.act.name = strava.name;
+    await saveExt(env, twin, rec.labelId, ext);
+    await ingestActivity(env, twin, {}); // 通知は Strava のときに済んでいる
+    return;
+  }
   await saveExt(env, ext.act.id, rec.labelId, ext);
   await ingestActivity(env, ext.act.id, { notify: notifyNew });
 }
@@ -434,6 +449,8 @@ export async function processCorosQueue(env: Env, max = 2): Promise<number> {
       await importOne(env, rec, (rec.date ?? '') >= recent);
       q.items.shift();
       q.done = (q.done ?? 0) + 1;
+      // 後から Strava 側が届いていたら 1 件にまとめる
+      if (n === 0) await mergeCorosTwins(env).catch(() => 0);
       q.last_error = undefined;
       n++;
     } catch (e) {

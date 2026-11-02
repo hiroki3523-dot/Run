@@ -67,7 +67,7 @@ export async function ingestActivity(env: Env, id: number, opts: IngestOptions =
        name = excluded.name, sport_type = excluded.sport_type, workout_type = excluded.workout_type,
        distance_m = excluded.distance_m, moving_time_s = excluded.moving_time_s, elapsed_time_s = excluded.elapsed_time_s,
        avg_hr = excluded.avg_hr, max_hr = excluded.max_hr, avg_cadence_spm = excluded.avg_cadence_spm,
-       gear_id = excluded.gear_id, shoe_id = excluded.shoe_id, plan_id = excluded.plan_id,
+       gear_id = COALESCE(excluded.gear_id, activities.gear_id), shoe_id = COALESCE(excluded.shoe_id, activities.shoe_id), plan_id = excluded.plan_id,
        score = excluded.score, evaluation = excluded.evaluation`,
   )
     .bind(
