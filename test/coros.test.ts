@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFitness, parseRecords } from '../src/coros';
+import { parseFitness, parseRecords, unquote } from '../src/coros';
 import { extIdToNumber } from '../src/ext';
 
 describe('coros', () => {
@@ -38,6 +38,11 @@ describe('coros', () => {
     expect(f.lthr).toBe(174);
     expect(f.zones_s).toEqual({ aerobic: [287, 346], threshold: [243, 265], speed: [222, 242] });
     expect(f.predicted_s).toEqual({ '5k': 1181, full: 11249 });
+  });
+  it('JSON の文字列 ("...\\n...") で返ってきても全件読む', () => {
+    const t = JSON.stringify('Sport Records (2 records)\n\n1. Outdoor Run — 2026-11-01\n   LabelId: 481446915959980133 | SportType: 100\n\n2. Outdoor Run — 2026-10-30\n   LabelId: 481403404445319172 | SportType: 100');
+    expect(parseRecords(t, null).length).toBeLessThan(2);
+    expect(parseRecords(unquote(t), null).length).toBe(2);
   });
   it('COROS の id は負の数で、同じ labelId なら同じ', () => {
     expect(extIdToNumber('476123456789012345')).toBeLessThan(0);

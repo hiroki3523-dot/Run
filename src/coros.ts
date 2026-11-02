@@ -117,6 +117,15 @@ async function readRpc(res: Response): Promise<any> {
 
 export class CorosQuotaError extends Error {}
 
+/** COROS は文章を JSON の文字列 ("...\\n...") のまま返すことがあるので、ふつうの文章に戻す */
+export function unquote(t: string): string {
+  const s = t.trim();
+  if (s.startsWith('"') && s.endsWith('"')) {
+    try { const v = JSON.parse(s); if (typeof v === 'string') return v; } catch { /* 下で置き換える */ }
+  }
+  return /\\n/.test(s) && !/\n/.test(s) ? s.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, '\t') : t;
+}
+
 /** MCP のツールを呼ぶ。返り値は {text, structured} */
 export async function corosTool(env: Env, name: string, args: Record<string, unknown> = {}): Promise<{ text: string; structured: any; raw: any }> {
   let a = await getAuth(env);
@@ -140,7 +149,7 @@ export async function corosTool(env: Env, name: string, args: Record<string, unk
     throw new Error(`COROS ${name} が失敗しました: ${msg}`);
   }
   const result = j.result ?? {};
-  const text = (result.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n');
+  const text = unquote((result.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n'));
   if (result.isError) {
     if (/quota|limit|上限|限额|次数/i.test(text)) throw new CorosQuotaError(text.slice(0, 300));
     throw new Error(`COROS ${name}: ${text.slice(0, 300)}`);
@@ -291,10 +300,10 @@ const jstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0
 export async function enqueueCoros(env: Env, from: string, to: string): Promise<number> {
   const found: CorosRecord[] = [];
   let note: string | null = null;
-  // COROS は 1 回に調べられる期間が短いようなので、7 日ずつ調べる
-  for (let end = to; end >= from; end = addDays(end, -7)) {
-    const start = addDays(end, -6) < from ? from : addDays(end, -6);
-    const r = await corosTool(env, 'querySportRecords', { startDate: ymd(start), endDate: ymd(end), sportTypeCodes: RUN_SPORTS, limit: 50 });
+  // 件数を指定しないと 20 件までしか返らないので、100 件を指定して 28 日ずつ調べる
+  for (let end = to; end >= from; end = addDays(end, -28)) {
+    const start = addDays(end, -27) < from ? from : addDays(end, -27);
+    const r = await corosTool(env, 'querySportRecords', { startDate: ymd(start), endDate: ymd(end), sportTypeCodes: RUN_SPORTS, limit: 100 });
     const recs = parseRecords(r.text, r.structured);
     // 1 件も読めず、「0 records」でもない応答は、エラーの文章として画面に出す
     if (!recs.length && r.text.trim() && !/\(0 records?\)|no (sport )?records|没有|0 件/i.test(r.text)) note = r.text.trim().slice(0, 160);
@@ -518,7 +527,7 @@ export async function startCorosFullScan(env: Env): Promise<void> {
 async function scanStep(env: Env): Promise<void> {
   const q0 = await loadQueue(env);
   if (!q0.scan_to) return;
-  // 1 分に 4 週 (7 日 × 4 回)
+  // 1 分に 4 週
   const end = q0.scan_to, start = addDays(end, -27);
   await enqueueCoros(env, start, end);
   const q = await loadQueue(env);
