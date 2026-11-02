@@ -911,3 +911,9 @@ body::after {
 .fbs-memo { margin: 10px 0 0; font-size: 14px; line-height: 1.6; }
 .chip.mini { min-height: 30px; padding: 4px 10px; font-size: 12px; }
 .fbs-grid b.fbs-rs { font-size: 15px; white-space: nowrap; }
+
+/* 持ち物の編集 */
+.ck.ck-ed { display: flex; gap: 8px; align-items: center; }
+.ck .ck-in, .ck-in { display: block; position: static; opacity: 1; pointer-events: auto; width: auto; height: auto; appearance: auto; flex: 1; min-width: 0; font-size: 15px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--text); }
+.ck-add { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ck-add select { min-height: 44px; border-radius: 12px; }

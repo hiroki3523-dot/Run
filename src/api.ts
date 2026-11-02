@@ -60,6 +60,13 @@ api.put('/settings', async (c) => {
     body.predict = { source: pr.source === 'manual' ? 'manual' : pr.source === 'coros' ? 'coros' : 'auto', full_s: fs >= 3600 && fs <= 8 * 3600 ? Math.round(fs) : null };
   }
   if (body.source !== undefined) body.source = body.source === 'coros' ? 'coros' : 'strava';
+  if ((body as any).checklist_template !== undefined) {
+    const t = (body as any).checklist_template;
+    (body as any).checklist_template = Array.isArray(t)
+      ? t.filter((x: any) => x && ['prep', 'morning'].includes(x.cat) && typeof x.text === 'string' && x.text.trim())
+        .slice(0, 60).map((x: any) => ({ cat: x.cat, id: String(x.id).slice(0, 20), text: x.text.trim().slice(0, 60) }))
+      : null;
+  }
   if (body.weather_place) {
     const w = body.weather_place;
     const lat = Number(w.lat), lon = Number(w.lon);
