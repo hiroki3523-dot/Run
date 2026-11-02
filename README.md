@@ -51,18 +51,19 @@ Cloudflare 側でコードを GitHub から取り込み、ビルドとデプロ�
 ### 事前に用意するもの
 
 - Cloudflare アカウント (無料プランで可)
-- このリポジトリのある GitHub アカウント
+- GitHub アカウント (無料)
 - Strava アカウント
 - スマホに [ntfy](https://ntfy.sh) アプリ (App Store / Google Play)
 
 パスワード管理アプリやメモアプリを開いておき、途中で出てくる値を書き留めておくと楽。
 
-### 1. コードを `main` ブランチに入れる (GitHub)
+### 1. このリポジトリを自分の GitHub にコピーする (Fork)
 
-Cloudflare は既定で `main` ブランチをデプロイする。
+1. GitHub でこのリポジトリを開き、右上の **Fork** → **Create fork**
+2. 以後の手順は、自分のアカウントにできたコピー (`<自分のID>/Run`) で行う
 
-1. GitHub でこのリポジトリを開く
-2. 作業ブランチの Pull request を作って **Merge** する (Pull request がすでにあればそれを Merge)
+本家の改良を取り込みたいときは、自分のコピーの画面で **Sync fork** → **Update branch** を押す
+(Cloudflare が自動で再デプロイする)。
 
 ### 2. D1 データベースを作る (Cloudflare)
 
@@ -76,7 +77,8 @@ Cloudflare は既定で `main` ブランチをデプロイする。
 ### 3. `wrangler.toml` に Database ID を書く (GitHub)
 
 1. GitHub で `wrangler.toml` を開き、鉛筆アイコン (Edit) をタップ
-2. `database_id = "REPLACE_WITH_YOUR_D1_ID"` の `REPLACE_WITH_YOUR_D1_ID` を、手順 2 でコピーした ID に置き換える
+2. `database_id = "..."` の `"` の中を、手順 2 でコピーした自分の ID に置き換える
+   (最初に入っているのは本家の ID なので、必ず自分のものに変える)
 3. **Commit changes** で `main` に直接コミット
 
 ### 4. Strava API アプリを作る (Strava)

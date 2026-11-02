@@ -2212,10 +2212,6 @@ async function settingsView() {
       setTimeout(route, 600);
       return 'COROS 基準に戻しました';
     });
-    run('#seed', async () => {
-      const r = await api('/seed', { method: 'POST' });
-      return `レース ${r.races} 件・計画 ${r.plans} 件を登録しました (登録済みの日付は飛ばします)`;
-    });
     run('#backfill-2025', async () => {
       const days = Math.ceil((Date.now() - Date.parse('2025-01-01T00:00:00+09:00')) / 86400000);
       { const r = bfText(await api(`/strava/backfill/start?days=${days}`, { method: 'POST' })); refreshBackfill(); return r; }
@@ -2273,11 +2269,6 @@ async function settingsView() {
       <div id="bf-live" class="bf-live muted">読み込み中…</div>
       <div class="row"><button id="backfill-2025" class="primary">2025年1月から取り込む</button><button id="backfill-all">全期間</button><button id="backfill-30">直近30日</button><button id="reeval-30">直近30日を再評価</button><button id="backfill-status">進み具合</button><button id="backfill-stop">停止</button></div>
       <p class="muted">直近30日を先に取り込み、そのあと古い記録へ進みます。閉じて大丈夫です。Strava の上限に当たると自動で待って再開します。</p>
-    </div>
-    <div class="card">
-      <h2>初期データ</h2>
-      <p class="muted">レース5件 (福岡〜佐賀さくら) と、福岡マラソンまでの練習メニューを登録します。何度押しても重複しません。</p>
-      <div class="row"><button id="seed" class="primary">レースと計画を登録</button></div>
     </div>
     <div class="card">
       <h2>iPhone カレンダー</h2>
