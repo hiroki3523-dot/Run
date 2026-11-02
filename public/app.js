@@ -302,6 +302,12 @@ const wxIcon = (code, size = 24) => {
   const [k, label] = wxKind(code);
   return `<svg class="wx" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="${WX_COLOR[k]}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${label}">${WX_PATH[k]}</svg>`;
 };
+/** 「雨のちくもり」なら 2 つのアイコンを斜めに重ねる。1 種類ならいつものアイコン */
+const wxPair = (w, size = 24) => {
+  if (w.code2 == null) return wxIcon(w.code, size);
+  return `<span class="wxp" style="--s:${size}px" title="${esc(w.label || '')}">${wxIcon(w.code, Math.round(size * 0.78))}${wxIcon(w.code2, Math.round(size * 0.62))}</span>`;
+};
+const wxText = (w) => w.label || wxKind(w.code)[1];
 let WX = {};
 const loadWx = async () => {
   try {
@@ -314,7 +320,7 @@ const loadWx = async () => {
 const wxDay = (d) => {
   const w = WX[d];
   if (!w) return '';
-  return `<div class="wxday">${wxIcon(w.code, 22)}<span class="num">${Math.round(w.tmax)}<small>/${Math.round(w.tmin)}℃</small></span>${w.precip_pct != null && w.precip_pct >= 30 ? `<span class="rain num">${w.precip_pct}%</span>` : ''}</div>`;
+  return `<div class="wxday">${wxPair(w, 22)}<span class="num">${Math.round(w.tmax)}<small>/${Math.round(w.tmin)}℃</small></span>${w.precip_pct != null && w.precip_pct >= 30 ? `<span class="rain num">${w.precip_pct}%</span>` : ''}</div>`;
 };
 
 function weekWxCard(from, place) {
@@ -322,7 +328,7 @@ function weekWxCard(from, place) {
   return `<a class="card linkcard" href="#/weather"><div class="row spread"><h2>週間天気</h2><span class="muted">${esc(place)} ・詳しく見る ›</span></div>
     <div class="wxweek">${days.map((d) => {
       const w = WX[d];
-      return `<div class="${d === from ? 'today' : ''}"><div class="muted">${dow(d)}</div>${w ? wxIcon(w.code, 26) : '<span class="muted">-</span>'}<b class="num">${w ? Math.round(w.tmax) : '-'}</b><span class="muted num">${w ? Math.round(w.tmin) : ''}</span><span class="rain num">${w && w.precip_pct != null && w.precip_pct >= 30 ? w.precip_pct + '%' : ''}</span></div>`;
+      return `<div class="${d === from ? 'today' : ''}"><div class="muted">${dow(d)}</div>${w ? wxPair(w, 28) : '<span class="muted">-</span>'}<span class="wxrel">${w?.rel === 'nochi' ? 'のち' : w?.rel === 'toki' ? '時々' : ''}</span><b class="num">${w ? Math.round(w.tmax) : '-'}</b><span class="muted num">${w ? Math.round(w.tmin) : ''}</span><span class="rain num">${w && w.precip_pct != null && w.precip_pct >= 30 ? w.precip_pct + '%' : ''}</span></div>`;
     }).join('')}</div></a>`;
 }
 
@@ -377,7 +383,7 @@ async function weatherView() {
     <div class="card"><h2>おすすめの時間帯</h2>${best(f.daily[0], '今日')}${best(f.daily[1], '明日')}${best(f.daily[2], dowOf(f.daily[2]?.date || '') + '曜')}</div>
     <div class="card"><h2>今日から 24 時間</h2>${hourChart(f.hourly)}
       <div class="hscroll">${f.hourly.slice(0, 24).map((h) => `<div class="hcell"><span class="muted num">${h.h}時</span>${wxIcon(h.code, 22)}<b class="num">${Math.round(h.temp)}°</b><span class="rain num">${(h.precip_pct ?? 0) >= 20 ? h.precip_pct + '%' : ''}</span><i style="background:${idxColor(h.index)}"></i></div>`).join('')}</div></div>
-    <div class="card"><h2>7 日間</h2><div class="dlist">${f.daily.map((d) => `<div class="drow"><span class="dd num"><b>${md(d.date)}</b> <span class="muted">${dow(d.date)}</span></span>${wxIcon(d.code, 24)}<span class="num dt"><b>${Math.round(d.tmax)}</b><span class="muted">/${Math.round(d.tmin)}</span></span><span class="rain num dr">${d.precip_pct ?? 0}%</span><span class="muted num ds">風${d.wind_max.toFixed(0)}・日の出${d.sunrise} 日の入${d.sunset}</span></div>`).join('')}</div></div>
+    <div class="card"><h2>7 日間</h2><div class="dlist">${f.daily.map((d) => `<div class="drow"><span class="dd num"><b>${md(d.date)}</b> <span class="muted">${dow(d.date)}</span></span><span class="dwx">${wxPair(d, 26)}</span><span class="num dt"><b>${Math.round(d.tmax)}</b><span class="muted">/${Math.round(d.tmin)}</span></span><span class="rain num dr">${d.precip_pct ?? 0}%</span><span class="muted num ds"><b class="dlabel">${esc(wxText(d))}</b>・風${d.wind_max.toFixed(0)}m・${d.sunrise}〜${d.sunset}</span></div>`).join('')}</div></div>
     ${f.air ? `<div class="card"><h2>大気</h2><p class="num" style="margin:0">PM2.5 <b>${f.air.pm2_5 != null ? Math.round(f.air.pm2_5) : '-'}</b> µg/m³${f.air.aqi != null ? `・AQI <b>${Math.round(f.air.aqi)}</b> <span class="muted">(${f.air.aqi < 50 ? '良好' : f.air.aqi < 100 ? 'ふつう' : '悪い'})</span>` : ''}</p></div>` : ''}
     <p class="muted hint">暑さ指数と走りやすさは、予報から計算した推定値です。</p>`;
 }
@@ -430,7 +436,7 @@ function weatherCard(w) {
   const hrs = w.hours.map((h) => `<div><div class="muted">${h.h}時</div><b>${Math.round(h.temp)}℃</b><div class="muted">${h.humidity ?? '-'}%</div></div>`).join('');
   return `<div class="card">
     <div class="row spread"><h2>${esc(w.race)}の天気 (${w.place})</h2><span class="muted num">${md(w.date)}</span></div>
-    <div class="row" style="gap:10px;align-items:center">${w.code != null ? wxIcon(w.code, 34) + `<b>${wxKind(w.code)[1]}</b>` : ''}</div>
+    <div class="row" style="gap:10px;align-items:center">${w.code != null ? wxPair(w, 36) + `<b>${esc(wxText(w))}</b>` : ''}</div>
     <div class="num" style="font-size:20px">${Math.round(w.tmin)}〜${Math.round(w.tmax)}℃ <span class="muted" style="font-size:13px">降水${w.precip_pct ?? '-'}%・風${w.wind_max.toFixed(0)}m/s</span></div>
     <div class="hours num">${hrs}</div>
     <p style="margin:8px 0 0">${esc(w.advice)}</p>
