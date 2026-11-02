@@ -1754,7 +1754,7 @@ async function activityDetailView(id) {
 
   return `
     <div class="card hd">
-      <div class="row spread"><h2>${esc(a.name)}</h2><span class="ext-links">${a.coros ? `<a class="muted" href="https://t.coros.com/admin/views/activity-data?labelId=${encodeURIComponent(a.coros.label_id)}&sportType=${a.coros.sport_type}" target="_blank" rel="noopener">COROS ↗</a>` : ''}${a.id > 0 ? `<a class="muted" href="https://www.strava.com/activities/${a.id}" target="_blank" rel="noopener">Strava ↗</a>` : ''}</span></div>
+      <div class="row spread"><h2>${esc(a.name)}</h2><span class="ext-links">${a.coros ? `<a class="muted" href="https://t.coros.com/activity-detail?labelId=${encodeURIComponent(a.coros.label_id)}&sportType=${a.coros.sport_type}" target="_blank" rel="noopener">COROS ↗</a>` : ''}${a.id > 0 ? `<a class="muted" href="https://www.strava.com/activities/${a.id}" target="_blank" rel="noopener">Strava ↗</a>` : ''}</span></div>
       <div class="muted">${a.start_date_local.slice(0, 16).replace('T', ' ')}${ev?.role ? `<span class="role">${{ warmup: 'アップ', work: 'メイン', cooldown: 'ダウン' }[ev.role]}</span>` : ''}</div>
       <div class="row spread hd-main"><div class="num"><span class="hd-km">${km(a.distance_m, 2)}</span><span class="hd-u">km</span></div>
         <div style="text-align:right"><div class="muted">総合</div><div class="big">${scoreHtml(a.score)}</div></div></div>
