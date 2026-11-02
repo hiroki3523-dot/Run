@@ -581,6 +581,33 @@ api.post('/coros/fitness', async (c) => {
   }
 });
 api.post('/coros/disconnect', async (c) => { await corosDisconnect(c.env); return c.json({ ok: true }); });
+/** 診断用: ランの一覧を条件を変えて呼び、それぞれ何件返るかを並べる (取り込みが少ない原因を切り分ける) */
+api.get('/coros/probe', async (c) => {
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const ymd = (d: string) => d.replace(/-/g, '');
+  const ago = (n: number) => ymd(addDays(today, -n));
+  const cases: [string, Record<string, unknown>][] = [
+    ['指定なし (直近 7 日)', {}],
+    ['7 日・日付だけ', { startDate: ago(6), endDate: ago(0) }],
+    ['7 日・種類つき', { startDate: ago(6), endDate: ago(0), sportTypeCodes: [100, 101, 102, 103, 104] }],
+    ['7 日・件数 50', { startDate: ago(6), endDate: ago(0), limit: 50 }],
+    ['30 日・日付だけ', { startDate: ago(29), endDate: ago(0) }],
+    ['30 日・件数 100', { startDate: ago(29), endDate: ago(0), limit: 100 }],
+    ['1 年前の 7 日', { startDate: ago(371), endDate: ago(365) }],
+  ];
+  const out = [];
+  for (const [label, args] of cases) {
+    try {
+      const r = await corosTool(c.env, 'querySportRecords', args);
+      const head = r.text.split('\n')[0].slice(0, 90);
+      out.push(`${label}: ${(r.text.match(/LabelId/gi) ?? []).length} 件 | ${head}`);
+    } catch (e) {
+      out.push(`${label}: エラー ${(e as Error).message.slice(0, 120)}`);
+    }
+  }
+  return c.json({ text: out.join('\n') });
+});
+
 /** 診断用: COROS の応答をそのまま見る (読み取りのツールだけ) */
 api.get('/coros/debug', async (c) => {
   const tool = c.req.query('tool') ?? 'querySportRecords';

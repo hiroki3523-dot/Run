@@ -2204,7 +2204,7 @@ async function settingsView() {
           <div class="row coros-btns"><button type="button" data-cs="sync" class="primary">今すぐ確認</button><button type="button" data-cs="b30">過去30日</button><button type="button" data-cs="all">全期間</button><button type="button" data-cs="fit">体力データ</button></div>
           <p class="muted coros-msg" style="margin:6px 0 0"></p>
           <details class="coros-dbg"><summary>うまく取り込めないとき (診断)</summary>
-            <div class="row"><button type="button" data-dbg="querySportRecords">ランの一覧</button><button type="button" data-dbg="queryFitnessAssessmentOverview">体力評価</button><button type="button" data-cs="off" class="danger">連携を解除</button></div>
+            <div class="row"><button type="button" data-dbg="querySportRecords">ランの一覧</button><button type="button" data-dbg="queryFitnessAssessmentOverview">体力評価</button><button type="button" data-probe="1">取得テスト</button><button type="button" data-cs="off" class="danger">連携を解除</button></div>
             <pre class="coros-raw"></pre></details>`
           : `<div class="coros-st"><span class="dot"></span><b>COROS は未連携</b></div>
              <a class="btn primary wide" style="margin-top:8px;display:block;text-align:center" href="/auth/coros?key=${encodeURIComponent(getToken())}">COROS と連携</a>
@@ -2214,10 +2214,11 @@ async function settingsView() {
       box.addEventListener('click', async (e) => {
         const b = e.target.closest('button');
         if (!b) return;
-        const act = b.dataset.cs, dbg = b.dataset.dbg;
+        const act = b.dataset.cs, dbg = b.dataset.dbg, probe = b.dataset.probe;
         b.disabled = true;
         try {
-          if (dbg) { const r = await api(`/coros/debug?tool=${dbg}`); box.querySelector('.coros-raw').textContent = r.text || JSON.stringify(r.structured, null, 1); }
+          if (probe) { box.querySelector('.coros-raw').textContent = '調べています (20 秒ほど)…'; const r = await api('/coros/probe'); box.querySelector('.coros-raw').textContent = r.text; }
+          else if (dbg) { const r = await api(`/coros/debug?tool=${dbg}`); box.querySelector('.coros-raw').textContent = r.text || JSON.stringify(r.structured, null, 1); }
           else if (act === 'sync') { const r = await api('/coros/sync', { method: 'POST' }); draw(r); msg(`新しいラン ${r.added} 件・取り込み ${r.imported} 件${r.removed ? `・Strava と同じ ${r.removed} 件を 1 件にまとめました` : ''}`); }
           else if (act === 'b30') { const r = await api('/coros/backfill', { method: 'POST', body: { days: 30 } }); draw(r); msg(`${r.added} 件を取り込み待ちにしました。毎分少しずつ取り込みます`); }
           else if (act === 'all') { if (!confirm('COROS の全期間のランを取り込みます。Strava にもあるランは 1 件のまま中身を COROS に置き換えます (Strava のランは消えません)。新しいものから 1 日 50 件ずつ取り込みます。')) { b.disabled = false; return; } const r = await api('/coros/backfill', { method: 'POST', body: { all: true } }); draw(r); msg('全期間の取り込みを始めました。閉じて大丈夫です'); }
