@@ -776,3 +776,27 @@ body::after {
 .news-tag { grid-row: 1 / 3; align-self: start; justify-self: stretch; text-align: center; margin-top: 2px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; color: var(--tc); background: color-mix(in srgb, var(--tc) 16%, transparent); white-space: nowrap; }
 .news-l b { font-size: 14.5px; font-weight: 600; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .news-l small { font-size: 12px; }
+
+/* 月間目標の変更ボタン */
+.mg-btn { display: flex; flex-direction: column; align-items: flex-end; gap: 0; padding: 6px 14px; border-radius: 14px; min-height: 48px; }
+.mg-btn b { font-size: 18px; }
+.mg-btn small { font-size: 11px; color: var(--muted); font-weight: 600; }
+
+/* 目標への現在地 */
+.ins-head { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; align-items: end; margin-bottom: 12px; }
+.ins-head small { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ins-head b { font-size: 24px; font-weight: 700; }
+.ins-gap { font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 999px; white-space: nowrap; }
+.ins-gap.ok { color: var(--good); background: color-mix(in srgb, var(--good) 15%, transparent); }
+.ins-gap.ng { color: var(--mid); background: color-mix(in srgb, var(--mid) 15%, transparent); }
+.ins-list { border-top: 1px solid var(--line); }
+.ins-row { display: grid; grid-template-columns: 10px 1fr auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.ins-row i { width: 10px; height: 10px; border-radius: 50%; }
+.ins-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ins-row b { white-space: nowrap; font-size: 15px; }
+.ins-row b small { color: var(--muted); font-weight: 400; font-size: 12px; }
+.ins-act { margin-top: 12px; }
+.ins-act > b { font-size: 14px; }
+.ins-act ol { margin: 6px 0 0; padding-left: 1.3em; display: grid; gap: 6px; font-size: 14px; line-height: 1.5; }
+.wh-it { white-space: nowrap; }
+.wh-cols:not(:has(.wh-col + .wh-col)) .wh-col { flex: 0 0 220px; max-width: 220px; }
