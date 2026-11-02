@@ -1,3 +1,4 @@
+import { daySky, type DaySky } from './weather';
 /** 天気予報 (Open-Meteo・無料・キー不要)。気温・湿度・日射から暑さ指数 (WBGT 推定) と走りやすさを計算する */
 
 export interface Place { name: string; lat: number; lon: number }
@@ -60,7 +61,7 @@ export const indexLabel = (i: number) => (i >= 85 ? '最適' : i >= 70 ? '走り
 /** 暑さで遅くなるペースの目安 (秒/km)。10℃ を超えた分、フルのペースで約 2 秒/km/℃ */
 export const heatPaceCost = (temp: number) => Math.max(0, Math.round((temp - 10) * 2));
 
-export interface DayInfo {
+export interface DayInfo extends Partial<Omit<DaySky, 'code'>> {
   date: string;
   code: number;
   tmax: number;
@@ -143,7 +144,7 @@ export async function forecast(place: Place, nowMs = Date.now()): Promise<Foreca
       }
     }
     return {
-      date, code: n(D.weather_code, i), tmax: n(D.temperature_2m_max, i), tmin: n(D.temperature_2m_min, i), feels_max: n(D.apparent_temperature_max, i),
+      date, ...daySky(hourly.filter((h) => h.t.startsWith(date)).map((h) => ({ h: h.h, code: h.code })), n(D.weather_code, i)), tmax: n(D.temperature_2m_max, i), tmin: n(D.temperature_2m_min, i), feels_max: n(D.apparent_temperature_max, i),
       precip_pct: D.precipitation_probability_max?.[i] == null ? null : Number(D.precipitation_probability_max[i]),
       precip_mm: n(D.precipitation_sum, i), wind_max: n(D.wind_speed_10m_max, i),
       sunrise: String(D.sunrise?.[i]).slice(11, 16), sunset: String(D.sunset?.[i]).slice(11, 16), uv_max: n(D.uv_index_max, i), best,

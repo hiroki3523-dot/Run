@@ -302,6 +302,12 @@ const wxIcon = (code, size = 24) => {
   const [k, label] = wxKind(code);
   return `<svg class="wx" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="${WX_COLOR[k]}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="${label}">${WX_PATH[k]}</svg>`;
 };
+/** 「雨のちくもり」なら 2 つのアイコンを斜めに重ねる。1 種類ならいつものアイコン */
+const wxPair = (w, size = 24) => {
+  if (w.code2 == null) return wxIcon(w.code, size);
+  return `<span class="wxp" style="--s:${size}px" title="${esc(w.label || '')}">${wxIcon(w.code, Math.round(size * 0.78))}${wxIcon(w.code2, Math.round(size * 0.62))}</span>`;
+};
+const wxText = (w) => w.label || wxKind(w.code)[1];
 let WX = {};
 const loadWx = async () => {
   try {
@@ -314,7 +320,7 @@ const loadWx = async () => {
 const wxDay = (d) => {
   const w = WX[d];
   if (!w) return '';
-  return `<div class="wxday">${wxIcon(w.code, 22)}<span class="num">${Math.round(w.tmax)}<small>/${Math.round(w.tmin)}℃</small></span>${w.precip_pct != null && w.precip_pct >= 30 ? `<span class="rain num">${w.precip_pct}%</span>` : ''}</div>`;
+  return `<div class="wxday">${wxPair(w, 22)}<span class="num">${Math.round(w.tmax)}<small>/${Math.round(w.tmin)}℃</small></span>${w.precip_pct != null && w.precip_pct >= 30 ? `<span class="rain num">${w.precip_pct}%</span>` : ''}</div>`;
 };
 
 function weekWxCard(from, place) {
@@ -322,7 +328,7 @@ function weekWxCard(from, place) {
   return `<a class="card linkcard" href="#/weather"><div class="row spread"><h2>週間天気</h2><span class="muted">${esc(place)} ・詳しく見る ›</span></div>
     <div class="wxweek">${days.map((d) => {
       const w = WX[d];
-      return `<div class="${d === from ? 'today' : ''}"><div class="muted">${dow(d)}</div>${w ? wxIcon(w.code, 26) : '<span class="muted">-</span>'}<b class="num">${w ? Math.round(w.tmax) : '-'}</b><span class="muted num">${w ? Math.round(w.tmin) : ''}</span><span class="rain num">${w && w.precip_pct != null && w.precip_pct >= 30 ? w.precip_pct + '%' : ''}</span></div>`;
+      return `<div class="${d === from ? 'today' : ''}"><div class="muted">${dow(d)}</div>${w ? wxPair(w, 28) : '<span class="muted">-</span>'}<span class="wxrel">${w?.rel === 'nochi' ? 'のち' : w?.rel === 'toki' ? '時々' : ''}</span><b class="num">${w ? Math.round(w.tmax) : '-'}</b><span class="muted num">${w ? Math.round(w.tmin) : ''}</span><span class="rain num">${w && w.precip_pct != null && w.precip_pct >= 30 ? w.precip_pct + '%' : ''}</span></div>`;
     }).join('')}</div></a>`;
 }
 
@@ -377,7 +383,7 @@ async function weatherView() {
     <div class="card"><h2>おすすめの時間帯</h2>${best(f.daily[0], '今日')}${best(f.daily[1], '明日')}${best(f.daily[2], dowOf(f.daily[2]?.date || '') + '曜')}</div>
     <div class="card"><h2>今日から 24 時間</h2>${hourChart(f.hourly)}
       <div class="hscroll">${f.hourly.slice(0, 24).map((h) => `<div class="hcell"><span class="muted num">${h.h}時</span>${wxIcon(h.code, 22)}<b class="num">${Math.round(h.temp)}°</b><span class="rain num">${(h.precip_pct ?? 0) >= 20 ? h.precip_pct + '%' : ''}</span><i style="background:${idxColor(h.index)}"></i></div>`).join('')}</div></div>
-    <div class="card"><h2>7 日間</h2><div class="dlist">${f.daily.map((d) => `<div class="drow"><span class="dd num"><b>${md(d.date)}</b> <span class="muted">${dow(d.date)}</span></span>${wxIcon(d.code, 24)}<span class="num dt"><b>${Math.round(d.tmax)}</b><span class="muted">/${Math.round(d.tmin)}</span></span><span class="rain num dr">${d.precip_pct ?? 0}%</span><span class="muted num ds">風${d.wind_max.toFixed(0)}・日の出${d.sunrise} 日の入${d.sunset}</span></div>`).join('')}</div></div>
+    <div class="card"><h2>7 日間</h2><div class="dlist">${f.daily.map((d) => `<div class="drow"><span class="dd num"><b>${md(d.date)}</b> <span class="muted">${dow(d.date)}</span></span><span class="dwx">${wxPair(d, 26)}</span><span class="num dt"><b>${Math.round(d.tmax)}</b><span class="muted">/${Math.round(d.tmin)}</span></span><span class="rain num dr">${d.precip_pct ?? 0}%</span><span class="muted num ds"><b class="dlabel">${esc(wxText(d))}</b>・風${d.wind_max.toFixed(0)}m・${d.sunrise}〜${d.sunset}</span></div>`).join('')}</div></div>
     ${f.air ? `<div class="card"><h2>大気</h2><p class="num" style="margin:0">PM2.5 <b>${f.air.pm2_5 != null ? Math.round(f.air.pm2_5) : '-'}</b> µg/m³${f.air.aqi != null ? `・AQI <b>${Math.round(f.air.aqi)}</b> <span class="muted">(${f.air.aqi < 50 ? '良好' : f.air.aqi < 100 ? 'ふつう' : '悪い'})</span>` : ''}</p></div>` : ''}
     <p class="muted hint">暑さ指数と走りやすさは、予報から計算した推定値です。</p>`;
 }
@@ -430,7 +436,7 @@ function weatherCard(w) {
   const hrs = w.hours.map((h) => `<div><div class="muted">${h.h}時</div><b>${Math.round(h.temp)}℃</b><div class="muted">${h.humidity ?? '-'}%</div></div>`).join('');
   return `<div class="card">
     <div class="row spread"><h2>${esc(w.race)}の天気 (${w.place})</h2><span class="muted num">${md(w.date)}</span></div>
-    <div class="row" style="gap:10px;align-items:center">${w.code != null ? wxIcon(w.code, 34) + `<b>${wxKind(w.code)[1]}</b>` : ''}</div>
+    <div class="row" style="gap:10px;align-items:center">${w.code != null ? wxPair(w, 36) + `<b>${esc(wxText(w))}</b>` : ''}</div>
     <div class="num" style="font-size:20px">${Math.round(w.tmin)}〜${Math.round(w.tmax)}℃ <span class="muted" style="font-size:13px">降水${w.precip_pct ?? '-'}%・風${w.wind_max.toFixed(0)}m/s</span></div>
     <div class="hours num">${hrs}</div>
     <p style="margin:8px 0 0">${esc(w.advice)}</p>
@@ -1944,22 +1950,6 @@ function shoeAdvice(shoes, race) {
 
 const STATUS = [[0, '使用中'], [2, '予備'], [1, '引退']];
 
-// Nike Run Club のマイシューズ (2026-11-01 時点)。[名前, km, 使用中か]。末尾が「…」の名前は前方一致
-const NRC_SHOES = [
-  ['EVO SL EXO', 167.7, 1], ['ボメロプラス2', 766.5, 1], ['ヴェイパーフライ ブラ…', 57.72, 1], ['アルファフライ3 no2', 51.41, 1],
-  ['ボメロ18 007', 142.7, 1], ['ヴェイパーフライ4', 79.48, 1], ['ストラクチャー26', 267.5, 1], ['ズームフライ6 no.2', 288.0, 1],
-  ['ボメロプラスブラック', 388.1, 1], ['ズームフライ6', 593.0, 1], ['ボメロ18 black2', 684.2, 1], ['ペガサス40', 236.7, 1],
-  ['アルファフライ3', 0, 1], ['ボメロプラス', 971.7, 0], ['ボメロ18', 859.7, 0], ['ボメロ18 black', 552.0, 0],
-  ['インフィニティラン4', 491.7, 0], ['インヴィンシブル3', 777.8, 0], ['Cloud monster', 76.52, 0], ['エアマックス', 84.75, 0],
-];
-const normName = (x) => String(x || '').normalize('NFKC').toLowerCase().replace(/[\s　]+/g, '');
-const NRC_ALIAS = { 'ボメロプラス②': 'ボメロプラス2', 'ボメロプラス③black': 'ボメロプラスブラック', 'アルファフライ3②': 'アルファフライ3 no2', 'ヴェイパーフライ4②': 'ヴェイパーフライ ブラ…', 'evosl': 'EVO SL EXO' };
-function nrcOf(shoe) {
-  const alias = Object.entries(NRC_ALIAS).find(([k]) => normName(k) === normName(shoe.name));
-  if (alias) { const hit = NRC_SHOES.find(([nm]) => nm === alias[1]); if (hit) return hit; }
-  const n = normName(shoe.name);
-  return NRC_SHOES.find(([nm]) => !nm.endsWith('…') && normName(nm) === n) || NRC_SHOES.find(([nm]) => nm.endsWith('…') && n.startsWith(normName(nm.slice(0, -1))));
-}
 async function putShoe(s, patch) {
   await api(`/shoes/${s.id}`, { method: 'PUT', body: { ...s, ...patch } });
 }
@@ -1968,7 +1958,6 @@ async function shoesView() {
   const [shoes, races] = await Promise.all([api('/shoes'), api('/races').catch(() => [])]);
   const nextRace = races.filter((r) => r.date >= today() && ['A', 'B'].includes(r.priority)).sort((a, b) => a.date.localeCompare(b.date))[0];
   const advice = shoeAdvice(shoes, nextRace);
-  const nrcDone = (() => { try { return localStorage.getItem('nrcDone') === '1'; } catch { return false; } })();
   const guesses = shoes.filter((x) => !x.retired && guessPurposes(x.name) && purposesOf(x.purpose).join() !== guessPurposes(x.name).join());
   setTimeout(() => {
     view.querySelector('#add-shoe').onclick = () => editShoe({ purpose: 'easy', limit_km: 700, initial_km: 0 });
@@ -2026,24 +2015,6 @@ async function shoesView() {
       await putShoe(s, { retired: Number(b.dataset.st) });
       route();
     }));
-    const nb = view.querySelector('#nrc-sync');
-    if (nb) nb.onclick = async () => {
-      const opts = (sel) => `<option value="">そのまま</option>${NRC_SHOES.map((n, k) => `<option value="${k}" ${sel === n ? 'selected' : ''}>${esc(n[0].replace('…', ''))}　${n[1]}km</option>`).join('')}`;
-      const pending = openDialog(`<h2>NRC の距離に合わせる</h2>
-        <p class="muted" style="margin-top:0">アプリのシューズごとに、NRC のどれにあたるかを選びます。選んだものだけ、距離が NRC の数字になります。</p>
-        ${shoes.map((x) => `<label class="nrc-row"><span><b>${esc(x.name)}</b><small class="muted num"> いま ${x.total_km.toFixed(1)}km</small></span><select name="s${x.id}">${opts(nrcOf(x))}</select></label>`).join('')}`);
-      const v = await pending;
-      if (!v) return;
-      for (const x of shoes) {
-        const k = v[`s${x.id}`];
-        if (k === '' || k == null) continue;
-        const n = NRC_SHOES[Number(k)];
-        const imported = x.total_km - (x.initial_km || 0);
-        await putShoe(x, { initial_km: Math.round((n[1] - imported) * 100) / 100, ...(n[2] && x.retired === 1 ? { retired: 0 } : {}) });
-      }
-      try { localStorage.setItem('nrcDone', '1'); } catch {}
-      route();
-    };
     const g = view.querySelector('#guess');
     if (g) g.onclick = async () => {
       if (!confirm(`名前から用途を推定して設定します:\n${guesses.map((x) => `${x.name} → ${guessPurposes(x.name).map((p) => PURPOSE_LABELS[p]).join('・')}`).join('\n')}\n(あとで各シューズから直せます)`)) return;
@@ -2074,11 +2045,9 @@ async function shoesView() {
   return `
     <div class="row spread" style="margin-bottom:8px"><h2>シューズ</h2><button class="primary" id="add-shoe">＋ 追加</button></div>
     ${advice.length ? `<div class="card"><ul class="advice">${advice.map((a) => `<li class="${a.tone}">${a.text}</li>`).join('')}</ul></div>` : ''}
-    ${nrcDone ? '' : `<div class="card"><p style="margin:0 0 10px"><b>距離を NRC の数字に合わせる</b></p><button id="nrc-sync" class="primary wide">NRC に合わせる</button></div>`}
     ${guesses.length ? `<div class="card"><p class="muted" style="margin-top:0">名前から、用途を自動で設定できます (${guesses.length}足)。</p><button id="guess" class="primary wide">用途をまとめて設定</button></div>` : ''}
     <div class="card"><ul class="list shoes">${active.map(row).join('') || '<li class="muted">使用中のシューズはありません</li>'}</ul></div>
     ${rest.length ? `<h3 class="sub" style="margin:18px 4px 6px">予備・引退 (${rest.length}足)</h3><div class="card"><ul class="list shoes">${rest.map(row).join('')}</ul></div>` : ''}
-    ${nrcDone ? '<div style="margin-top:10px"><button id="nrc-sync" class="chip">NRC の距離に合わせ直す</button></div>' : ''}
     <p class="muted hint">右へスライドで「予備/使用中」、左へスライドで「引退」。タップすると写真・用途・走行距離を直せます。</p>`;
 }
 
