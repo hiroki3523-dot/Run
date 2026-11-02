@@ -15,7 +15,7 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0b0d13;
     --surface: #14171f;
     --text: #f1f2f6;
@@ -29,6 +29,20 @@
     --bad: #ff6b7a;
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+    --bg: #0b0d13;
+    --surface: #14171f;
+    --text: #f1f2f6;
+    --muted: #868c9c;
+    --line: #232733;
+    --accent: #7d8cff;
+    --accent-soft: #1b2040;
+    --on-accent: #0b0d13;
+    --good: #3ddc9a;
+    --mid: #f0b44c;
+    --bad: #ff6b7a;
+    color-scheme: dark;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { background: var(--bg); }
@@ -704,8 +718,9 @@ nav {
   box-shadow: 0 10px 34px rgb(0 0 0 / .6), inset 0 1px 0 rgb(255 255 255 / .08);
 }
 @media (prefers-color-scheme: light) {
-  nav { background: color-mix(in srgb, #ffffff 94%, transparent); border-color: rgb(12 14 20 / .12); box-shadow: 0 10px 30px rgb(10 14 40 / .18); }
+  :root:not([data-theme="dark"]) nav { background: color-mix(in srgb, #ffffff 94%, transparent); border-color: rgb(12 14 20 / .12); box-shadow: 0 10px 30px rgb(10 14 40 / .18); }
 }
+:root[data-theme="light"] nav { background: color-mix(in srgb, #ffffff 94%, transparent); border-color: rgb(12 14 20 / .12); box-shadow: 0 10px 30px rgb(10 14 40 / .18); }
 nav a { flex-direction: column; gap: 2px; padding: 7px 0 6px; min-height: 52px; font-size: 10.5px; font-weight: 600; color: color-mix(in srgb, var(--text) 62%, transparent); }
 nav a svg { display: block; }
 nav a.active { color: #fff; }
@@ -921,3 +936,6 @@ body::after {
 .sf-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
 .sf-fields:disabled { opacity: .6; }
 .sf-fields:disabled button.primary { display: none; }
+
+/* 画面の色 (自動・ダーク・ライト) */
+.theme-seg { margin-top: 2px; }

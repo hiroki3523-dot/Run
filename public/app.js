@@ -2246,6 +2246,13 @@ async function editShoe(s) {
 
 // ---- 設定
 
+/** 画面の色: auto (端末に合わせる) / dark / light。端末ごとに保存 */
+function getTheme() { try { return localStorage.getItem('theme') || 'auto'; } catch { return 'auto'; } }
+function setTheme(t) {
+  try { if (t === 'auto') localStorage.removeItem('theme'); else localStorage.setItem('theme', t); } catch {}
+  if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+}
+
 async function settingsView() {
   let status = null;
   let settings = null;
@@ -2257,6 +2264,10 @@ async function settingsView() {
   }
 
   setTimeout(() => {
+    view.querySelectorAll('[data-theme-set]').forEach((b) => (b.onclick = () => {
+      setTheme(b.dataset.themeSet);
+      view.querySelectorAll('[data-theme-set]').forEach((x) => x.classList.toggle('on', x === b));
+    }));
     // ランの取り込み元と COROS 連携
     const sc = view.querySelector('#src-card');
     if (sc) {
@@ -2417,6 +2428,10 @@ async function settingsView() {
       </div>
       <p class="muted">ホーム画面のアプリと Safari は別々に保存されます。Safari でコピーして、ホーム画面のアプリに貼り付けてください。</p>
       ${err ? `<p class="error">${esc(err)}</p>` : ''}
+    </div>
+    <div class="card" id="theme-card"><h2>画面の色</h2>
+      <div class="pf-seg pred-seg theme-seg" style="--n:3">${[['auto', '自動'], ['dark', 'ダーク'], ['light', 'ライト']].map(([k, l]) => `<button type="button" class="${getTheme() === k ? 'on' : ''}" data-theme-set="${k}">${l}</button>`).join('')}</div>
+      <p class="muted" style="margin:10px 0 0">自動は iPhone の外観 (ダーク/ライト) に合わせます。この端末だけの設定です。</p>
     </div>
     <pre id="out" style="white-space:pre-wrap;word-break:break-all;margin:8px 4px"></pre>
     ${status && settings ? `
