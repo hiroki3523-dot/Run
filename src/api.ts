@@ -10,6 +10,7 @@ import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './re
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
+import { buildInsights } from './insights';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
 import { getBackfill, startBackfill, stopBackfill } from './backfill';
@@ -536,6 +537,24 @@ api.get('/weather/forecast', async (c) => {
 });
 
 /** 次のレース (16 日以内) の当日予報 */
+/** 実績から見た課題と、次にやる練習 (目標タイムのある次のレースに向けて) */
+api.get('/insights', async (c) => {
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const st = await getSettings(c.env);
+  const [runs, race] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT a.date, a.distance_m, a.moving_time_s, a.avg_hr, a.avg_cadence_spm, p.type AS plan_type,
+         json_extract(a.evaluation, '$.role') AS role, json_extract(a.evaluation, '$.hr.details.drift_pct') AS drift_pct
+       FROM activities a LEFT JOIN plans p ON p.id = a.plan_id WHERE a.date BETWEEN ? AND ?`,
+    ).bind(addDays(today, -56), today).all<any>(),
+    c.env.DB.prepare('SELECT name, date, distance_m, goal_time_s FROM races WHERE date >= ? ORDER BY goal_time_s IS NULL, date LIMIT 1').bind(today).first<any>(),
+  ]);
+  return c.json(buildInsights({
+    today, runs: runs.results, race: race ?? null,
+    predicted_full_s: st.coros?.predicted_s?.full ?? null, target_cadence: st.target_cadence ?? 180,
+  }));
+});
+
 /** ランニングのニュース (シューズ・大会・レース)。1 時間キャッシュ */
 api.get('/news', async (c) => {
   c.header('Cache-Control', 'private, max-age=1800');
