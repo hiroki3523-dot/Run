@@ -703,7 +703,10 @@ api.get('/activities/:id', async (c) => {
   const { results: siblings } = await c.env.DB.prepare(
     `SELECT id, name, start_date_local, distance_m, moving_time_s, avg_hr, score, plan_id, json_extract(evaluation, '$.role') AS role FROM activities WHERE date = ? ORDER BY start_date_local`,
   ).bind(row.date).all();
-  return c.json({ ...row, evaluation: row.evaluation ? JSON.parse(row.evaluation as string) : null, plan, siblings });
+  // COROS のデータがあれば、その記録 (labelId・種目) も返す (COROS へのリンク用)
+  const ext = await c.env.DB.prepare(`SELECT ext_id, json_extract(data, '$.act.sport_type') AS st FROM ext_activities WHERE id = ? AND data NOT LIKE '{"dup_of"%'`).bind(row.id).first<{ ext_id: string; st: string }>();
+  const coros = ext ? { label_id: ext.ext_id, sport_type: ext.st === 'TrailRun' ? 102 : ext.st === 'VirtualRun' ? 101 : 100 } : null;
+  return c.json({ ...row, evaluation: row.evaluation ? JSON.parse(row.evaluation as string) : null, plan, siblings, coros });
 });
 
 /** 計画の付け替え・シューズ変更 (計画を変えたら再評価) */
