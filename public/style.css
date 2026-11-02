@@ -767,3 +767,12 @@ body::after {
 .wk-day:disabled { opacity: .35; }
 .wk-day.off-day { background: color-mix(in srgb, var(--bad) 28%, var(--surface)); border-color: var(--bad); color: var(--text); }
 .wk-day.off-day small { color: var(--text); }
+
+/* ホーム: ランニングニュース */
+.news-l { list-style: none; margin: 0; padding: 0; }
+.news-l li + li { border-top: 1px solid var(--line); }
+.news-l a { display: grid; grid-template-columns: 5em 1fr; column-gap: 10px; row-gap: 3px; padding: 12px 0; color: var(--text); text-decoration: none; }
+.news-l a:active { opacity: .6; }
+.news-tag { grid-row: 1 / 3; align-self: start; justify-self: stretch; text-align: center; margin-top: 2px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; color: var(--tc); background: color-mix(in srgb, var(--tc) 16%, transparent); white-space: nowrap; }
+.news-l b { font-size: 14.5px; font-weight: 600; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.news-l small { font-size: 12px; }

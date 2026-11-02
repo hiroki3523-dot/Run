@@ -116,6 +116,23 @@ function openDialog(html, { onDelete } = {}) {
 
 // ---------------------------------------------------------------- views
 
+/** ホームのニュース。画面を出したあとで読み込む (遅くてもホームの表示を待たせない) */
+const NEWS_TAG = { シューズ: 'var(--c-long)', 大会: 'var(--c-m)', レース: 'var(--c-easy)' };
+function ago(iso) {
+  const h = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 3600000));
+  return h < 1 ? 'たった今' : h < 24 ? `${h}時間前` : `${Math.round(h / 24)}日前`;
+}
+async function loadNews() {
+  const box = document.getElementById('news-list');
+  if (!box) return;
+  try {
+    const list = await api('/news');
+    box.innerHTML = list.length ? `<ul class="news-l">${list.map((n) => `<li><a href="${esc(n.url)}" target="_blank" rel="noopener">
+      <span class="news-tag" style="--tc:${NEWS_TAG[n.tag] || 'var(--muted)'}">${esc(n.tag)}</span>
+      <b>${esc(n.title)}</b><small class="muted">${esc(n.source)}・${ago(n.date)}</small></a></li>`).join('')}</ul>` : '<p class="muted">いまは表示できるニュースがありません。</p>';
+  } catch { box.innerHTML = '<p class="muted">ニュースを読み込めませんでした。</p>'; }
+}
+
 async function homeView() {
   const t = today();
   const ws = weekStart(t);
@@ -134,7 +151,6 @@ async function homeView() {
   // 6 週間前から、次のレースの週まで (最大 14 週先)。過去は実績、先は計画
   const endDay = next && next.date <= addDays(ws, 7 * 14) ? next.date : addDays(ws, 6);
   const summary = await api(`/summary?from=${addDays(ws, -7 * 6)}&to=${endDay}`);
-  const thisWeek = summary.find((w) => w.week === ws) || { planned_m: 0, actual_m: 0, points_planned: 0, points_done: 0 };
 
   return `
     ${status.strava_connected ? '' : '<div class="card error">Strava が未連携です。<a href="#/settings">設定</a>から連携してください。</div>'}
@@ -164,19 +180,11 @@ async function homeView() {
         <div class="muted">タップで詳細・スプリットを見る ›</div></a>` : '';
     })()}
     ${await monthGoalCard(t)}
-    <div class="card week">
-      <h2>今週</h2>
-      <div class="row spread num"><span>${km(thisWeek.actual_m)} / ${km(thisWeek.planned_m)} km</span><span class="muted">ポイント練 ${thisWeek.points_done}/${thisWeek.points_planned}</span></div>
-      <div class="bar"><div style="width:${Math.min(100, thisWeek.planned_m ? (thisWeek.actual_m / thisWeek.planned_m) * 100 : 0)}%"></div></div>
-    </div>
     <div class="card">
       <h2>週間距離${next ? `と、${esc(next.name)}まで` : ''}</h2>
       ${weeklyChart(summary)}
     </div>
-    <div class="card">
-      <h2>最近のラン</h2>
-      ${activityList(acts.slice(0, 5))}
-    </div>`;
+    <div class="card news"><h2>ランニングニュース</h2><div id="news-list"><p class="muted">読み込み中…</p></div></div>`;
 }
 
 /** 等ペースで走った場合の 5km ごとの通過タイム */
@@ -808,7 +816,7 @@ function wirePrefs(root, settings, ws) {
     body.innerHTML = `
       <p class="muted pf-note">1週間の回数を選びます。選んだ回数は保存され、次の週にも使われます。</p>
       ${seg('ポイント練', 'data-pp', [0, 1, 2, 3], prefs.points_per_week)}
-      ${seg('ロング走', 'data-lp', [0, 1], prefs.long_per_week)}
+      ${seg('ロング走', 'data-lp', [0, 1, 2], prefs.long_per_week)}
       ${seg('休息日', 'data-rp', [0, 1, 2, 3], prefs.rest_per_week)}
       ${weekDays.length ? `<div class="pf-block"><div class="pf-h"><b>走れない日</b><span class="muted">タップした日は休みにします</span></div>
         <div class="wk-days">${[...Array(7)].map((_, i) => addDays(ws, i)).map((d) => `<button type="button" class="wk-day ${prefs.blocked.includes(d) ? 'on off-day' : ''}" data-bl="${d}" ${d < t ? 'disabled' : ''}><small>${dow(d)}</small><b class="num">${Number(d.slice(8))}</b></button>`).join('')}</div></div>` : ''}
@@ -2368,6 +2376,7 @@ async function route() {
       : await homeView();
     view.innerHTML = html;
     bindTrend(view);
+    if (document.getElementById('news-list')) loadNews();
   } catch (e) {
     view.innerHTML = `<div class="card error">${esc(e.message)}</div>`;
   }
