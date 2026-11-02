@@ -686,3 +686,14 @@ a.act { display: block; margin-top: 8px; padding: 10px 12px; border-radius: 14px
 .fbx-memo { width: 100%; box-sizing: border-box; font: inherit; font-size: 15px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: transparent; color: var(--text); resize: vertical; }
 .fbx .fbx-save { width: 100%; margin-top: 16px; min-height: 50px; border-radius: 999px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; background: var(--text); color: var(--bg); border: 0; box-shadow: none; }
 .fbx .fbx-save:disabled { background: var(--btn-bg); color: var(--muted); }
+
+/* ---- 天気「のち」「時々」: 2 つのアイコンを斜めに重ねる */
+.wxp { position: relative; display: inline-block; width: calc(var(--s) * 1.2); height: var(--s); flex: none; }
+.wxp svg { position: absolute; }
+.wxp svg:first-child { left: 0; top: 0; }
+.wxp svg:last-child { right: 0; bottom: 0; }
+.wxweek .wxrel { font-size: 10px; line-height: 1; color: var(--muted); min-height: 10px; margin-top: -2px; }
+.drow { grid-template-columns: 74px 30px 52px 38px; }
+.drow .dwx { display: flex; justify-content: center; }
+.drow .dlabel { color: var(--text); font-weight: 600; }
+.drow .ds { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
