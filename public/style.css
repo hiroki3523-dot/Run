@@ -902,3 +902,6 @@ body::after {
 .sf-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
 .sf-fields:disabled { opacity: .6; }
 .sf-fields:disabled button.primary { display: none; }
+
+/* 実績のタブ (一覧・日・週・月): スクロールしてもヘッダーの下に残す */
+.seg { position: sticky; top: var(--hdr, 84px); z-index: 15; box-shadow: 0 0 0 6px var(--bg); }
