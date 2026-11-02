@@ -1,34 +1,18 @@
 /* STRIDE — 余白と数字で見せる。色はインク + ブルー 1 色だけ */
 :root {
-  --bg: #f4f5f7;
-  --surface: #ffffff;
-  --text: #0c0e14;
-  --muted: #7b8090;
-  --line: #e4e6eb;
-  --accent: #2b3dff;
-  --accent-soft: #e8ebff;
-  --on-accent: #ffffff;
-  --good: #0f9d6b;
-  --mid: #c7861a;
-  --bad: #e03e4e;
   --r: 18px;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b0d13;
-    --surface: #14171f;
-    --text: #f1f2f6;
-    --muted: #868c9c;
-    --line: #232733;
-    --accent: #7d8cff;
-    --accent-soft: #1b2040;
-    --on-accent: #0b0d13;
-    --good: #3ddc9a;
-    --mid: #f0b44c;
-    --bad: #ff6b7a;
-    color-scheme: dark;
-  }
+  --bg: #0b0d13;
+  --surface: #14171f;
+  --text: #f1f2f6;
+  --muted: #868c9c;
+  --line: #232733;
+  --accent: #7d8cff;
+  --accent-soft: #1b2040;
+  --on-accent: #0b0d13;
+  --good: #3ddc9a;
+  --mid: #f0b44c;
+  --bad: #ff6b7a;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { background: var(--bg); }
@@ -702,9 +686,6 @@ nav {
   background: color-mix(in srgb, #2a3042 92%, transparent);
   border: 1px solid rgb(255 255 255 / .14);
   box-shadow: 0 10px 34px rgb(0 0 0 / .6), inset 0 1px 0 rgb(255 255 255 / .08);
-}
-@media (prefers-color-scheme: light) {
-  nav { background: color-mix(in srgb, #ffffff 94%, transparent); border-color: rgb(12 14 20 / .12); box-shadow: 0 10px 30px rgb(10 14 40 / .18); }
 }
 nav a { flex-direction: column; gap: 2px; padding: 7px 0 6px; min-height: 52px; font-size: 10.5px; font-weight: 600; color: color-mix(in srgb, var(--text) 62%, transparent); }
 nav a svg { display: block; }
