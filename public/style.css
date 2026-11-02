@@ -917,3 +917,4 @@ body::after {
 .ck .ck-in, .ck-in { display: block; position: static; opacity: 1; pointer-events: auto; width: auto; height: auto; appearance: auto; flex: 1; min-width: 0; font-size: 15px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--text); }
 .ck-add { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .ck-add select { min-height: 44px; border-radius: 12px; }
+.ext-links { display: flex; gap: 14px; white-space: nowrap; }
