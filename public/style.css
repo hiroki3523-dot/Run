@@ -729,3 +729,25 @@ body::after {
 .gp2 .gp-t b span { font-size: 13px; color: var(--muted); margin-left: 2px; }
 .chips.pm3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .chips.pm3 .chip { justify-content: center; padding: 10px 4px; white-space: nowrap; }
+
+/* ---- 計画の追加・編集: 日・種別・距離/ペース (タップで選ぶ) */
+.wk-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.wk-day { display: flex; flex-direction: column; align-items: center; gap: 0; padding: 8px 0; border-radius: 14px; min-height: 56px; }
+.wk-day small { font-size: 11px; color: var(--muted); font-weight: 600; }
+.wk-day b { font-size: 18px; }
+.wk-day.on { background: linear-gradient(135deg, #2b3dff, #7a5cff); border-color: transparent; color: #fff; }
+.wk-day.on small { color: rgb(255 255 255 / .8); }
+.wk-types { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.wk-type { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-height: 58px; padding: 6px 2px; border-radius: 14px; font-size: 12.5px; white-space: nowrap; }
+.wk-type i { width: 10px; height: 10px; border-radius: 50%; background: var(--tc); }
+.wk-type.on { border-color: var(--tc); background: color-mix(in srgb, var(--tc) 22%, var(--surface)); box-shadow: 0 2px 0 color-mix(in srgb, var(--tc) 60%, transparent); }
+.wk-tiles { display: grid; grid-template-columns: 1fr 1.35fr; gap: 10px; }
+.wk-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 14px; border-radius: 16px; min-height: 76px; text-align: left; }
+.wk-tile small { color: var(--muted); font-size: 12px; font-weight: 600; }
+.wk-tile b { font-size: 24px; font-weight: 700; white-space: nowrap; }
+.wk-tile b span { font-size: 12px; color: var(--muted); margin-left: 2px; }
+.linkbtn { all: unset; color: var(--accent); text-decoration: underline; cursor: pointer; margin-left: 6px; }
+.wk-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.wk-preset { min-height: 48px; border-radius: 14px; font-size: 14px; white-space: nowrap; }
+.wk-own { width: 100%; margin-top: 10px; min-height: 48px; border-radius: 14px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; background: transparent; border-style: dashed; box-shadow: none; color: var(--accent); }
+.wh-cols .wh-col { flex: 1 1 96px; max-width: 96px; min-width: 0; }
