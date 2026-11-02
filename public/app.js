@@ -661,6 +661,11 @@ async function plansView(params) {
         setTimeout(route, 800);
       } catch (e) { out.textContent = `エラー: ${e.message}`; }
     };
+    view.querySelector('#plan-cal').onclick = async (e) => {
+      const b = e.currentTarget; b.disabled = true;
+      try { const st = await api('/status'); location.href = st.calendar_url.replace(/^https?:/, 'webcal:'); } catch (err) { alert(err.message); }
+      b.disabled = false;
+    };
     view.querySelector('#copy-week').onclick = async () => {
       if (!confirm(`この週の計画を翌週 (${md(addDays(ws, 7))}〜) に複製しますか？`)) return;
       const r = await api('/plans/copy-week', { method: 'POST', body: { from: ws, to: addDays(ws, 7) } });
@@ -685,6 +690,7 @@ async function plansView(params) {
     <div class="card">
       <div class="row spread num"><span>計画 ${km(total)}km・実績 ${km(actual)}km</span><button id="copy-week">この週を翌週へコピー</button></div>
       <p class="muted hint" style="margin:10px 0 0">左の「⠿」を押したまま別の日へ動かすと、その日と予定が入れ替わります。メニューをタップすると中身を直せます。</p>
+      <button id="plan-cal" class="cal-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M12 13v4M10 15h4"/></svg><span>iPhone のカレンダーに表示<small>一度追加すれば、予定を変えると自動で反映</small></span></button>
     </div>
     <div class="card" id="cal">
       ${days.map((d) => {

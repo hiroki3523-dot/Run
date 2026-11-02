@@ -714,3 +714,9 @@ body::after {
   content: ""; position: fixed; left: 0; right: 0; bottom: 0; height: calc(110px + env(safe-area-inset-bottom));
   background: linear-gradient(to top, var(--bg) 35%, transparent); pointer-events: none; z-index: 9;
 }
+
+/* 計画画面: iPhone カレンダーに追加 */
+.cal-btn { width: 100%; margin-top: 12px; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; text-align: left; min-height: 56px; }
+.cal-btn svg { color: var(--accent); flex: none; }
+.cal-btn span { display: flex; flex-direction: column; font-size: 15px; }
+.cal-btn small { color: var(--muted); font-weight: 400; font-size: 12px; }
