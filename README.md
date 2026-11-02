@@ -62,8 +62,9 @@ Cloudflare 側でコードを GitHub から取り込み、ビルドとデプロ�
 1. GitHub でこのリポジトリを開き、右上の **Fork** → **Create fork**
 2. 以後の手順は、自分のアカウントにできたコピー (`<自分のID>/Run`) で行う
 
-本家の改良を取り込みたいときは、自分のコピーの画面で **Sync fork** → **Update branch** を押す
-(Cloudflare が自動で再デプロイする)。
+本家の改良は毎日 4:17 に自動で取り込まれる (自分のコピーの **Actions** タブで一度だけ
+「I understand my workflows, go ahead and enable them」を押して有効にする)。すぐ取り込みたいときは
+**Sync fork** → **Update branch**。取り込むと Cloudflare が自動で再デプロイする。
 
 ### 2. D1 データベースを作る (Cloudflare)
 
@@ -74,12 +75,9 @@ Cloudflare 側でコードを GitHub から取り込み、ビルドとデプロ�
 
 テーブルはここでは作らない。手順 5 のデプロイ時に `migrations/` の SQL が自動で適用される。
 
-### 3. `wrangler.toml` に Database ID を書く (GitHub)
+### 3. Database ID はメモしておく
 
-1. GitHub で `wrangler.toml` を開き、鉛筆アイコン (Edit) をタップ
-2. `database_id = "..."` の `"` の中を、手順 2 でコピーした自分の ID に置き換える
-   (最初に入っているのは本家の ID なので、必ず自分のものに変える)
-3. **Commit changes** で `main` に直接コミット
+`wrangler.toml` は書き換えない (本家の更新を自動で取り込めるように)。手順 5 で Cloudflare のビルド変数 `D1_DATABASE_ID` に入れる。
 
 ### 4. Strava API アプリを作る (Strava)
 
@@ -99,7 +97,8 @@ Cloudflare 側でコードを GitHub から取り込み、ビルドとデプロ�
    - **デプロイコマンド**: `npm run deploy`
      (D1 にテーブルを作る `wrangler d1 migrations apply` を実行してから `wrangler deploy` する)
    - **ルートディレクトリ**: 空欄 (または `/`)
-5. **デプロイ (Deploy)** をタップ。数分でビルドが終わる
+5. **ビルド変数 (Build variables)** に `D1_DATABASE_ID` = 手順 2 の Database ID を追加
+6. **デプロイ (Deploy)** をタップ。数分でビルドが終わる
 6. 完了したら Worker の画面に表示される URL (`https://sub3-runner.<あなたのサブドメイン>.workers.dev`) を書き留める
 
 この時点ではシークレットが未登録なのでアプリは正常に動かない。次の手順で登録する。
