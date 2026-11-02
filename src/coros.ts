@@ -7,6 +7,7 @@
 import { extIdToNumber, saveExt, type ExtActivity } from './ext';
 import { parseFit, type FitData } from './fit';
 import { ingestActivity } from './process';
+import { applyDerived } from './derive-apply';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import type { Env } from './types';
 
@@ -284,6 +285,8 @@ export async function syncCorosFitness(env: Env): Promise<CorosFitness> {
   if (f.lthr) st.lthr = f.lthr;
   await saveSettings(env, st);
   await kvSet(env, 'coros_fitness_raw', r.text.slice(0, 4000));
+  // 評価の基準 (ペース帯・閾値心拍・最大心拍) も決め直す (自動のとき)
+  await applyDerived(env, false).catch(() => null);
   return f;
 }
 
