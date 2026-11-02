@@ -31,6 +31,14 @@ describe('coros', () => {
     expect(f.lthr).toBe(174);
     expect(f.vo2max).toBe(55);
   });
+  it('体力評価: COROS の書き方 (4\'08" のペース・ゾーンの範囲・小数のランニングレベル)', () => {
+    const f = parseFitness('Running Level: 89.9\nAerobic Endurance: 89.5 (4\'47"-5\'46"/km)\nLactate Threshold: 88.7 (4\'03"-4\'25"/km)\nSpeed Endurance: 88.7 (3\'42"-4\'02"/km)\nThreshold Pace: 4\'08"/km\nLactate Threshold Heart Rate: 174 bpm\n- 5K: 19:41 (3\'56"/km)\n- Marathon: 3:07:29 (4\'27"/km)', null);
+    expect(f.running_level).toBe(89.9);
+    expect(f.lt_pace_s).toBe(248);
+    expect(f.lthr).toBe(174);
+    expect(f.zones_s).toEqual({ aerobic: [287, 346], threshold: [243, 265], speed: [222, 242] });
+    expect(f.predicted_s).toEqual({ '5k': 1181, full: 11249 });
+  });
   it('COROS の id は負の数で、同じ labelId なら同じ', () => {
     expect(extIdToNumber('476123456789012345')).toBeLessThan(0);
     expect(extIdToNumber('476123456789012345')).toBe(extIdToNumber('476123456789012345'));

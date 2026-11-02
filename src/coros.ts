@@ -205,30 +205,52 @@ export function parseRecords(text: string, structured: any): CorosRecord[] {
 export interface CorosFitness {
   predicted_s: Partial<Record<'5k' | '10k' | 'half' | 'full', number>>;
   lt_pace_s: number | null; lthr: number | null; vo2max: number | null; running_level: number | null;
+  zones_s: Partial<Record<'aerobic' | 'threshold' | 'speed', [number, number]>>;
 }
 
-/** queryFitnessAssessmentOverview の結果から、予測タイム・閾値ペース・閾値心拍・VO2max を取り出す */
+/**
+ * queryFitnessAssessmentOverview の結果から、予測タイム・閾値ペース・閾値心拍・VO2max・ランニングレベル・ペースゾーンを取り出す。
+ * COROS はペースを 4'08" のように書くので、先に 4:08 の形にそろえてから読む
+ */
 export function parseFitness(text: string, structured: any): CorosFitness {
-  const src = structured ? `${JSON.stringify(structured)}\n${text}` : text;
-  const f: CorosFitness = { predicted_s: {}, lt_pace_s: null, lthr: null, vo2max: null, running_level: null };
-  for (const line of src.split(/\n|,(?=\s*")/)) {
+  const raw = structured ? `${JSON.stringify(structured).replace(/,"/g, '\n"')}\n${text}` : text;
+  const src = raw.replace(/(\d{1,2})\s*['′’]\s*(\d{2})\s*(?:["″”]|'')?/g, '$1:$2');
+  const f: CorosFitness = { predicted_s: {}, lt_pace_s: null, lthr: null, vo2max: null, running_level: null, zones_s: {} };
+  const sec = (m: string) => toSec(m);
+  for (const line of src.split(/\n/)) {
     const l = line.toLowerCase();
-    const time = line.match(/(\d{1,2}:\d{2}:\d{2}|\d{1,2}:\d{2}(?!\s*\/))/)?.[1];
-    if (time && /predict|race|予測|预测|marathon|マラソン|半|half|5\s?k|10\s?k|km/i.test(line) && !/pace|ペース|配速|\/km/i.test(l)) {
-      const sec = toSec(time);
-      if (/half|半程|半马|ハーフ/.test(l)) f.predicted_s.half = sec;
-      else if (/marathon|全程|全马|马拉松|マラソン|フル|42/.test(l)) f.predicted_s.full = sec;
-      else if (/10\s?k|10\s?km|10公里|10キロ/.test(l)) f.predicted_s['10k'] = sec;
-      else if (/\b5\s?k|5\s?km|5公里|5キロ/.test(l)) f.predicted_s['5k'] = sec;
+    // ペースの範囲 (ゾーン): 4:47-5:46
+    const range = line.match(/(\d{1,2}:\d{2})\s*(?:-|~|〜|–|—|to)\s*(\d{1,2}:\d{2})/);
+    if (range) {
+      const z: [number, number] = [sec(range[1]), sec(range[2])].sort((x, y) => x - y) as [number, number];
+      if (/aerobic|有酸素|有氧/.test(l)) f.zones_s.aerobic = z;
+      else if (/speed|スピード|速度/.test(l)) f.zones_s.speed = z;
+      else if (/threshold|閾値|阈值|乳酸|lactate/.test(l)) f.zones_s.threshold = z;
+      continue;
     }
-    if (/threshold|閾値|阈值|lactate|乳酸/.test(l)) {
-      const pace = line.match(/(\d{1,2}):(\d{2})\s*(?:\/|min\/|per)\s*km/i) ?? (/pace|ペース|配速/.test(l) ? line.match(/(\d{1,2}):(\d{2})/) : null);
-      if (pace) f.lt_pace_s = Number(pace[1]) * 60 + Number(pace[2]);
-      const hr = line.match(/(\d{3})\s*bpm/i) ?? (/heart|心拍|心率|hr/.test(l) ? line.match(/\b(1\d{2}|20\d)\b/) : null);
+    // レース予測: 5K / 10K / ハーフ / フル の行の、ペースではない時間
+    if (/predict|race|予測|预测|marathon|マラソン|马拉松|半|half|\b5\s?k|\b10\s?k|5\s?km|10\s?km|5公里|10公里/i.test(line) && !/threshold|閾値|阈值|level|レベル/.test(l)) {
+      const t = [...line.matchAll(/(\d{1,2}:\d{2}(?::\d{2})?)(?!\d)(?!\s*\/\s*(?:km|公里))/g)].map((m) => m[1])[0];
+      if (t) {
+        const v = sec(t);
+        if (/half|半程|半马|ハーフ/.test(l)) f.predicted_s.half = v;
+        else if (/marathon|全程|全马|马拉松|マラソン|フル|42/.test(l)) f.predicted_s.full = v;
+        else if (/10\s?k|10\s?km|10公里|10キロ/.test(l)) f.predicted_s['10k'] = v;
+        else if (/5\s?k|5\s?km|5公里|5キロ/.test(l)) f.predicted_s['5k'] = v;
+      }
+    }
+    if (/threshold|閾値|阈值|lactate|乳酸|lthr/.test(l)) {
+      const hr = line.match(/(\d{3})\s*bpm/i) ?? (/heart|心拍|心率|hr\b/.test(l) ? line.match(/\b(1\d{2}|20\d)\b/) : null);
       if (hr) f.lthr = Number(hr[1]);
+      else {
+        const pace = line.match(/(\d{1,2}:\d{2})\s*\/\s*(?:km|公里)/i) ?? (/pace|ペース|配速/.test(l) ? line.match(/(\d{1,2}:\d{2})/) : null);
+        if (pace) f.lt_pace_s = sec(pace[1]);
+      }
     }
-    if (/vo2/.test(l)) { const m = line.match(/vo2\s*max[^0-9]{0,10}(\d{2}(?:\.\d)?)/i); if (m) f.vo2max = Number(m[1]); }
-    if (/running level|ランニングレベル|跑力|running_level|runninglevel/.test(l)) { const m = line.match(/(?:level|レベル|跑力)[^0-9]{0,10}(\d{2,3}(?:\.\d)?)/i); if (m) f.running_level = Number(m[1]); }
+    if (/vo2/.test(l)) { const m = line.match(/vo2\s*max[^0-9]{0,10}(\d{2}(?:\.\d+)?)/i); if (m) f.vo2max = Number(m[1]); }
+    if (/running level|ランニングレベル|跑力|running_level|runninglevel|"level"/.test(l) && !/aerobic|有酸素|threshold|閾値|speed|スピード|sprint|スプリント/.test(l)) {
+      const m = line.match(/(?:level|レベル|跑力)[^0-9]{0,10}(\d{2,3}(?:\.\d+)?)/i); if (m) f.running_level = Number(m[1]);
+    }
   }
   return f;
 }
@@ -248,6 +270,7 @@ export async function syncCorosFitness(env: Env): Promise<CorosFitness> {
     lthr: f.lthr ?? c.lthr,
     vo2max: f.vo2max ?? c.vo2max,
     running_level: f.running_level ?? c.running_level,
+    zones_s: { ...c.zones_s, ...f.zones_s },
   };
   if (f.lthr) st.lthr = f.lthr;
   await saveSettings(env, st);
@@ -473,7 +496,7 @@ export async function corosStatus(env: Env) {
   return {
     connected: !!a, region: a?.issuer ?? null, queue: q.items.length, done: q.done ?? 0,
     pause_until: q.pause_until && q.pause_until > now() ? new Date(q.pause_until * 1000).toISOString() : null,
-    last_sync: q.last_sync ?? null, last_error: q.last_error ?? null, skipped: q.skipped ?? 0, scan_to: q.scan_to ?? null, last_found: q.last_found ?? null,
+    last_sync: q.last_sync ?? null, last_error: q.last_error ?? null, fitness_error: (await kvGet(env, 'coros_fitness_err')) || null, skipped: q.skipped ?? 0, scan_to: q.scan_to ?? null, last_found: q.last_found ?? null,
   };
 }
 
@@ -514,5 +537,7 @@ export async function corosTick(env: Env, minute: number): Promise<void> {
   await processCorosQueue(env, 2).catch((e) => console.error('coros queue', e));
   if (st.source !== 'coros' && st.predict?.source !== 'coros') return;
   const today = jstToday();
-  if (st.coros?.updated !== today && minute % 30 === 5) await syncCorosFitness(env).catch((e) => console.error('coros fitness', e));
+  if (st.coros?.updated !== today && minute % 30 === 5) {
+    await syncCorosFitness(env).then(() => kvSet(env, 'coros_fitness_err', '')).catch((e) => kvSet(env, 'coros_fitness_err', String((e as Error).message).slice(0, 200)));
+  }
 }
