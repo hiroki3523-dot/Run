@@ -816,7 +816,7 @@ function wirePrefs(root, settings, ws) {
     body.innerHTML = `
       <p class="muted pf-note">1週間の回数を選びます。選んだ回数は保存され、次の週にも使われます。</p>
       ${seg('ポイント練', 'data-pp', [0, 1, 2, 3], prefs.points_per_week)}
-      ${seg('ロング走', 'data-lp', [0, 1, 2], prefs.long_per_week)}
+      ${seg('ロング走', 'data-lp', [0, 1, 2, 3], prefs.long_per_week)}
       ${seg('休息日', 'data-rp', [0, 1, 2, 3], prefs.rest_per_week)}
       ${weekDays.length ? `<div class="pf-block"><div class="pf-h"><b>走れない日</b><span class="muted">タップした日は休みにします</span></div>
         <div class="wk-days">${[...Array(7)].map((_, i) => addDays(ws, i)).map((d) => `<button type="button" class="wk-day ${prefs.blocked.includes(d) ? 'on off-day' : ''}" data-bl="${d}" ${d < t ? 'disabled' : ''}><small>${dow(d)}</small><b class="num">${Number(d.slice(8))}</b></button>`).join('')}</div></div>` : ''}
