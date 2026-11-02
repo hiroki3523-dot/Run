@@ -2198,9 +2198,9 @@ async function settingsView() {
         const when = (iso) => (iso ? new Date(iso).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-');
         box.innerHTML = cs.connected ? `
           <div class="coros-st"><span class="dot ok"></span><b>COROS と連携済み</b><span class="muted">${esc((cs.region || '').replace('https://', ''))}</span></div>
-          <div class="muted num coros-q">取り込み待ち ${cs.queue} 件・取り込み済み ${cs.done} 件・最後の確認 ${when(cs.last_sync)}${cs.pause_until ? `・${when(cs.pause_until)} から再開` : ''}</div>
+          <div class="muted num coros-q">取り込み済み ${cs.done} 件・取り込み待ち ${cs.queue} 件・Strava と同じため飛ばした ${cs.skipped || 0} 件${cs.scan_to ? `・${cs.scan_to.slice(0, 7)} までさかのぼり中` : ''}${cs.pause_until ? `・${when(cs.pause_until)} から再開` : ''}・最後の確認 ${when(cs.last_sync)}</div>
           ${cs.last_error ? `<p class="coros-err">${esc(cs.last_error)}</p>` : ''}
-          <div class="row coros-btns"><button type="button" data-cs="sync" class="primary">今すぐ確認</button><button type="button" data-cs="b30">過去30日</button><button type="button" data-cs="b180">過去半年</button><button type="button" data-cs="fit">体力データ</button></div>
+          <div class="row coros-btns"><button type="button" data-cs="sync" class="primary">今すぐ確認</button><button type="button" data-cs="b30">過去30日</button><button type="button" data-cs="all">全期間</button><button type="button" data-cs="fit">体力データ</button></div>
           <p class="muted coros-msg" style="margin:6px 0 0"></p>
           <details class="coros-dbg"><summary>うまく取り込めないとき (診断)</summary>
             <div class="row"><button type="button" data-dbg="querySportRecords">ランの一覧</button><button type="button" data-dbg="queryFitnessAssessmentOverview">体力評価</button><button type="button" data-cs="off" class="danger">連携を解除</button></div>
@@ -2217,8 +2217,9 @@ async function settingsView() {
         b.disabled = true;
         try {
           if (dbg) { const r = await api(`/coros/debug?tool=${dbg}`); box.querySelector('.coros-raw').textContent = r.text || JSON.stringify(r.structured, null, 1); }
-          else if (act === 'sync') { const r = await api('/coros/sync', { method: 'POST' }); draw(r); msg(`新しいラン ${r.added} 件・取り込み ${r.imported} 件`); }
-          else if (act === 'b30' || act === 'b180') { const r = await api('/coros/backfill', { method: 'POST', body: { days: act === 'b30' ? 30 : 180 } }); draw(r); msg(`${r.added} 件を取り込み待ちにしました。毎分少しずつ取り込みます (1 日 50 件まで)`); }
+          else if (act === 'sync') { const r = await api('/coros/sync', { method: 'POST' }); draw(r); msg(`新しいラン ${r.added} 件・取り込み ${r.imported} 件${r.removed ? `・Strava と重なっていた ${r.removed} 件を整理` : ''}`); }
+          else if (act === 'b30') { const r = await api('/coros/backfill', { method: 'POST', body: { days: 30 } }); draw(r); msg(`${r.added} 件を取り込み待ちにしました。毎分少しずつ取り込みます`); }
+          else if (act === 'all') { if (!confirm('COROS の全期間のランを取り込みます。Strava から取り込み済みのランは飛ばします (Strava のデータは消えません)。1 分に 30 日ずつさかのぼり、1 日 50 件ずつ取り込みます。')) { b.disabled = false; return; } const r = await api('/coros/backfill', { method: 'POST', body: { all: true } }); draw(r); msg('全期間の取り込みを始めました。閉じて大丈夫です'); }
           else if (act === 'fit') { const f = await api('/coros/fitness', { method: 'POST' }); msg(`予測 フル ${f.predicted_s?.full ? dur(f.predicted_s.full) : '-'}・閾値ペース ${f.lt_pace_s ? pace(f.lt_pace_s) : '-'}・閾値心拍 ${f.lthr ?? '-'}`); }
           else if (act === 'off') { if (confirm('COROS との連携を解除します')) { await api('/coros/disconnect', { method: 'POST' }); route(); } }
         } catch (err) { msg(`エラー: ${err.message}`); }

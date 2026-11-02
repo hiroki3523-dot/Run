@@ -10,7 +10,7 @@ import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './re
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
-import { corosDisconnect, corosStatus, corosTool, enqueueCoros, processCorosQueue, syncCorosFitness } from './coros';
+import { corosDisconnect, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns } from './insights';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
@@ -550,13 +550,16 @@ api.get('/coros/status', async (c) => c.json({ ...(await corosStatus(c.env)), fi
 /** 新しいランを確認して、少し取り込む */
 api.post('/coros/sync', async (c) => {
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const removed = await removeCorosDuplicates(c.env);
   const added = await enqueueCoros(c.env, addDays(today, -6), today);
   const imported = await processCorosQueue(c.env, 3);
-  return c.json({ added, imported, ...(await corosStatus(c.env)) });
+  return c.json({ added, imported, removed, ...(await corosStatus(c.env)) });
 });
 /** 過去のランを順番待ちに入れる (毎分少しずつ取り込む。FIT は 1 日 50 件まで) */
 api.post('/coros/backfill', async (c) => {
-  const { days } = await c.req.json<{ days?: number }>();
+  const { days, all } = await c.req.json<{ days?: number; all?: boolean }>();
+  await removeCorosDuplicates(c.env);
+  if (all) { await startCorosFullScan(c.env); return c.json({ added: 0, scanning: true, ...(await corosStatus(c.env)) }); }
   const n = Math.min(400, Math.max(1, Math.round(Number(days) || 30)));
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
   const added = await enqueueCoros(c.env, addDays(today, -n), today);

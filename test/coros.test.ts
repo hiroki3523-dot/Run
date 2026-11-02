@@ -6,9 +6,14 @@ describe('coros', () => {
   it('ランの一覧: 文章 (Label ID と Sport(100))', () => {
     const r = parseRecords('1. Sport(100) — 2026-11-01\n   Label ID: 476123456789012345\n\n2. Sport(102) — 2026-10-30\n   labelId: 476123456789000001', null);
     expect(r).toEqual([
-      { labelId: '476123456789012345', sportType: 100, date: '2026-11-01', name: null },
-      { labelId: '476123456789000001', sportType: 102, date: '2026-10-30', name: null },
+      { labelId: '476123456789012345', sportType: 100, date: '2026-11-01', name: null, dist_m: null, dur_s: null },
+      { labelId: '476123456789000001', sportType: 102, date: '2026-10-30', name: null, dist_m: null, dur_s: null },
     ]);
+  });
+  it('ランの一覧: 距離と時間も読む (Strava との重なりの判定に使う)', () => {
+    const r = parseRecords('1. Sport(100) — 2026-11-01\n   Label ID: 476123456789012345\n   Duration: 47:12 | Distance: 9.01 km', null);
+    expect(r[0].dist_m).toBe(9010);
+    expect(r[0].dur_s).toBe(2832);
   });
   it('ランの一覧: JSON (structuredContent でも文章の中でも)', () => {
     const js = { dataList: [{ labelId: '47', sportType: 100, date: 20261101, name: '朝ラン' }] };
