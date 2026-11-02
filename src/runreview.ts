@@ -21,9 +21,37 @@ export interface ReviewIn {
   band: { min: number; max: number } | null;
   race: { name: string; date: string; goal_time_s: number | null; distance_m: number } | null;
   today: string;
-  rpe: number | null; // 1 かなり余裕 / 2 余裕 / 3 ややきつい / 4 かなりきつい
-  leg?: string | null; // light / normal / heavy / pain
-  tags?: string[];
+  fb?: Fb;
+}
+
+/** ふりかえり (練習直後に 0〜10 で入力) */
+export interface Fb {
+  breath: number | null; // 呼吸のきつさ
+  leg: number | null; // 脚の疲労感
+  rpe: number | null; // 全体的なきつさ
+  form: number | null; // フォームの自然さ (10 = 自然)
+  pain: number | null; // 痛みの強さ
+  reserve: string | null; // 同じペースであと何km: limit / 1-3 / 3-5 / 5-10 / 10+
+  memo: string;
+  tags: string[];
+}
+
+export const RESERVE_LABEL: Record<string, string> = { limit: 'ほぼ限界', '1-3': '1〜3km', '3-5': '3〜5km', '5-10': '5〜10km', '10+': '10km以上' };
+const TAGS = ['hot', 'cold', 'wind', 'sleep', 'hungry', 'tired'];
+
+/** 保存されている値を新しい形に揃える (旧形式: rpe 1〜4 / leg light・normal・heavy・pain) */
+export function normalizeFb(raw: any): Fb {
+  const n = (v: unknown) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Math.max(0, Math.min(10, Math.round(Number(v)))));
+  const tags = Array.isArray(raw?.tags) ? raw.tags.filter((t: string) => TAGS.includes(t)) : [];
+  if (raw?.v === 2) {
+    return { breath: n(raw.breath), leg: n(raw.leg), rpe: n(raw.rpe), form: n(raw.form), pain: n(raw.pain), reserve: raw.reserve in RESERVE_LABEL ? raw.reserve : null, memo: String(raw.memo ?? '').slice(0, 500), tags };
+  }
+  const oldRpe: Record<number, number> = { 1: 2, 2: 4, 3: 6, 4: 8 };
+  const oldLeg: Record<string, number> = { light: 2, normal: 4, heavy: 7, pain: 6 };
+  return {
+    breath: null, rpe: raw?.rpe ? oldRpe[Number(raw.rpe)] ?? null : null, leg: raw?.leg ? oldLeg[raw.leg] ?? null : null,
+    form: null, pain: raw?.leg === 'pain' ? 5 : null, reserve: null, memo: '', tags,
+  };
 }
 
 export interface RunReview {
@@ -39,7 +67,6 @@ export interface RunReview {
   notes: string[];
 }
 
-const RPE_LABEL = ['', 'かなり余裕あり', '余裕あり', 'ややきつい', 'かなりきつい'];
 const TAG_LABEL: Record<string, string> = { hot: '暑さ', cold: '寒さ', wind: '風', sleep: '睡眠不足', hungry: '空腹・補給不足', tired: '疲れの残り' };
 
 export function gradeOf(score: number): string {
@@ -129,10 +156,18 @@ export function buildRunReview(i: ReviewIn): RunReview {
     }
     const ratio = avg / i.lthr;
     if (goalPace && isMarathon && ratio >= 0.93 && Math.abs(avgPace - goalPace) <= 10) text.push(`平均心拍 ${Math.round(avg)} は、フルマラソンの序盤から維持するには少し慎重になりたい数値。本番では、目標ペースを走るのにどれくらいの負荷がかかっているかが重要になる。`);
-    if (i.rpe) text.push(`主観は「${RPE_LABEL[i.rpe]}」。${i.rpe <= 2 && ratio >= 0.93 ? '心拍が高めでも楽に感じられていたのは好材料。' : i.rpe >= 3 && ratio >= 0.93 ? '心拍も高く、きつさも感じていたので、疲労が残っていないか注意。' : i.rpe >= 3 ? '心拍のわりにきつく感じていたので、体調や疲労を確認したい。' : ''}`);
-    const why = (i.tags ?? []).filter((t) => ['hot', 'sleep', 'hungry', 'tired'].includes(t)).map((t) => TAG_LABEL[t]);
+    const fb = i.fb;
+    if (fb?.rpe != null) {
+      const subj = [`全体のきつさ ${fb.rpe}/10`, fb.breath != null ? `呼吸 ${fb.breath}/10` : '', fb.leg != null ? `脚 ${fb.leg}/10` : ''].filter(Boolean).join('、');
+      text.push(`主観は ${subj}。${fb.rpe <= 4 && ratio >= 0.93 ? '心拍が高めでも楽に感じられていたのは好材料。' : fb.rpe >= 7 && ratio >= 0.93 ? '心拍もきつさも高く、疲労が残っていないか注意。' : fb.rpe >= 7 ? '心拍のわりにきつく感じていたので、体調や疲労を確認したい。' : ''}`);
+    }
+    if (fb?.breath != null && fb?.leg != null) {
+      if (fb.breath - fb.leg >= 3) text.push('脚より呼吸がきつい。心肺側の負荷が中心で、脚にはまだ余裕がある。');
+      else if (fb.leg - fb.breath >= 3) text.push('呼吸より脚がきつい。心肺より先に脚の筋持久力が限界に近づいている。');
+    }
+    const why = (fb?.tags ?? []).filter((t) => ['hot', 'sleep', 'hungry', 'tired'].includes(t)).map((t) => TAG_LABEL[t]);
     if (why.length && ratio >= 0.93) text.push(`心拍が高めなのは、${why.join('・')}の影響もありそう。同じ条件でなければ、数字だけで比べすぎない。`);
-    if ((i.tags ?? []).includes('wind') && diff >= 5) text.push('風の影響で、後半のペースは楽に出た可能性もある (追い風かどうかも確認)。');
+    if ((fb?.tags ?? []).includes('wind') && diff >= 5) text.push('風の影響で、後半のペースは楽に出た可能性もある (追い風かどうかも確認)。');
     hr = { title: ratio >= 0.97 ? '心拍数は高め' : ratio >= 0.93 ? '心拍数はやや高め' : ratio >= 0.85 ? '心拍数は想定の範囲内' : '心拍数は余裕あり', rows: rows2, text };
   }
 
@@ -152,6 +187,7 @@ export function buildRunReview(i: ReviewIn): RunReview {
     text.push(stable ? 'ピッチ・ストライドとも、走り出しから終盤まで大きな乱れが小さい。' : `終盤は ピッチ ${dc >= 0 ? '+' : ''}${Math.round(dc)}spm、ストライド ${ds >= 0 ? '+' : ''}${Math.round(ds)}cm の変化。`);
     if (diff >= 5) text.push(`終盤にペースを上げても、ピッチ ${dc >= 0 ? '+' : ''}${Math.round(dc)}spm・ストライド ${ds >= 0 ? '+' : ''}${Math.round(ds)}cm と、${stable ? '大きな乱れは見られない' : '変化がある'}。`);
     if (sr.avg.cad < 176) text.push(`平均ピッチ ${sr.avg.cad}spm は目標の 180 をやや下回る。`);
+    if (i.fb?.form != null) text.push(i.fb.form >= 7 ? `本人の感覚でもフォームは自然 (${i.fb.form}/10)。数値と感覚が一致している。` : i.fb.form <= 4 ? `本人の感覚ではフォームに力みがある (${i.fb.form}/10)。肩・腕の力を抜き、接地を体の真下に戻すことを意識したい。` : `フォームの感覚は ${i.fb.form}/10。`);
     text.push('フォームの数値が良いことだけでは、42km 後半の脚持ちまで保証はできない。');
     form = {
       title: stable ? 'フォームは安定している' : 'フォームに変化がある',
@@ -170,6 +206,14 @@ export function buildRunReview(i: ReviewIn): RunReview {
       const speedOk = (diff >= 5 ? mean(laps.slice(-Math.max(2, Math.round(laps.length / 3))).map((s) => s.pace_s!)) : avgPace) <= goalPace + 2;
       text.push(speedOk ? `今回のメインを見る限り、目標 ${fmtDuration(i.race.goal_time_s)} に必要なスピードは十分にある (メイン平均は目標ペースより ${gap >= 0 ? sec(gap) + ' 速い' : sec(-gap) + ' 遅い'})。` : `メイン平均は目標ペース ${mmss(goalPace)} より ${sec(avgPace - goalPace)} 遅い。まだスピードを詰める余地がある。`);
       if (isMarathon) text.push(`課題は、${mmss(goalPace)}/km を ${raceKm!.toFixed(3).replace(/\.?0+$/, '')}km 維持できるかどうか。`);
+      const rs = i.fb?.reserve;
+      if (rs && isMarathon && Math.abs(avgPace - goalPace) <= 12) {
+        text.push(rs === 'limit' || rs === '1-3'
+          ? `同じペースは「あと ${RESERVE_LABEL[rs]}」という感覚。今の状態でこのペースを最後まで押すのはリスクがあり、序盤を抑えたい。`
+          : rs === '10+'
+            ? 'このペースで「あと 10km 以上」いける余裕があるなら、本番の目標ペースとして十分に現実的。'
+            : `同じペースで「あと ${RESERVE_LABEL[rs]}」いけそうな余裕は、30km 以降に向けて悪くない材料。`);
+      }
     }
     if (daysLeft <= 10) text.push('この期間はもう走力を上げようとする必要はない。ここからは疲労を抜き、脚をフレッシュにすることを最優先にしたい。');
     const table: [string, string][] = [];
@@ -182,10 +226,11 @@ export function buildRunReview(i: ReviewIn): RunReview {
   }
 
   const notes: string[] = [];
-  if (i.leg === 'light') notes.push('脚の状態は良い。このまま疲れをためずに、次の練習へ。');
-  if (i.leg === 'heavy') notes.push(daysLeft != null && daysLeft <= 10 ? '脚の重さが残っている。本番まで強い練習は入れず、睡眠と補給を優先して回復に回したい。' : '脚の重さが残っている。次の練習は軽くして、様子を見たい。');
-  if (i.leg === 'pain') notes.push('違和感・痛みがあるときは、無理に走らず様子を見る。ふつうに歩ける・階段が痛くないかを確認して、続くようなら早めに専門家に相談を。');
-  if (i.rpe && i.rpe >= 3 && (i.tags ?? []).length === 0 && i.leg !== 'pain') notes.push('きつく感じた理由 (暑さ・睡眠・補給など) があれば、下から選ぶとレビューに反映される。');
+  const f = i.fb;
+  if (f?.pain != null && f.pain >= 3) notes.push(f.pain >= 6 ? `痛み ${f.pain}/10。次の練習は休みにして、歩く・階段で痛むかを確認したい。続くようなら早めに専門家に相談を。` : `痛み ${f.pain}/10。強い練習は避けて様子を見る。翌日も残るなら休む。`);
+  if (f?.leg != null && f.leg >= 7) notes.push(daysLeft != null && daysLeft <= 10 ? `脚の疲労 ${f.leg}/10。本番まで強い練習は入れず、睡眠と補給を優先して回復に回したい。` : `脚の疲労 ${f.leg}/10。次の練習は軽くして、様子を見たい。`);
+  else if (f?.leg != null && f.leg <= 3 && (f.pain ?? 0) < 3) notes.push(`脚の疲労 ${f.leg}/10 で状態は良い。このまま疲れをためずに次の練習へ。`);
+  if (f?.rpe != null && f.rpe >= 7 && f.tags.length === 0 && (f.pain ?? 0) < 3) notes.push('きつく感じた理由 (暑さ・睡眠・補給など) があれば、下のコンディションから選ぶとレビューに反映される。');
   return {
     grade: gradeOf(i.score),
     headline,
