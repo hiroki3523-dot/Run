@@ -414,6 +414,10 @@ export function buildExt(rec: CorosRecord, fit: FitData | null, lapsJson: any): 
       ...(pick.some((r) => r.hr) ? { heartrate: { data: pick.map((r) => r.hr ?? 0) } } : {}),
       ...(pick.some((r) => r.cad) ? { cadence: { data: pick.map((r) => r.cad ?? 0) } } : {}),
       ...(pick.some((r) => r.alt != null) ? { altitude: { data: pick.map((r) => Math.round((r.alt ?? 0) * 10) / 10) } } : {}),
+      ...(pick.some((r) => r.power) ? { watts: { data: pick.map((r) => r.power ?? 0) } } : {}),
+      ...(pick.some((r) => r.gct) ? { gct: { data: pick.map((r) => Math.round(r.gct ?? 0)) } } : {}),
+      ...(pick.some((r) => r.vo) ? { vosc: { data: pick.map((r) => Math.round((r.vo ?? 0) * 10) / 10) } } : {}),
+      ...(pick.some((r) => r.vr) ? { vratio: { data: pick.map((r) => Math.round((r.vr ?? 0) * 10) / 10) } } : {}),
     };
   }
   // 1km ごとのスプリット (詳細画面・レビュー用)

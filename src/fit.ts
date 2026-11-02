@@ -3,7 +3,7 @@
  * セッション (合計)・ラップ・1 秒ごとの記録 (距離・速度・心拍・ピッチ・標高) だけを取り出す。
  */
 
-export interface FitRecord { t: number; dist?: number; speed?: number; hr?: number; cad?: number; alt?: number }
+export interface FitRecord { t: number; dist?: number; speed?: number; hr?: number; cad?: number; alt?: number; power?: number; gct?: number; vo?: number; vr?: number }
 export interface FitLap { start: number; elapsed: number; timer: number; dist: number; avg_speed?: number; avg_hr?: number; max_hr?: number; avg_cad?: number }
 export interface FitSession {
   start: number; elapsed: number; timer: number; dist: number; sport?: number; sub_sport?: number;
@@ -103,7 +103,8 @@ export function parseFit(buf: ArrayBuffer): FitData {
       const speed = n(73, 1000) ?? n(6, 1000);
       const alt = n(78, 5, 500) ?? n(2, 5, 500);
       const cad = f[4] == null ? undefined : f[4]! + (f[53] != null ? f[53]! / 128 : 0);
-      out.records.push({ t: ts + FIT_EPOCH, dist: n(5, 100), speed, hr: n(3), cad, alt });
+      // パワー (W)・接地時間 (ms)・上下動 (cm)・垂直歩幅比 (%)。COROS などランニングダイナミクスのある時計だけ
+      out.records.push({ t: ts + FIT_EPOCH, dist: n(5, 100), speed, hr: n(3), cad, alt, power: n(7), gct: n(41, 10), vo: f[39] == null ? undefined : f[39]! / 100, vr: n(83, 100) });
     } else if (d.global === 19) {
       out.laps.push({
         start: (f[2] ?? ts ?? 0) + FIT_EPOCH, elapsed: n(7, 1000) ?? 0, timer: n(8, 1000) ?? 0, dist: n(9, 100) ?? 0,

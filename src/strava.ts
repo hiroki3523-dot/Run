@@ -190,6 +190,8 @@ export interface Series {
   alt_min: number | null;
   alt_max: number | null;
   calories: number | null;
+  /** COROS など: ランニングパワー (W)・接地時間 (ms)・上下動 (cm)・垂直歩幅比 (%) */
+  extra: Record<'power' | 'gct' | 'vo' | 'vr', { vals: (number | null)[]; avg: number | null; max: number | null }>;
 }
 
 export async function getSeries(env: Env, id: number, paceBounds: number[], hrBounds: number[], points = 120): Promise<Series | null> {
@@ -214,6 +216,7 @@ export async function getSeries(env: Env, id: number, paceBounds: number[], hrBo
     n: buckets, dist_m: dist[N - 1] ?? 0, d: [], pace: [], hr: [], cad: [], stride: [], alt: [],
     pace_zone_s: paceZ, hr_zone_s: hrZ, avg: { pace: null, hr: null, cad: null, stride: null }, max: { hr: null, cad: null },
     fast_km_s: null, elev_gain: act?.total_elevation_gain ?? null, elev_loss: null, alt_min: null, alt_max: null, calories: act?.calories ?? null,
+    extra: { power: { vals: [], avg: null, max: null }, gct: { vals: [], avg: null, max: null }, vo: { vals: [], avg: null, max: null }, vr: { vals: [], avg: null, max: null } },
   };
   let hrSum = 0, hrT = 0, cadSum = 0, cadT = 0, strideSum = 0, strideT = 0, maxHr = 0, maxCad = 0;
   for (let i = 1; i < N; i++) {
@@ -239,6 +242,19 @@ export async function getSeries(env: Env, id: number, paceBounds: number[], hrBo
     out.stride.push(mc && mv ? Math.round((mv / (mc / 60)) * 100) : null);
     out.alt.push(as.length ? Math.round(sum(as, as.length) * 10) / 10 : null);
   }
+  // COROS のランニングダイナミクス (Strava には無い)
+  const ex = (arr: number[] | undefined, min: number, digits = 0) => {
+    const r = 10 ** digits;
+    if (!arr || !arr.some((x) => x > min)) return { vals: [], avg: null, max: null };
+    const ok = arr.filter((x) => x > min);
+    const vals = Array.from({ length: buckets }, (_, b) => {
+      const a = Math.floor((b * N) / buckets), e = Math.max(a + 1, Math.floor(((b + 1) * N) / buckets));
+      const xs = arr.slice(a, e).filter((x) => x > min);
+      return xs.length ? Math.round((xs.reduce((p, q) => p + q, 0) / xs.length) * r) / r : null;
+    });
+    return { vals, avg: Math.round((ok.reduce((p, q) => p + q, 0) / ok.length) * r) / r, max: Math.round(Math.max(...ok) * r) / r };
+  };
+  out.extra = { power: ex(raw.watts?.data, 20), gct: ex(raw.gct?.data, 50), vo: ex(raw.vosc?.data, 1, 1), vr: ex(raw.vratio?.data, 1, 1) };
   if (hrT) out.avg.hr = Math.round(hrSum / hrT);
   if (cadT) out.avg.cad = Math.round(cadSum / cadT);
   if (strideT) out.avg.stride = Math.round(strideSum / strideT);

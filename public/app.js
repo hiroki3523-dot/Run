@@ -1517,6 +1517,10 @@ function seriesCards(sr) {
     ${areaChart(sr.cad, sr.d, tk, { color: '#ff8a1f', avg: sr.avg.cad, minSpan: 16, label: 'ピッチ' })}</div>`);
   if (sr.stride.some((v) => v)) out.push(`<div class="card ch">${head('ストライド (cm)', '', sr.avg.stride ? `平均 <b>${sr.avg.stride}</b>` : '')}
     ${areaChart(sr.stride, sr.d, tk, { color: '#7a5cff', avg: sr.avg.stride, minSpan: 20, label: 'ストライド' })}</div>`);
+  const X = sr.extra || {};
+  const exCard = (k, title, color, span, unit = '') => (X[k]?.avg != null ? `<div class="card ch">${head(title, X[k].max != null && k === 'power' ? `最大 <b>${X[k].max}</b>` : '', `平均 <b>${X[k].avg}${unit}</b>`)}
+    ${areaChart(X[k].vals, sr.d, tk, { color, avg: X[k].avg, minSpan: span, label: title })}</div>` : '');
+  out.push(exCard('power', 'ランニングパワー (W)', '#e8622c', 40), exCard('gct', '接地時間 (ms)', '#2fd3c9', 30), exCard('vr', '垂直歩幅比 (%)', '#3ccf5a', 3), exCard('vo', '上下動 (cm)', '#f4c430', 3));
   if (sr.alt.some((v) => v != null)) out.push(`<div class="card ch">${head('標高 (m)', sr.alt_max != null ? `最大 <b>${sr.alt_max}</b> ・ 最小 <b>${sr.alt_min}</b>` : '', sr.elev_gain != null ? `上昇 <b>${Math.round(sr.elev_gain)}</b> ・ 下降 <b>${sr.elev_loss ?? '-'}</b>` : '')}
     ${areaChart(sr.alt, sr.d, tk, { color: '#2fb7c9', minSpan: 12, label: '標高' })}</div>`);
   return out.join('');
