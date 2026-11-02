@@ -161,7 +161,9 @@ export function extractJson(text: string): any {
   return null;
 }
 
-export interface CorosRecord { labelId: string; sportType: number; date: string | null; name: string | null }
+const toSec = (s: string) => s.split(':').map(Number).reduce((a, b) => a * 60 + b, 0);
+
+export interface CorosRecord { labelId: string; sportType: number; date: string | null; name: string | null; dist_m?: number | null; dur_s?: number | null }
 
 /** querySportRecords の結果からランの一覧を取り出す (JSON でも文章でも) */
 export function parseRecords(text: string, structured: any): CorosRecord[] {
@@ -174,7 +176,8 @@ export function parseRecords(text: string, structured: any): CorosRecord[] {
     if (id != null && Number.isFinite(st)) {
       const d = String(x.date ?? x.startTime ?? x.start_time ?? '');
       const m = d.match(/(\d{4})-?(\d{2})-?(\d{2})/);
-      out.push({ labelId: String(id), sportType: st, date: m ? `${m[1]}-${m[2]}-${m[3]}` : null, name: x.name ?? null });
+      const dm = Number(x.distance ?? x.distanceM ?? NaN), du = Number(x.totalTime ?? x.duration ?? x.durationSeconds ?? NaN);
+      out.push({ labelId: String(id), sportType: st, date: m ? `${m[1]}-${m[2]}-${m[3]}` : null, name: x.name ?? null, ...(Number.isFinite(dm) ? { dist_m: dm } : {}), ...(Number.isFinite(du) ? { dur_s: du } : {}) });
       return;
     }
     Object.values(x).forEach(walk);
@@ -189,12 +192,13 @@ export function parseRecords(text: string, structured: any): CorosRecord[] {
     const st = b.match(/sport\s*type[^0-9]{0,6}(\d{2,5})/i)?.[1] ?? b.match(/Sport\((\d{2,5})\)/)?.[1];
     if (!id || !st) continue;
     const d = b.match(/(\d{4})-(\d{2})-(\d{2})/) ?? b.match(/\b(20\d{2})(\d{2})(\d{2})\b/);
-    out.push({ labelId: id, sportType: Number(st), date: d ? `${d[1]}-${d[2]}-${d[3]}` : null, name: null });
+    const km = b.match(/distance[^0-9]{0,6}(\d+(?:\.\d+)?)\s*km/i)?.[1] ?? b.match(/(\d+(?:\.\d+)?)\s*km\b/i)?.[1];
+    const du = b.match(/duration[^0-9]{0,6}(\d{1,2}:\d{2}(?::\d{2})?)/i)?.[1];
+    out.push({ labelId: id, sportType: Number(st), date: d ? `${d[1]}-${d[2]}-${d[3]}` : null, name: null, dist_m: km ? Math.round(Number(km) * 1000) : null, dur_s: du ? toSec(du) : null });
   }
   return out;
 }
 
-const toSec = (s: string) => s.split(':').map(Number).reduce((a, b) => a * 60 + b, 0);
 
 export interface CorosFitness {
   predicted_s: Partial<Record<'5k' | '10k' | 'half' | 'full', number>>;
@@ -251,7 +255,7 @@ export async function syncCorosFitness(env: Env): Promise<CorosFitness> {
 
 // ---------------------------------------------------------------- ランの取り込み
 
-interface Queue { items: CorosRecord[]; pause_until?: number; last_sync?: string; last_error?: string; done: number }
+interface Queue { items: CorosRecord[]; pause_until?: number; last_sync?: string; last_error?: string; done: number; skipped?: number; scan_to?: string | null; scan_empty?: number }
 const loadQueue = async (env: Env): Promise<Queue> => ({ items: [], done: 0, ...JSON.parse((await kvGet(env, 'coros_queue')) ?? '{}') });
 const saveQueue = (env: Env, q: Queue) => kvSet(env, 'coros_queue', JSON.stringify(q));
 const ymd = (d: string) => d.replace(/-/g, '');
@@ -276,12 +280,50 @@ export async function enqueueCoros(env: Env, from: string, to: string): Promise<
   }
   const q = await loadQueue(env);
   const queued = new Set(q.items.map((x) => x.labelId));
-  const add = found.filter((x) => !have.has(x.labelId) && !queued.has(x.labelId));
+  let add = found.filter((x) => !have.has(x.labelId) && !queued.has(x.labelId));
+  // Strava から取り込み済みの同じラン (同じ日・距離がほぼ同じ) は取り込まない。COROS の上限も使わない
+  const keep: CorosRecord[] = [];
+  for (const x of add) {
+    const dup = x.date && x.dist_m ? await stravaTwin(env, x.date, x.dist_m) : null;
+    if (dup) { await markDuplicate(env, x.labelId, dup); q.skipped = (q.skipped ?? 0) + 1; } else keep.push(x);
+  }
+  add = keep;
   const uniq = [...new Map(add.map((x) => [x.labelId, x])).values()].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
   q.items = [...uniq, ...q.items]; // 新しいものを先に
   q.last_sync = new Date().toISOString();
   await saveQueue(env, q);
   return uniq.length;
+}
+
+/** 同じ日に、距離がほぼ同じ (±3%・最大 300m) Strava のランがあればその id */
+async function stravaTwin(env: Env, date: string, distM: number, startLocal?: string): Promise<number | null> {
+  const { results } = await env.DB.prepare('SELECT id, distance_m, start_date_local FROM activities WHERE date = ? AND id > 0').bind(date).all<{ id: number; distance_m: number; start_date_local: string }>();
+  const tol = Math.min(300, Math.max(80, distM * 0.03));
+  const t = startLocal ? Date.parse(startLocal) : null;
+  const hit = results.find((r) => Math.abs(r.distance_m - distM) <= tol && (t == null || Math.abs(Date.parse(r.start_date_local) - t) <= 15 * 60_000));
+  return hit?.id ?? null;
+}
+
+/** Strava と重なった COROS のランは「取り込み済み (重複)」として記録だけ残す (次から調べない) */
+async function markDuplicate(env: Env, labelId: string, stravaId: number): Promise<void> {
+  await env.DB.prepare('INSERT INTO ext_activities (id, ext_id, data) VALUES (?, ?, ?) ON CONFLICT(ext_id) DO NOTHING')
+    .bind(extIdToNumber(labelId), labelId, JSON.stringify({ dup_of: stravaId }))
+    .run();
+}
+
+/** 前に COROS から取り込んで、Strava と重なっているランを消す (Strava のほうは残す) */
+export async function removeCorosDuplicates(env: Env): Promise<number> {
+  const { results } = await env.DB.prepare(
+    `SELECT c.id AS cid, s.id AS sid, e.ext_id FROM activities c
+     JOIN activities s ON s.date = c.date AND s.id > 0 AND ABS(s.distance_m - c.distance_m) <= MAX(80, MIN(300, c.distance_m * 0.03))
+     JOIN ext_activities e ON e.id = c.id
+     WHERE c.id < 0`,
+  ).all<{ cid: number; sid: number; ext_id: string }>();
+  for (const r of results) {
+    await env.DB.prepare('DELETE FROM activities WHERE id = ?').bind(r.cid).run();
+    await env.DB.prepare('UPDATE ext_activities SET data = ? WHERE id = ?').bind(JSON.stringify({ dup_of: r.sid }), r.cid).run();
+  }
+  return results.length;
 }
 
 const timeName = (h: number) => (h < 10 ? '朝のランニング' : h < 14 ? 'ランチタイム ランニング' : h < 17 ? '午後のランニング' : h < 20 ? '夕方のランニング' : '夜のランニング');
@@ -374,6 +416,8 @@ async function importOne(env: Env, rec: CorosRecord, notifyNew: boolean): Promis
   }
   if (!fit && !lapsJson) throw new Error(`COROS のラン ${rec.labelId} のデータを取得できませんでした`);
   const ext = buildExt(rec, fit, lapsJson);
+  const twin = await stravaTwin(env, ext.act.start_date_local.slice(0, 10), ext.act.distance, ext.act.start_date_local);
+  if (twin) { await markDuplicate(env, rec.labelId, twin); return; }
   await saveExt(env, ext.act.id, rec.labelId, ext);
   await ingestActivity(env, ext.act.id, { notify: notifyNew });
 }
@@ -409,8 +453,30 @@ export async function corosStatus(env: Env) {
   return {
     connected: !!a, region: a?.issuer ?? null, queue: q.items.length, done: q.done ?? 0,
     pause_until: q.pause_until && q.pause_until > now() ? new Date(q.pause_until * 1000).toISOString() : null,
-    last_sync: q.last_sync ?? null, last_error: q.last_error ?? null,
+    last_sync: q.last_sync ?? null, last_error: q.last_error ?? null, skipped: q.skipped ?? 0, scan_to: q.scan_to ?? null,
   };
+}
+
+/** 全期間の取り込みを始める (cron が 1 分に 30 日ずつさかのぼって調べる) */
+export async function startCorosFullScan(env: Env): Promise<void> {
+  const q = await loadQueue(env);
+  q.scan_to = jstToday();
+  q.scan_empty = 0;
+  await saveQueue(env, q);
+}
+
+/** さかのぼりを 1 歩 (30 日) 進める。2 年 (24 回) 続けてランが無ければ、そこで終わり */
+async function scanStep(env: Env): Promise<void> {
+  const q0 = await loadQueue(env);
+  if (!q0.scan_to) return;
+  const end = q0.scan_to, start = addDays(end, -29);
+  const r = await corosTool(env, 'querySportRecords', { startDate: ymd(start), endDate: ymd(end), sportTypeCodes: RUN_SPORTS, limit: 100 });
+  const n = parseRecords(r.text, r.structured).filter((x) => RUN_SPORTS.includes(x.sportType)).length;
+  await enqueueCoros(env, start, end);
+  const q = await loadQueue(env);
+  q.scan_empty = n ? 0 : (q.scan_empty ?? 0) + 1;
+  q.scan_to = q.scan_empty >= 24 || start <= '2012-01-01' ? null : addDays(start, -1);
+  await saveQueue(env, q);
 }
 
 export async function corosDisconnect(env: Env): Promise<void> {
@@ -422,11 +488,11 @@ export async function corosDisconnect(env: Env): Promise<void> {
 export async function corosTick(env: Env, minute: number): Promise<void> {
   if (!(await kvGet(env, 'coros_auth'))) return;
   const st = await getSettings(env);
+  if (st.source === 'coros' && minute % 15 === 0) await enqueueCoros(env, addDays(jstToday(), -2), jstToday()).catch((e) => console.error('coros enqueue', e));
+  // 全期間の取り込み中: 30 日ずつさかのぼる / 取り込み待ちがあれば少しずつ取り込む (取り込み元に関係なく)
+  await scanStep(env).catch((e) => console.error('coros scan', e));
+  await processCorosQueue(env, 2).catch((e) => console.error('coros queue', e));
   if (st.source !== 'coros' && st.predict?.source !== 'coros') return;
-  if (st.source === 'coros') {
-    if (minute % 15 === 0) await enqueueCoros(env, addDays(jstToday(), -2), jstToday()).catch((e) => console.error('coros enqueue', e));
-    await processCorosQueue(env, 2).catch((e) => console.error('coros queue', e));
-  }
   const today = jstToday();
   if (st.coros?.updated !== today && minute % 30 === 5) await syncCorosFitness(env).catch((e) => console.error('coros fitness', e));
 }
