@@ -24,6 +24,34 @@ export interface RaceWeather extends Partial<Omit<DaySky, 'code'>> {
 export interface DayWeather extends Partial<Omit<DaySky, 'code'>> { date: string; code: number; tmax: number; tmin: number; precip_pct: number | null; wind_max: number }
 
 
+/**
+ * 日本の地点では、気温・湿度・体感温度だけ気象庁のモデル (MSM 5km 格子) の値で上書きする。
+ * 既定のモデルは格子が粗く、海や山の気温が混ざって低めに出ることがあるため。取れなければ既定のまま
+ */
+export async function overlayJma(lat: number, lon: number, j: { hourly?: Record<string, any[]>; daily?: Record<string, any[]> }, days: { past?: number; forecast: number }): Promise<void> {
+  if (!(lat > 24 && lat < 46 && lon > 122 && lon < 146)) return;
+  const q = new URLSearchParams({
+    latitude: String(lat), longitude: String(lon), models: 'jma_seamless', timezone: 'Asia/Tokyo',
+    hourly: 'temperature_2m,apparent_temperature,relative_humidity_2m',
+    daily: 'temperature_2m_max,temperature_2m_min,apparent_temperature_max',
+    forecast_days: String(days.forecast), ...(days.past ? { past_days: String(days.past) } : {}),
+  });
+  try {
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?${q}`, { cf: { cacheTtl: 900, cacheEverything: true } } as RequestInit);
+    if (!res.ok) return;
+    const k = (await res.json()) as { hourly?: Record<string, any[]>; daily?: Record<string, any[]> };
+    for (const part of ['hourly', 'daily'] as const) {
+      const src = k[part], dst = j[part];
+      if (!src?.time || !dst?.time) continue;
+      const at = new Map(src.time.map((t: string, i: number) => [t, i]));
+      for (const key of Object.keys(src)) {
+        if (key === 'time' || !dst[key]) continue;
+        dst[key] = dst.time.map((t: string, i: number) => { const x = at.get(t); const v = x == null ? null : src[key][x as number]; return v ?? dst[key][i]; });
+      }
+    }
+  } catch { /* 既定のモデルのまま */ }
+}
+
 /** 天気の大まかな種類 (「のち」「時々」の判定用) */
 type Sky = 'sun' | 'cloud' | 'rain' | 'snow';
 const SKY_LABEL: Record<Sky, string> = { sun: '晴れ', cloud: 'くもり', rain: '雨', snow: '雪' };
@@ -99,6 +127,7 @@ export async function weatherDays(place: { name: string; lat: number; lon: numbe
   const res = await fetch(`https://api.open-meteo.com/v1/forecast?${q}`, { cf: { cacheTtl: 1800, cacheEverything: true } } as RequestInit);
   if (!res.ok) return null;
   const j = (await res.json()) as { daily?: Record<string, (number | string | null)[]>; hourly?: Record<string, (number | string | null)[]> };
+  await overlayJma(city[2], city[3], j as any, { past: 7, forecast: 16 });
   const d = j.daily;
   if (!d?.time) return null;
   const hc = hourlyCodes(j.hourly);
@@ -137,6 +166,7 @@ export async function raceWeather(raceName: string, date: string): Promise<RaceW
     daily?: Record<string, (number | string | null)[]>;
     hourly?: Record<string, (number | string | null)[]>;
   };
+  await overlayJma(city[2], city[3], j as any, { forecast: 16 });
   const di = j.daily?.time?.indexOf(date) ?? -1;
   if (di < 0 || !j.daily) return null;
   const d = j.daily;
