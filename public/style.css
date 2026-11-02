@@ -823,7 +823,7 @@ body::after {
 .ins-next b { font-size: 12px; color: var(--accent); }
 .ins-all { margin-top: 8px; font-size: 13px; color: var(--muted); }
 .ins-all summary { cursor: pointer; padding: 6px 0; }
-.pred-seg { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+.pred-seg { display: grid; grid-template-columns: repeat(var(--n), 1fr); width: 100%; }
 .pred-seg button { font-size: 14px; }
 .wcol .wstack { position: relative; width: 70%; max-width: 26px; display: flex; align-items: flex-end; }
 .wcol .wstack .wplan.full { position: absolute; inset: 0; width: 100%; max-width: none; }
@@ -880,3 +880,17 @@ body::after {
   .sheet-body { max-width: 520px; border-radius: 26px; padding-bottom: 20px; }
   dialog { max-width: 560px; }
 }
+
+/* 設定: 取り込み元 / COROS 連携 */
+.coros-box { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.coros-st { display: flex; align-items: center; gap: 8px; }
+.coros-st .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.coros-st .dot.ok { background: var(--good); }
+.coros-q { font-size: 12.5px; margin-top: 4px; }
+.coros-err { color: var(--bad); font-size: 13px; margin: 6px 0 0; }
+.coros-btns { margin-top: 10px; gap: 8px; flex-wrap: wrap; }
+.coros-dbg { margin-top: 10px; font-size: 13px; }
+.coros-dbg summary { color: var(--muted); cursor: pointer; padding: 6px 0; }
+.coros-raw { white-space: pre-wrap; word-break: break-all; font-size: 11.5px; max-height: 260px; overflow: auto; background: color-mix(in srgb, var(--text) 5%, transparent); border-radius: 10px; padding: 8px; margin: 8px 0 0; }
+.coros-raw:empty { display: none; }
+.pred-seg button { white-space: nowrap; }

@@ -10,6 +10,7 @@ import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './re
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
+import { corosDisconnect, corosStatus, corosTool, enqueueCoros, processCorosQueue, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns } from './insights';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
@@ -56,8 +57,9 @@ api.put('/settings', async (c) => {
   if (body.predict) {
     const pr = body.predict;
     const fs = Number(pr.full_s);
-    body.predict = { source: pr.source === 'manual' ? 'manual' : 'auto', full_s: fs >= 3600 && fs <= 8 * 3600 ? Math.round(fs) : null };
+    body.predict = { source: pr.source === 'manual' ? 'manual' : pr.source === 'coros' ? 'coros' : 'auto', full_s: fs >= 3600 && fs <= 8 * 3600 ? Math.round(fs) : null };
   }
+  if (body.source !== undefined) body.source = body.source === 'coros' ? 'coros' : 'strava';
   if (body.weather_place) {
     const w = body.weather_place;
     const lat = Number(w.lat), lon = Number(w.lon);
@@ -542,6 +544,35 @@ api.get('/weather/forecast', async (c) => {
 });
 
 /** 次のレース (16 日以内) の当日予報 */
+// ---------------------------------------------------------------- COROS
+
+api.get('/coros/status', async (c) => c.json({ ...(await corosStatus(c.env)), fitness_raw: (await kvGet(c.env, 'coros_fitness_raw')) || null }));
+/** 新しいランを確認して、少し取り込む */
+api.post('/coros/sync', async (c) => {
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const added = await enqueueCoros(c.env, addDays(today, -6), today);
+  const imported = await processCorosQueue(c.env, 3);
+  return c.json({ added, imported, ...(await corosStatus(c.env)) });
+});
+/** 過去のランを順番待ちに入れる (毎分少しずつ取り込む。FIT は 1 日 50 件まで) */
+api.post('/coros/backfill', async (c) => {
+  const { days } = await c.req.json<{ days?: number }>();
+  const n = Math.min(400, Math.max(1, Math.round(Number(days) || 30)));
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const added = await enqueueCoros(c.env, addDays(today, -n), today);
+  return c.json({ added, ...(await corosStatus(c.env)) });
+});
+api.post('/coros/fitness', async (c) => c.json(await syncCorosFitness(c.env)));
+api.post('/coros/disconnect', async (c) => { await corosDisconnect(c.env); return c.json({ ok: true }); });
+/** 診断用: COROS の応答をそのまま見る (読み取りのツールだけ) */
+api.get('/coros/debug', async (c) => {
+  const tool = c.req.query('tool') ?? 'querySportRecords';
+  if (!['querySportRecords', 'queryFitnessAssessmentOverview', 'queryActivityLapData', 'queryActivityFitFileDownloadUrls', 'queryUserInfo'].includes(tool)) return c.json({ error: 'このツールは使えません' }, 400);
+  const args = JSON.parse(c.req.query('args') ?? '{}');
+  const r = await corosTool(c.env, tool, args);
+  return c.json({ text: r.text.slice(0, 6000), structured: r.structured });
+});
+
 /** 実績から見た課題と、次にやる練習 (目標タイムのある次のレースに向けて) */
 api.get('/insights', async (c) => {
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
@@ -555,13 +586,14 @@ api.get('/insights', async (c) => {
     c.env.DB.prepare('SELECT name, date, distance_m, goal_time_s FROM races WHERE date >= ? ORDER BY goal_time_s IS NULL, date LIMIT 1').bind(today).first<any>(),
   ]);
   // 予測タイム: 入力した値 (COROS など) か、Strava の記録 (ペースと心拍) からの推定
-  const manual = st.predict?.source === 'manual';
-  const auto = manual ? null : predictFromRuns(runs.results, st.max_hr || 190, today);
-  const predicted = manual ? st.predict?.full_s ?? null : auto?.full_s ?? null;
+  const src = st.predict?.source ?? 'auto';
+  const manual = src === 'manual', fromCoros = src === 'coros';
+  const auto = manual || fromCoros ? null : predictFromRuns(runs.results, st.max_hr || 190, today);
+  const predicted = manual ? st.predict?.full_s ?? null : fromCoros ? st.coros?.predicted_s?.full ?? null : auto?.full_s ?? null;
   return c.json(buildInsights({
     today, runs: runs.results, race: race ?? null,
     predicted_full_s: predicted,
-    predicted_label: manual ? '予測 (入力)' : auto ? '予測 (Strava から)' : '予測',
+    predicted_label: manual ? '予測 (入力)' : fromCoros ? '予測 (COROS)' : auto ? '予測 (Strava から)' : '予測',
     target_cadence: st.target_cadence ?? 180,
   }));
 });

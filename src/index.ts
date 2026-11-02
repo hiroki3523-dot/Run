@@ -5,6 +5,8 @@ import { buildIcs, calendarSig, type CalRace } from './calendar';
 import { deleteActivity, ingestActivity, sendMorning } from './process';
 import { kvGet, kvSet } from './settings';
 import { authorizeUrl, exchangeCode, getAthleteId } from './strava';
+import { corosAuthorizeUrl, corosFinishAuth, corosTick, enqueueCoros, syncCorosFitness } from './coros';
+import { getSettings } from './settings';
 import type { Env, Plan } from './types';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -42,6 +44,8 @@ app.post('/webhook', async (c) => {
     (async () => {
       if (ev.object_type !== 'activity') return;
       if (ev.owner_id !== (await getAthleteId(c.env))) return;
+      // 取り込み元を COROS にしているときは、Strava からは取り込まない (二重になるため)
+      if ((await getSettings(c.env)).source === 'coros') return;
       if (ev.aspect_type === 'delete') return deleteActivity(c.env, ev.object_id);
       // update は公開範囲の変更なども来るが、再評価しても害はない (通知は 1 回のみ)
       await ingestActivity(c.env, ev.object_id, { notify: true });
@@ -67,6 +71,34 @@ app.get('/auth/strava/callback', async (c) => {
   await exchangeCode(c.env, code);
   await kvSet(c.env, 'oauth_state', '');
   return c.redirect('/#/settings');
+});
+
+// ---------------------------------------------------------------- COROS (公式 MCP) の連携
+
+app.get('/auth/coros', async (c) => {
+  if (!safeEqual(c.req.query('key') ?? '', c.env.APP_TOKEN)) return c.text('unauthorized', 401);
+  try {
+    return c.redirect(await corosAuthorizeUrl(c.env));
+  } catch (e) {
+    return c.text(`COROS との連携を始められませんでした: ${(e as Error).message}`, 502);
+  }
+});
+
+app.get('/auth/coros/callback', async (c) => {
+  const { code, state, error } = c.req.query();
+  if (error || !code) return c.text(`COROS の認可に失敗しました: ${error ?? 'code がありません'}`, 400);
+  try {
+    await corosFinishAuth(c.env, code, state ?? '');
+  } catch (e) {
+    return c.text((e as Error).message, 400);
+  }
+  // 連携できたら、体力評価と直近 2 週間のランをすぐに取りに行く
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  c.executionCtx.waitUntil(Promise.allSettled([
+    syncCorosFitness(c.env),
+    enqueueCoros(c.env, new Date(Date.parse(today) - 14 * 86400_000).toISOString().slice(0, 10), today),
+  ]).then((r) => r.forEach((x) => x.status === 'rejected' && console.error('coros first sync', x.reason))));
+  return c.redirect('/#/settings?coros=ok');
 });
 
 // ---------------------------------------------------------------- カレンダー購読 (署名付き URL)
@@ -100,7 +132,10 @@ export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     // 毎分の cron は過去データ取り込みの続き、朝の cron は今日のメニュー通知
-    if (event.cron === '* * * * *') ctx.waitUntil(backfillStep(env).catch((e) => console.error('backfill step failed', e)));
+    if (event.cron === '* * * * *') {
+      ctx.waitUntil(backfillStep(env).catch((e) => console.error('backfill step failed', e)));
+      ctx.waitUntil(corosTick(env, new Date(event.scheduledTime).getUTCMinutes()).catch((e) => console.error('coros tick failed', e)));
+    }
     else ctx.waitUntil(sendMorning(env));
   },
 } satisfies ExportedHandler<Env>;
