@@ -2384,3 +2384,23 @@ document.getElementById('back').onclick = () => {
   if (history.length > 1) history.back();
   else location.hash = `#/${(path || '/').split('/').filter(Boolean)[0] || ''}`;
 };
+
+// ---- 新しい版の自動読み込み
+// ホーム画面のアプリは裏で開いたままになりやすく、デプロイしても古い画面が残る。
+// アプリに戻ったとき (と 10 分ごと) に app.js / style.css の版 (ETag) を確かめ、変わっていたら読み込み直す。
+const assetTag = async () => {
+  try {
+    const rs = await Promise.all(['/app.js', '/style.css'].map((u) => fetch(u, { method: 'HEAD', cache: 'no-store' })));
+    return rs.map((r) => r.headers.get('etag') || r.headers.get('last-modified') || '').join('|');
+  } catch { return null; }
+};
+let loadedTag = null;
+assetTag().then((t) => { loadedTag = t; });
+const busy = () => document.body.classList.contains('wk-open') || document.querySelector('.sheet') || document.getElementById('dialog')?.open || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+async function checkUpdate() {
+  if (!loadedTag || document.visibilityState !== 'visible' || busy()) return;
+  const t = await assetTag();
+  if (t && t !== loadedTag && !busy()) location.reload();
+}
+document.addEventListener('visibilitychange', checkUpdate);
+setInterval(checkUpdate, 10 * 60 * 1000);
