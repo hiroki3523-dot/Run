@@ -936,6 +936,15 @@ async function pickTime(title, sec, maxMin = 120) {
   ]);
   return r ? Math.max(10, r[0] * 60 + r[1]) : null;
 }
+/** レースの目標タイムを 時:分:秒 のホイールで選ぶ */
+async function pickGoal(title, sec) {
+  const r = await wheelPick(title, [
+    { items: range(0, 7), value: Math.floor(sec / 3600), unit: ':' },
+    { items: range(0, 59, (x) => String(x).padStart(2, '0')), value: Math.floor((sec % 3600) / 60), unit: ':' },
+    { items: range(0, 59, (x) => String(x).padStart(2, '0')), value: Math.round(sec % 60) },
+  ]);
+  return r ? r[0] * 3600 + r[1] * 60 + r[2] : null;
+}
 /** ペース (秒/km) を 分:秒 のホイールで選ぶ */
 async function pickPace(title, sec) {
   const r = await wheelPick(title, [
@@ -1805,11 +1814,15 @@ async function raceDetailView(id) {
       view.querySelector('#pace-out').innerHTML = splitTable(r, mode);
       view.querySelector('#pace-note').textContent = PACE_PLANS[mode].note;
     }));
+    // 目標タイムかペースのどちらかをホイールで選ぶと、もう一方とペース表が変わる (レースの目標として保存)
     view.querySelectorAll('[data-gp]').forEach((b) => (b.onclick = async () => {
       const km = r.distance_m / 1000;
-      const cur = r.goal_time_s ? r.goal_time_s / km : 256;
-      const per = b.dataset.gp === 'sub3' ? 10799 / km : Math.max(180, cur + Number(b.dataset.gp));
-      await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, goal_time_s: Math.round(per * km) } });
+      const cur = r.goal_time_s || Math.round(km * 300);
+      let goal = null;
+      if (b.dataset.gp === 'time') goal = await pickGoal('目標タイム', cur);
+      else { const per = await pickPace('目標ペース', Math.round(cur / km)); if (per) goal = Math.round(per * km); }
+      if (!goal || goal < 600) return;
+      await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, goal_time_s: goal } });
       route();
     }));
     view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
@@ -1855,14 +1868,12 @@ async function raceDetailView(id) {
     </div>
     ${weather && weather.race === r.name ? weatherCard(weather) : ''}
     <div class="card"><h2>ペース表</h2>
-      <div class="gp"><span class="muted">目標ペース</span>
-        <button type="button" class="gp-b" data-gp="-5" aria-label="5秒速く">−</button>
-        <b class="num">${r.goal_time_s ? `${pace(r.goal_time_s / (r.distance_m / 1000))}/km` : '未設定'}</b>
-        <button type="button" class="gp-b" data-gp="5" aria-label="5秒遅く">＋</button>
-        <button type="button" class="chip" data-gp="sub3">サブ3</button>
+      <div class="gp2">
+        <button type="button" class="gp-t" data-gp="time"><small>目標タイム</small><b class="num">${r.goal_time_s ? dur(r.goal_time_s) : '未設定'}</b></button>
+        <button type="button" class="gp-t" data-gp="pace"><small>平均ペース</small><b class="num">${r.goal_time_s ? `${pace(r.goal_time_s / (r.distance_m / 1000))}<span>/km</span>` : '-'}</b></button>
       </div>
-      ${r.goal_time_s ? `<div class="muted num" style="margin:-4px 0 10px">ゴール ${dur(r.goal_time_s)}</div>` : ''}
-      ${r.goal_time_s ? `<div class="chips" style="margin-bottom:10px">${Object.entries(PACE_PLANS).map(([k, v]) => `<button type="button" class="chip ${k === 'even' ? 'on' : ''}" data-pm="${k}">${v.label}</button>`).join('')}</div>
+      <p class="muted hint" style="margin:0 0 12px">タップして選ぶと、ペース表も変わります。</p>
+      ${r.goal_time_s ? `<div class="chips pm3" style="margin-bottom:10px">${Object.entries(PACE_PLANS).map(([k, v]) => `<button type="button" class="chip ${k === 'even' ? 'on' : ''}" data-pm="${k}">${v.label}</button>`).join('')}</div>
       <p class="muted" id="pace-note" style="margin-top:0">${PACE_PLANS.even.note}</p>` : ''}
       <div id="pace-out">${splitTable(r, 'even')}</div>
     </div>

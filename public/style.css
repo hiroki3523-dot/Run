@@ -720,3 +720,12 @@ body::after {
 .cal-btn svg { color: var(--accent); flex: none; }
 .cal-btn span { display: flex; flex-direction: column; font-size: 15px; }
 .cal-btn small { color: var(--muted); font-weight: 400; font-size: 12px; }
+
+/* ペース表: 目標タイムと平均ペース (タップでホイール) */
+.gp2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+.gp2 .gp-t { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 14px; border-radius: 16px; min-height: 72px; text-align: left; }
+.gp2 .gp-t small { color: var(--muted); font-size: 12px; font-weight: 600; }
+.gp2 .gp-t b { font-size: 26px; font-weight: 700; letter-spacing: .01em; }
+.gp2 .gp-t b span { font-size: 13px; color: var(--muted); margin-left: 2px; }
+.chips.pm3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.chips.pm3 .chip { justify-content: center; padding: 10px 4px; white-space: nowrap; }
