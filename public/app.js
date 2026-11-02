@@ -1817,7 +1817,7 @@ async function activityDetailView(id) {
 
 // ---- レース
 
-const CHECK_CATS = { prep: '前日まで', morning: '当日の朝', other: '追加分' };
+const CHECK_CATS = { prep: '前日まで', morning: '当日の朝', other: 'このレースだけ' };
 const CHECK_ITEMS = [
   ['prep', 'p1', 'ゼッケン引換証・本人確認'],
   ['prep', 'p2', '本番シューズと靴下'],
@@ -1839,11 +1839,17 @@ async function raceDetailView(id) {
     api(`/checklist/${id}`).catch(() => ({ checked: [], custom: [] })),
     api('/race-weather').catch(() => null),
   ]);
+  // 持ち物のひな形 (全レース共通)。設定に保存してあればそれ、無ければ最初の一覧
+  const st0 = await api('/settings').catch(() => ({}));
+  let tmpl = Array.isArray(st0.checklist_template) ? st0.checklist_template : CHECK_ITEMS.map(([cat, iid, text]) => ({ cat, id: iid, text }));
+  let editing = false;
   const r = races.find((x) => x.id === Number(id));
   if (!r) return '<div class="card error">レースが見つかりません</div>';
   let mode = 'even';
   const t = today();
-  const items = [...CHECK_ITEMS.map(([cat, iid, text]) => ({ cat, id: iid, text })), ...(state.custom || [])];
+  const items = [...tmpl, ...(state.custom || [])];
+  const rebuild = () => items.splice(0, items.length, ...tmpl, ...(state.custom || []));
+  const saveTmpl = () => api('/settings', { method: 'PUT', body: { checklist_template: tmpl } }).catch((e) => alert(e.message));
   const done = () => items.filter((x) => state.checked.includes(x.id)).length;
   const save = () => api(`/checklist/${id}`, { method: 'PUT', body: state }).catch(() => {});
 
@@ -1854,8 +1860,12 @@ async function raceDetailView(id) {
       const list = items.filter((x) => x.cat === cat);
       if (!list.length) return '';
       return `<div class="ck-group"><div class="ck-title">${label} <span class="muted num">${list.filter((x) => state.checked.includes(x.id)).length}/${list.length}</span></div>
-        ${list.map((x) => `<label class="ck ${state.checked.includes(x.id) ? 'on' : ''}"><input type="checkbox" data-ck="${x.id}" ${state.checked.includes(x.id) ? 'checked' : ''}><span class="box"></span><span class="ck-text">${esc(x.text)}</span>${x.cat === 'other' ? `<button type="button" class="ck-del" data-del="${x.id}" aria-label="削除">×</button>` : ''}</label>`).join('')}</div>`;
+        ${list.map((x) => editing
+          ? `<div class="ck ck-ed"><input class="ck-in" data-ed="${x.id}" value="${esc(x.text)}" maxlength="60"><button type="button" class="ck-del" data-del="${x.id}" aria-label="削除">×</button></div>`
+          : `<label class="ck ${state.checked.includes(x.id) ? 'on' : ''}"><input type="checkbox" data-ck="${x.id}" ${state.checked.includes(x.id) ? 'checked' : ''}><span class="box"></span><span class="ck-text">${esc(x.text)}</span></label>`).join('')}</div>`;
     }).join('');
+    view.querySelector('#ck-add').classList.toggle('hidden', !editing);
+    view.querySelector('#ck-edit').textContent = editing ? '完了' : '編集';
     view.querySelector('#ck-prog').textContent = `${done()} / ${items.length}`;
     view.querySelector('#ck-bar').style.width = `${(done() / items.length) * 100}%`;
   };
@@ -1892,21 +1902,41 @@ async function raceDetailView(id) {
       const d = e.target.closest('[data-del]');
       if (!d) return;
       e.preventDefault();
-      state.custom = state.custom.filter((x) => x.id !== d.dataset.del);
-      state.checked = state.checked.filter((x) => x !== d.dataset.del);
-      items.splice(0, items.length, ...CHECK_ITEMS.map(([cat, iid, text]) => ({ cat, id: iid, text })), ...state.custom);
-      drawChecks(); save();
+      const did = d.dataset.del;
+      if (tmpl.some((x) => x.id === did)) { tmpl = tmpl.filter((x) => x.id !== did); saveTmpl(); }
+      state.custom = (state.custom || []).filter((x) => x.id !== did);
+      state.checked = state.checked.filter((x) => x !== did);
+      rebuild(); drawChecks(); save();
     });
+    // 文言を直す (入力を離れたら保存)
+    view.querySelector('#checks').addEventListener('change', (e) => {
+      const eid = e.target.dataset.ed;
+      if (!eid) return;
+      const text = e.target.value.trim();
+      if (!text) return;
+      const tt = tmpl.find((x) => x.id === eid);
+      if (tt) { tt.text = text; saveTmpl(); }
+      const cc = (state.custom || []).find((x) => x.id === eid);
+      if (cc) { cc.text = text; save(); }
+      rebuild();
+    });
+    view.querySelector('#ck-edit').onclick = () => { editing = !editing; drawChecks(); };
+    view.querySelector('#ck-reset').onclick = () => {
+      if (!confirm('持ち物の一覧を最初の状態に戻します (全レース共通)')) return;
+      tmpl = CHECK_ITEMS.map(([cat, iid, text]) => ({ cat, id: iid, text })); saveTmpl(); rebuild(); drawChecks();
+    };
     view.querySelector('#ck-add').onsubmit = (e) => {
       e.preventDefault();
       const inp = view.querySelector('#ck-new');
       const text = inp.value.trim();
       if (!text) return;
-      const it = { id: `c${Date.now().toString(36)}`, cat: 'other', text };
-      state.custom = [...(state.custom || []), it];
-      items.push(it);
+      const cat = view.querySelector('#ck-cat').value;
+      const it = { id: `c${Date.now().toString(36)}`, cat, text };
+      if (cat === 'other') { state.custom = [...(state.custom || []), it]; save(); }
+      else { tmpl = [...tmpl, it]; saveTmpl(); }
+      rebuild();
       inp.value = '';
-      drawChecks(); save();
+      drawChecks();
     };
   };
   const dleft = r.date >= t ? daysBetween(t, r.date) : null;
@@ -1930,10 +1960,15 @@ async function raceDetailView(id) {
       <p class="muted" id="pace-note" style="margin-top:0">${PACE_PLANS.even.note}</p>` : ''}
       <div id="pace-out">${splitTable(r, 'even')}</div>
     </div>
-    ${upcoming ? `<div class="card"><div class="row spread"><h2>持ち物</h2><b class="num" id="ck-prog"></b></div>
+    ${upcoming ? `<div class="card"><div class="row spread"><h2>持ち物</h2><div class="row" style="gap:8px;align-items:center"><b class="num" id="ck-prog"></b><button type="button" class="chip" id="ck-edit">編集</button></div></div>
       <div class="bar" style="margin:6px 0 10px"><div id="ck-bar" style="width:0"></div></div>
       <div id="checks"></div>
-      <form id="ck-add" class="row" style="margin-top:12px;gap:8px"><input id="ck-new" placeholder="追加 (例: 梅干し)" style="flex:1" maxlength="60"><button class="primary">追加</button></form>
+      <form id="ck-add" class="ck-add hidden">
+        <p class="muted" style="margin:0 0 8px">「前日まで」「当日の朝」はすべてのレースで共通です。「このレースだけ」はこのレースにだけ入ります。</p>
+        <div class="row" style="gap:8px"><select id="ck-cat"><option value="prep">前日まで</option><option value="morning">当日の朝</option><option value="other">このレースだけ</option></select>
+        <input id="ck-new" placeholder="追加 (例: 梅干し)" style="flex:1;min-width:0" maxlength="60"><button class="primary">追加</button></div>
+        <button type="button" class="linkbtn" id="ck-reset" style="margin-top:10px">最初の一覧に戻す</button>
+      </form>
     </div>` : ''}
     <button id="edit-race" class="wide">レースの情報を編集</button>`;
 }
