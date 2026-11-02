@@ -2291,11 +2291,11 @@ async function settingsView() {
       { const r = bfText(await api('/strava/backfill/start', { method: 'POST' })); refreshBackfill(); return r; }
     });
     run('#reset-settings', async () => {
-      if (!confirm('ペース帯・心拍の基準を COROS 基準に戻します。よろしいですか？')) return 'キャンセル';
+      if (!confirm('評価に使うペース帯・心拍の基準だけを標準に戻します (取り込み元や予測タイムの設定は変わりません)。よろしいですか？')) return 'キャンセル';
       await api('/settings/reset', { method: 'POST' });
       cachedSettings = null;
       setTimeout(route, 600);
-      return 'COROS 基準に戻しました';
+      return '標準に戻しました';
     });
     run('#backfill-2025', async () => {
       const days = Math.ceil((Date.now() - Date.parse('2025-01-01T00:00:00+09:00')) / 86400000);
@@ -2398,7 +2398,7 @@ async function settingsView() {
         <tr><td>予測 5km / 10km</td><td class="num">${dur(settings.coros.predicted_s['5k'])} / ${dur(settings.coros.predicted_s['10k'])}</td></tr>
         <tr><td>予測 ハーフ / フル</td><td class="num">${dur(settings.coros.predicted_s.half)} / ${dur(settings.coros.predicted_s.full)}</td></tr>
       </table>
-      <div class="row" style="margin-top:12px"><button id="reset-settings">評価の基準を COROS 基準に戻す</button></div>
+      <div class="row" style="margin-top:12px"><button id="reset-settings">ペース帯・心拍の基準を標準に戻す</button></div>
     </div>` : ''}
     <form class="card" id="settings-form">
       <h2>評価の基準</h2>

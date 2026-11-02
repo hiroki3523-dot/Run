@@ -70,9 +70,14 @@ api.put('/settings', async (c) => {
   return c.json(await getSettings(c.env));
 });
 
-/** ペース帯・心拍・COROS の値を、標準 (COROS 基準) に戻す */
+/**
+ * 評価の基準 (ペース帯・心拍の目標・最大心拍・閾値心拍・目標ピッチ) だけを標準に戻す。
+ * 取り込み元・予測タイムの出どころ・週の配置の回数・天気の場所・COROS から取り込んだ値はそのまま残す
+ */
 api.post('/settings/reset', async (c) => {
-  await saveSettings(c.env, DEFAULT_SETTINGS);
+  const cur = await getSettings(c.env);
+  const d = DEFAULT_SETTINGS;
+  await saveSettings(c.env, { ...cur, paces: d.paces, hr_targets: d.hr_targets, max_hr: d.max_hr, lthr: cur.coros?.lthr ?? d.lthr, target_cadence: d.target_cadence });
   return c.json(await getSettings(c.env));
 });
 
