@@ -25,7 +25,7 @@ interface CorosAuth {
 const b64url = (buf: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(buf as ArrayBuffer))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const now = () => Math.floor(Date.now() / 1000);
 
-async function getAuth(env: Env): Promise<CorosAuth | null> {
+export async function getAuth(env: Env): Promise<CorosAuth | null> {
   const raw = await kvGet(env, 'coros_auth');
   return raw ? (JSON.parse(raw) as CorosAuth) : null;
 }
