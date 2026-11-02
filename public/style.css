@@ -660,3 +660,29 @@ a.act { display: block; margin-top: 8px; padding: 10px 12px; border-radius: 14px
 .tr-row .tr-txt b { font-size: 15px; }
 .tr-row .tr-txt small { color: var(--muted); font-size: 12px; }
 .tr-row .tr-go { color: var(--muted); font-size: 22px; }
+
+/* ---- ふりかえり (0〜10 スライダー) */
+.fbx .fbx-ic { color: var(--muted); }
+.fbx .fbx-sub { margin: 2px 0 6px; font-size: 13px; }
+.fs { padding: 12px 0 4px; }
+.fs-h { display: flex; justify-content: space-between; align-items: baseline; }
+.fs-h b { font-size: 15px; }
+.fs-v em { font-style: normal; font-size: 26px; font-weight: 700; }
+.fs-v small { color: var(--muted); font-size: 13px; margin-left: 2px; }
+.fs.unset .fs-v em { color: var(--muted); }
+.fs-track { --th: 44px; position: relative; height: 44px; margin-top: 4px; touch-action: none; cursor: pointer; }
+.fs-track::before { content: ''; position: absolute; left: 0; right: 0; top: 13px; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--text) 10%, var(--surface)); }
+.fs-dots { position: absolute; left: calc(var(--th) / 2); right: calc(var(--th) / 2); top: 30px; display: flex; justify-content: space-between; }
+.fs-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--muted); opacity: .55; margin: 0 -2px; }
+.fs-thumb { position: absolute; top: 3px; width: var(--th); height: 28px; border-radius: 14px; background: #fff; box-shadow: 0 1px 4px rgb(0 0 0 / .35); left: calc((100% - var(--th)) * var(--v) / 10); transition: left .08s; }
+.fs.unset .fs-thumb { background: color-mix(in srgb, var(--text) 30%, var(--surface)); box-shadow: none; }
+.fs-l { display: flex; justify-content: space-between; color: var(--muted); font-size: 12.5px; }
+.fbx-q { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.fbx-q > b { display: block; font-size: 15px; margin-bottom: 8px; }
+.fbx-radio { display: flex; flex-direction: column; }
+.fbx-radio .rd { all: unset; display: flex; align-items: center; gap: 14px; min-height: 44px; font-size: 16px; cursor: pointer; color: var(--text); }
+.fbx-radio .rd i { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--muted); box-sizing: border-box; display: grid; place-items: center; }
+.fbx-radio .rd.on i { border-color: var(--text); background: var(--text); box-shadow: inset 0 0 0 5px var(--bg); }
+.fbx-memo { width: 100%; box-sizing: border-box; font: inherit; font-size: 15px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: transparent; color: var(--text); resize: vertical; }
+.fbx .fbx-save { width: 100%; margin-top: 16px; min-height: 50px; border-radius: 999px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 15px; background: var(--text); color: var(--bg); border: 0; box-shadow: none; }
+.fbx .fbx-save:disabled { background: var(--btn-bg); color: var(--muted); }

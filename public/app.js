@@ -1517,17 +1517,71 @@ function reviewHtml(rv) {
   return h;
 }
 
-const FB_RPE = [[1, 'かなり楽'], [2, '余裕あり'], [3, 'ややきつい'], [4, 'きつい']];
-const FB_LEG = [['light', '軽い'], ['normal', 'ふつう'], ['heavy', '重い'], ['pain', '違和感・痛み']];
+const FB_SLIDERS = [
+  ['breath', '呼吸のきつさ', '負担なし', '最大'],
+  ['leg', '脚の疲労感', '負担なし', '最大'],
+  ['rpe', '全体的なきつさ (RPE)', '負担なし', '最大'],
+  ['form', 'フォームの自然さ', '不自然・力みがある', '自然・理想的'],
+  ['pain', '痛みの強さ', 'なし', '最大'],
+];
+const FB_RESERVE = [['limit', 'ほぼ限界'], ['1-3', '1〜3km'], ['3-5', '3〜5km'], ['5-10', '5〜10km'], ['10+', '10km以上']];
 const FB_TAG = [['hot', '暑い'], ['cold', '寒い'], ['wind', '風'], ['sleep', '睡眠不足'], ['hungry', '空腹・補給'], ['tired', '疲れが残っていた']];
-/** ふりかえり: タップで答えるとすぐ保存され、レビューの文章に反映される */
+const CLIP_SVG = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 13l2 2 4-4"/></svg>';
+/** ふりかえり: 0〜10 のスライダー (タップでもなぞっても選べる)・余裕・メモ・コンディション */
 function feedbackHtml(fb, notes) {
-  const grp = (title, hint, kind, items, on) => `<div class="fb-g"><b>${title}</b><span class="muted">${hint}</span><div class="chips">${items.map(([v, l]) => `<button type="button" class="chip ${on(v) ? 'on' : ''}" data-fb="${kind}" data-v="${v}">${l}</button>`).join('')}</div></div>`;
-  return `<div class="card rv"><h3>ふりかえり</h3><p class="muted" style="margin:0 0 4px">タップするだけ。答えると、レビューの文章に反映されます。</p>
-    ${grp('走っているときのきつさ', '1つ選ぶ', 'rpe', FB_RPE, (v) => fb.rpe === v)}
-    ${grp('いまの脚・体の状態', '1つ選ぶ', 'leg', FB_LEG, (v) => fb.leg === v)}
-    ${grp('影響しそうなこと', 'あてはまるものをすべて', 'tag', FB_TAG, (v) => (fb.tags || []).includes(v))}
+  const slider = ([k, title, lo, hi]) => {
+    const v = fb[k];
+    return `<div class="fs ${v == null ? 'unset' : ''}" data-k="${k}">
+      <div class="fs-h"><b>${title}</b><span class="fs-v num"><em>${v ?? '–'}</em><small>/10</small></span></div>
+      <div class="fs-track" style="--v:${v ?? 0}"><div class="fs-dots">${Array.from({ length: 11 }, () => '<i></i>').join('')}</div><div class="fs-thumb"></div></div>
+      <div class="fs-l"><span>${lo}</span><span>${hi}</span></div></div>`;
+  };
+  return `<div class="card rv fbx"><div class="row spread"><h3>ふりかえり</h3><span class="fbx-ic">${CLIP_SVG}</span></div>
+    <p class="muted fbx-sub">練習直後に 30 秒で。答えるとレビューに反映されます。</p>
+    ${FB_SLIDERS.map(slider).join('')}
+    <div class="fbx-q"><b>同じペースをあと何km続けられそう？</b>
+      <div class="fbx-radio">${FB_RESERVE.map(([v, l]) => `<button type="button" class="rd ${fb.reserve === v ? 'on' : ''}" data-rs="${v}"><i></i>${l}</button>`).join('')}</div></div>
+    <div class="fbx-q"><b>コンディション <span class="muted">(任意・複数可)</span></b>
+      <div class="chips">${FB_TAG.map(([v, l]) => `<button type="button" class="chip ${(fb.tags || []).includes(v) ? 'on' : ''}" data-tg="${v}">${l}</button>`).join('')}</div></div>
+    <div class="fbx-q"><b>特記事項 <span class="muted">(任意)</span></b>
+      <textarea class="fbx-memo" rows="2" maxlength="500" placeholder="例: 9kmからゾーンに入った。へそ下を意識すると自然に加速。">${esc(fb.memo || '')}</textarea></div>
+    <button type="button" class="fbx-save" disabled>この評価を保存<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     <div id="fb-notes">${(notes || []).map((t) => `<p class="fb-note">${esc(t)}</p>`).join('')}</div></div>`;
+}
+
+/** ふりかえりの操作 (スライダー・選択・保存) */
+function bindFeedback(fbox, state, onSave) {
+  const save = fbox.querySelector('.fbx-save');
+  const dirty = () => { save.disabled = false; save.firstChild.textContent = 'この評価を保存'; };
+  fbox.querySelectorAll('.fs').forEach((el) => {
+    const k = el.dataset.k, tr = el.querySelector('.fs-track');
+    const setV = (v) => {
+      if (state[k] === v && !el.classList.contains('unset')) return;
+      state[k] = v; el.classList.remove('unset');
+      tr.style.setProperty('--v', v); el.querySelector('em').textContent = v; dirty();
+    };
+    const at = (e) => {
+      const r = tr.getBoundingClientRect(), th = 44;
+      setV(Math.max(0, Math.min(10, Math.round(((e.clientX - r.left - th / 2) / (r.width - th)) * 10))));
+    };
+    let on = false;
+    tr.addEventListener('pointerdown', (e) => { on = true; tr.setPointerCapture(e.pointerId); at(e); });
+    tr.addEventListener('pointermove', (e) => { if (on) at(e); });
+    ['pointerup', 'pointercancel'].forEach((t) => tr.addEventListener(t, () => { on = false; }));
+  });
+  fbox.querySelectorAll('[data-rs]').forEach((b) => (b.onclick = () => {
+    state.reserve = state.reserve === b.dataset.rs ? null : b.dataset.rs;
+    fbox.querySelectorAll('[data-rs]').forEach((x) => x.classList.toggle('on', x.dataset.rs === state.reserve)); dirty();
+  }));
+  fbox.querySelectorAll('[data-tg]').forEach((b) => (b.onclick = () => {
+    const s = new Set(state.tags); s.has(b.dataset.tg) ? s.delete(b.dataset.tg) : s.add(b.dataset.tg); state.tags = [...s];
+    b.classList.toggle('on', s.has(b.dataset.tg)); dirty();
+  }));
+  fbox.querySelector('.fbx-memo').oninput = (e) => { state.memo = e.target.value; dirty(); };
+  save.onclick = async () => {
+    save.disabled = true; save.firstChild.textContent = '保存中…';
+    try { await onSave(state); save.firstChild.textContent = '保存しました'; } catch (err) { alert(err.message); dirty(); }
+  };
 }
 
 async function activityDetailView(id) {
@@ -1583,26 +1637,22 @@ async function activityDetailView(id) {
       if (!box || !Array.isArray(sp) || !sp.length) { if (box) box.innerHTML = '<span class="muted">取得できませんでした</span>'; return; }
       box.innerHTML = lapTable(sp);
     }).catch(() => {});
-    let fbState = { rpe: null, leg: null, tags: [] };
     const loadReview = () => api(`/activities/${id}/review`).then((rv) => {
       const box = view.querySelector('#review'), fbox = view.querySelector('#fb');
       if (!box || !rv || rv.error) { if (box) box.innerHTML = ''; return; }
       box.innerHTML = reviewHtml(rv);
       if (rv.main_id !== undefined) { if (fbox) fbox.innerHTML = ''; return; }
-      fbState = { rpe: rv.fb?.rpe ?? null, leg: rv.fb?.leg ?? null, tags: rv.fb?.tags ?? [] };
+      const st = { breath: null, leg: null, rpe: null, form: null, pain: null, reserve: null, memo: '', tags: [], ...(rv.fb || {}) };
       if (fbox) {
-        fbox.innerHTML = feedbackHtml(fbState, rv.notes);
-        fbox.onclick = async (e) => {
-          const t = e.target.closest('[data-fb]');
-          if (!t) return;
-          const k = t.dataset.fb, v = t.dataset.v;
-          let body;
-          if (k === 'tag') { const s2 = new Set(fbState.tags); s2.has(v) ? s2.delete(v) : s2.add(v); fbState.tags = [...s2]; body = { tags: fbState.tags }; }
-          else { fbState[k] = (fbState[k] === (k === 'rpe' ? Number(v) : v)) ? null : (k === 'rpe' ? Number(v) : v); body = { [k]: fbState[k] }; }
-          fbox.querySelectorAll(`[data-fb="${k}"]`).forEach((x) => x.classList.toggle('on', k === 'tag' ? fbState.tags.includes(x.dataset.v) : String(fbState[k]) === x.dataset.v));
-          try { await api(`/activities/${id}/feedback`, { method: 'PUT', body }); } catch (err) { alert(err.message); return; }
-          api(`/activities/${id}/review`).then((r2) => { if (r2 && !r2.error && r2.main_id === undefined) { view.querySelector('#review').innerHTML = reviewHtml(r2); view.querySelector('#fb-notes').innerHTML = (r2.notes || []).map((t) => `<p class="fb-note">${esc(t)}</p>`).join(''); } }).catch(() => {});
-        };
+        fbox.innerHTML = feedbackHtml(st, rv.notes);
+        bindFeedback(fbox, st, async (body) => {
+          await api(`/activities/${id}/feedback`, { method: 'PUT', body });
+          const r2 = await api(`/activities/${id}/review`).catch(() => null);
+          if (r2 && !r2.error && r2.main_id === undefined) {
+            view.querySelector('#review').innerHTML = reviewHtml(r2);
+            view.querySelector('#fb-notes').innerHTML = (r2.notes || []).map((t) => `<p class="fb-note">${esc(t)}</p>`).join('');
+          }
+        });
       }
     }).catch(() => { const box = view.querySelector('#review'); if (box) box.innerHTML = ''; });
     loadReview();
