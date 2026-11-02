@@ -2568,3 +2568,11 @@ async function checkUpdate() {
 }
 document.addEventListener('visibilitychange', checkUpdate);
 setInterval(checkUpdate, 10 * 60 * 1000);
+
+// ヘッダーの高さを CSS に渡す (タブをヘッダーのすぐ下に固定するため)
+{
+  const hdr = document.querySelector('header');
+  const setH = () => document.documentElement.style.setProperty('--hdr', `${hdr.offsetHeight}px`);
+  setH();
+  if (window.ResizeObserver) new ResizeObserver(setH).observe(hdr);
+}
