@@ -328,7 +328,7 @@ function weekWxCard(from, place) {
   return `<a class="card linkcard" href="#/weather"><div class="row spread"><h2>週間天気</h2><span class="muted">${esc(place)} ・詳しく見る ›</span></div>
     <div class="wxweek">${days.map((d) => {
       const w = WX[d];
-      return `<div class="${d === from ? 'today' : ''}"><div class="muted">${dow(d)}</div>${w ? wxPair(w, 28) : '<span class="muted">-</span>'}<span class="wxrel">${w?.rel === 'nochi' ? 'のち' : w?.rel === 'toki' ? '時々' : ''}</span><b class="num">${w ? Math.round(w.tmax) : '-'}</b><span class="muted num">${w ? Math.round(w.tmin) : ''}</span><span class="rain num">${w && w.precip_pct != null && w.precip_pct >= 30 ? w.precip_pct + '%' : ''}</span></div>`;
+      return `<div class="${d === from ? 'today' : ''}"><div class="muted">${dow(d)}</div>${w ? wxPair(w, 28) : '<span class="muted">-</span>'}<b class="num">${w ? Math.round(w.tmax) : '-'}</b><span class="muted num">${w ? Math.round(w.tmin) : ''}</span><span class="rain num">${w && w.precip_pct != null && w.precip_pct >= 30 ? w.precip_pct + '%' : ''}</span></div>`;
     }).join('')}</div></a>`;
 }
 
