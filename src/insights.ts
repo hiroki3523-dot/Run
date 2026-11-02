@@ -16,7 +16,40 @@ export interface InsightIn {
   runs: InsightRun[]; // 直近 8 週間
   race: { name: string; date: string; distance_m: number; goal_time_s: number | null } | null;
   predicted_full_s: number | null;
+  /** 予測の出どころ (画面に出す短い説明) */
+  predicted_label?: string;
   target_cadence: number;
+}
+
+/**
+ * Strava の記録 (ペースと心拍) からフルマラソンの予測タイムを出す。
+ * 心拍が高め (最大心拍の 80% 以上) の 5km 以上のランについて、心拍から %VO2max を推定し (Swain の式)、
+ * ペースから求めた酸素摂取量で割って VDOT を推定する。その中央値から、Daniels の式でフルのタイムを求める。
+ */
+const vo2 = (mPerMin: number) => -4.6 + 0.182258 * mPerMin + 0.000104 * mPerMin * mPerMin;
+const pctAt = (min: number) => 0.8 + 0.1894393 * Math.exp(-0.012778 * min) + 0.2989558 * Math.exp(-0.1932605 * min);
+export function timeForVdot(vdot: number, distM: number): number {
+  let lo = 60, hi = 600; // 分
+  for (let k = 0; k < 60; k++) {
+    const mid = (lo + hi) / 2;
+    if (vo2(distM / mid) / pctAt(mid) > vdot) lo = mid; else hi = mid;
+  }
+  return Math.round(((lo + hi) / 2) * 60);
+}
+export function predictFromRuns(runs: InsightRun[], maxHr: number, today: string): { full_s: number; n: number } | null {
+  const t = Date.parse(`${today}T00:00:00Z`);
+  const vd = runs
+    .filter((r) => r.distance_m >= 5000 && r.avg_hr && r.avg_hr / maxHr >= 0.8 && r.avg_hr / maxHr <= 0.97 && t - Date.parse(`${r.date}T00:00:00Z`) < 56 * 86400_000)
+    .map((r) => {
+      const v = r.distance_m / (r.moving_time_s / 60);
+      const pct = (r.avg_hr! / maxHr - 0.37) / 0.64;
+      return vo2(v) / pct;
+    })
+    .filter((x) => x > 25 && x < 85)
+    .sort((a, b) => a - b);
+  if (vd.length < 3) return null;
+  const med = vd[Math.floor(vd.length / 2)];
+  return { full_s: timeForVdot(med, 42195), n: vd.length };
 }
 
 export type Level = 'ok' | 'warn' | 'bad';
@@ -24,6 +57,7 @@ export interface InsightItem { key: string; level: Level; label: string; value: 
 export interface Insights {
   race: { name: string; days: number; goal_s: number | null; goal_pace_s: number | null } | null;
   predicted_s: number | null;
+  predicted_label: string;
   /** 予測 − 目標 (秒)。負なら予測のほうが速い */
   gap_s: number | null;
   items: InsightItem[];
@@ -108,6 +142,7 @@ export function buildInsights(i: InsightIn): Insights {
   return {
     race: race ? { name: race.name, days: daysLeft!, goal_s: race.goal_time_s, goal_pace_s: goalPace } : null,
     predicted_s: i.predicted_full_s,
+    predicted_label: i.predicted_label ?? '予測',
     gap_s: isFull && race!.goal_time_s && i.predicted_full_s ? i.predicted_full_s - race!.goal_time_s : null,
     items,
     actions: actions.slice(0, 3),

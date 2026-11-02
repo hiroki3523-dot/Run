@@ -800,3 +800,32 @@ body::after {
 .ins-act ol { margin: 6px 0 0; padding-left: 1.3em; display: grid; gap: 6px; font-size: 14px; line-height: 1.5; }
 .wh-it { white-space: nowrap; }
 .wh-cols:not(:has(.wh-col + .wh-col)) .wh-col { flex: 0 0 220px; max-width: 220px; }
+
+/* 週間距離のグラフ: 目盛り線 + 棒の上に km */
+.wchart { position: relative; height: calc(var(--H) + 18px + 16px); padding-left: 26px; }
+.wg { position: absolute; left: 0; right: 0; border-top: 1px dashed color-mix(in srgb, var(--text) 10%, transparent); }
+.wg span { position: absolute; left: 0; top: -8px; font-size: 10px; color: var(--muted); background: var(--surface); padding-right: 4px; }
+.wcols { position: absolute; left: 26px; right: 0; bottom: 0; top: 0; display: flex; align-items: flex-end; gap: 4px; }
+.wcol { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; text-decoration: none; position: relative; padding-bottom: 18px; }
+.wcol .wv { font-size: 10px; color: var(--text); margin-bottom: 2px; white-space: nowrap; }
+.wcol.fut .wv { color: var(--muted); }
+.wcol .wact { width: 70%; max-width: 26px; border-radius: 5px 5px 0 0; background: linear-gradient(180deg, var(--c-long), var(--accent)); }
+.wcol.cur .wact { background: linear-gradient(180deg, #ff8a1f, #ff4f7b); }
+.wcol .wplan { width: 70%; max-width: 26px; border: 1.5px dashed color-mix(in srgb, var(--text) 30%, transparent); border-bottom: none; border-radius: 5px 5px 0 0; }
+.wcol .wl { position: absolute; bottom: 0; font-size: 9.5px; color: var(--muted); white-space: nowrap; }
+.wcol:nth-child(even) .wl { visibility: hidden; }
+.wcol.cur .wl { visibility: visible; color: var(--text); font-weight: 700; }
+
+/* 目標への現在地 (シンプル版) */
+.ins-sub { font-size: 12px; color: var(--muted); font-weight: 600; margin: 4px 0 2px; }
+.ins-okmsg { margin: 4px 0 0; color: var(--good); font-size: 14px; }
+.ins-next { display: grid; gap: 2px; margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 10%, transparent); font-size: 13.5px; line-height: 1.5; }
+.ins-next b { font-size: 12px; color: var(--accent); }
+.ins-all { margin-top: 8px; font-size: 13px; color: var(--muted); }
+.ins-all summary { cursor: pointer; padding: 6px 0; }
+.pred-seg { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+.pred-seg button { font-size: 14px; }
+.wcol .wstack { position: relative; width: 70%; max-width: 26px; display: flex; align-items: flex-end; }
+.wcol .wstack .wplan.full { position: absolute; inset: 0; width: 100%; max-width: none; }
+.wcol .wstack .wact { width: 100%; max-width: none; position: relative; }
+.wcol.cur .wv { font-weight: 700; }
