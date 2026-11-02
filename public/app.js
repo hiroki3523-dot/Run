@@ -2372,6 +2372,7 @@ async function route() {
   const parts = (path || '/').split('/').filter(Boolean);
   const tab = parts[0] || 'home';
   document.querySelectorAll('nav a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
+  view.dataset.tab = parts[1] ? `${tab}-detail` : tab;
   // 詳細ページ (ランの詳細・週/日の評価・別の週) では「戻る」を出す
   const isRoot = parts.length <= 1 && !query && tab !== 'weather';
   document.getElementById('back').classList.toggle('hidden', isRoot);

@@ -829,3 +829,54 @@ body::after {
 .wcol .wstack .wplan.full { position: absolute; inset: 0; width: 100%; max-width: none; }
 .wcol .wstack .wact { width: 100%; max-width: none; position: relative; }
 .wcol.cur .wv { font-weight: 700; }
+
+/* ================================================================
+   PC (横幅 960px 以上): 左にメニュー、内容は 2 列。スマホの見た目はそのまま
+   ================================================================ */
+@media (min-width: 960px) {
+  body { padding-left: 232px; padding-bottom: 40px; }
+  body::after { display: none; }
+  /* 左のメニュー */
+  nav {
+    left: 0; top: 0; bottom: 0; transform: none; width: 216px;
+    flex-direction: column; justify-content: flex-start; gap: 4px;
+    padding: calc(84px + env(safe-area-inset-top)) 12px 16px;
+    border-radius: 0; border: 0; border-right: 1px solid var(--line);
+    background: var(--surface); box-shadow: none;
+  }
+  nav a { flex: 0 0 auto; flex-direction: row; justify-content: flex-start; gap: 12px; min-height: 48px; padding: 0 16px; font-size: 14.5px; border-radius: 12px; color: var(--muted); }
+  nav a:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+  nav a.active { color: #fff; }
+  /* ロゴはメニューの上 */
+  header { max-width: 1240px; padding-left: 24px; padding-right: 24px; -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--bg); }
+  header h1 { position: fixed; left: 24px; top: calc(24px + env(safe-area-inset-top)); z-index: 11; }
+  header h1.hidden { display: flex !important; }
+  .backbtn { min-height: 40px; font-size: 15px; }
+  main { max-width: 1240px; padding: 8px 24px 0; }
+
+  /* ホーム: 2 列 */
+  #view[data-tab="home"] { column-count: 2; column-gap: 16px; }
+  #view[data-tab="home"] > * { break-inside: avoid; display: block; }
+  #view[data-tab="home"] > .card { margin-bottom: 16px; }
+
+  /* 計画: 左に 1 週間、右に「予定を組む」(スクロールしてもついてくる) */
+  #view[data-tab="plans"] { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(340px, 1fr); column-gap: 16px; align-items: start; }
+  #view[data-tab="plans"] > * { grid-column: 1; }
+  #view[data-tab="plans"] > .tools { grid-column: 2; grid-row: 1 / span 40; position: sticky; top: 76px; }
+  #view[data-tab="plans"] > h2.sect { display: none; }
+
+  /* 実績の一覧・週/月の評価: 2 列 */
+  #view[data-tab="activities"] { column-count: 2; column-gap: 16px; }
+  #view[data-tab="activities"] > * { break-inside: avoid; }
+  #view[data-tab="activities"] > .seg, #view[data-tab="activities"] > .row { column-span: all; }
+
+  /* 詳細・設定などの 1 列のページは読みやすい幅に */
+  #view[data-tab$="-detail"], #view[data-tab="settings"], #view[data-tab="shoes"], #view[data-tab="races"], #view[data-tab="weather"] { max-width: 860px; margin: 0 auto; }
+
+  /* 計画の編集・ホイールは画面の中央に */
+  .wk { left: 232px; }
+  .wk-top, .wk-body { max-width: 760px; margin-left: auto; margin-right: auto; }
+  .sheet { align-items: center; justify-content: center; }
+  .sheet-body { max-width: 520px; border-radius: 26px; padding-bottom: 20px; }
+  dialog { max-width: 560px; }
+}
