@@ -74,6 +74,10 @@ describe('planner', () => {
     expect(longs.length).toBe(2);
     expect(Math.min(...longs.map((r) => r.distance_m!))).toBeLessThan(Math.max(...longs.map((r) => r.distance_m!)));
   });
+  it('ロング走を週3回にできる', () => {
+    const wk = weekOf(kum({ points_per_week: 1, long_per_week: 3 }), '2026-12-14');
+    expect(wk.filter((r) => r.type === 'long').length).toBe(3);
+  });
   it('ポイント走を週3回にできる / 0回にもできる', () => {
     expect(weekOf(kum({ points_per_week: 3 }), '2026-12-14').filter((r) => POINTS.includes(r.type)).length).toBe(3);
     expect(weekOf(kum({ points_per_week: 0 }), '2026-12-14').filter((r) => POINTS.includes(r.type)).length).toBe(0);

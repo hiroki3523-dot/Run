@@ -46,7 +46,7 @@ api.put('/settings', async (c) => {
     const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
     body.plan_prefs = {
       points_per_week: Math.min(3, Math.max(0, Math.round(Number(pp.points_per_week) || 0))),
-      long_per_week: Math.min(2, Math.max(0, Math.round(Number(pp.long_per_week) || 0))),
+      long_per_week: Math.min(3, Math.max(0, Math.round(Number(pp.long_per_week) || 0))),
       long_day: Math.min(6, Math.max(0, Math.round(Number(pp.long_day) || 0))),
       rest_per_week: Math.min(3, Math.max(0, Math.round(Number(pp.rest_per_week) || 0))),
       rest_days: [...new Set((pp.rest_days ?? []).map(Number).filter((n) => n >= 0 && n <= 6))],
