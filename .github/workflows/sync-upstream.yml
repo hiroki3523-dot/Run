@@ -1,0 +1,20 @@
+# コピー (Fork) して使っている人向け: 毎日、本家 (hiroki3523-dot/Run) の更新を自動で取り込む。
+# 取り込むと Cloudflare が自動で再デプロイする。本家では何もしない。
+name: 本家の更新を取り込む
+on:
+  schedule:
+    - cron: '17 19 * * *' # 毎日 4:17 (日本時間)
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  sync:
+    if: github.repository != 'hiroki3523-dot/Run'
+    runs-on: ubuntu-latest
+    steps:
+      - name: merge-upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/merge-upstream" -f branch=main || {
+            echo "自動で取り込めませんでした。GitHub の画面で Sync fork を押してください。"; exit 1; }
