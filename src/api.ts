@@ -348,7 +348,7 @@ api.get('/activities/:id/review', async (c) => {
     }));
   } catch { /* ラップが取れなくても、あるぶんでレビューする */ }
   const lt = st.coros.lt_pace_s;
-  const series = await getSeries(c.env, id, [lt * 1.397, lt * 1.154, lt * 1.073, lt * 0.98, lt * 0.899].map(Math.round), [0.8, 0.9, 0.95, 1.017, 1.057].map((r) => Math.round(st.coros.lthr * r))).catch(() => null);
+  const series = await getSeries(c.env, id, paceBoundsOf(st), [0.8, 0.9, 0.95, 1.017, 1.057].map((r) => Math.round(st.coros.lthr * r))).catch(() => null);
   const review = buildRunReview({
     score: row.score ?? 0,
     sub: { pace: ev?.pace?.score ?? null, hr: ev?.hr?.score ?? null, form: ev?.form?.score ?? null },
@@ -378,7 +378,7 @@ api.get('/activities/:id/series', async (c) => {
     const st = await getSettings(c.env);
     const lt = st.coros.lt_pace_s;
     // COROS と同じ境界: 閾値ペース 4:07 → 5:45 / 4:46 / 4:26 / 4:02 / 3:42
-    const paceBounds = [lt * 1.397, lt * 1.154, lt * 1.073, lt * 0.98, lt * 0.899].map(Math.round);
+    const paceBounds = paceBoundsOf(st);
     const l = st.coros.lthr;
     const hrBounds = [0.8, 0.9, 0.95, 1.017, 1.057].map((r) => Math.round(l * r));
     const s = await getSeries(c.env, Number(c.req.param('id')), paceBounds, hrBounds);
@@ -662,6 +662,13 @@ api.get('/race-weather', async (c) => {
     return c.json(null);
   }
 });
+
+/** ペースゾーンの境界 (遅い→速い)。COROS から取り込んだゾーンがあればそれ、無ければ閾値ペースからの比率 */
+function paceBoundsOf(st: Settings): number[] {
+  const z = st.coros?.zones_s, lt = st.coros.lt_pace_s;
+  if (z?.aerobic && z.threshold && z.speed) return [z.aerobic[1], z.aerobic[0] - 1, z.threshold[1], z.speed[1], z.speed[0] - 1];
+  return [lt * 1.397, lt * 1.154, lt * 1.073, lt * 0.98, lt * 0.899].map(Math.round);
+}
 
 // ---------------------------------------------------------------- activities
 
