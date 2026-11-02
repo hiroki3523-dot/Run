@@ -290,11 +290,17 @@ const jstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0
 /** 期間内のランを調べ、まだ取り込んでいないものを順番待ちに入れる (30 日ずつ) */
 export async function enqueueCoros(env: Env, from: string, to: string): Promise<number> {
   const found: CorosRecord[] = [];
-  for (let end = to; end >= from; end = addDays(end, -30)) {
-    const start = addDays(end, -29) < from ? from : addDays(end, -29);
-    const r = await corosTool(env, 'querySportRecords', { startDate: ymd(start), endDate: ymd(end), sportTypeCodes: RUN_SPORTS, limit: 100 });
-    found.push(...parseRecords(r.text, r.structured).filter((x) => RUN_SPORTS.includes(x.sportType)));
+  let note: string | null = null;
+  // COROS は 1 回に調べられる期間が短いようなので、7 日ずつ調べる
+  for (let end = to; end >= from; end = addDays(end, -7)) {
+    const start = addDays(end, -6) < from ? from : addDays(end, -6);
+    const r = await corosTool(env, 'querySportRecords', { startDate: ymd(start), endDate: ymd(end), sportTypeCodes: RUN_SPORTS, limit: 50 });
+    const recs = parseRecords(r.text, r.structured);
+    // 1 件も読めず、「0 records」でもない応答は、エラーの文章として画面に出す
+    if (!recs.length && r.text.trim() && !/\(0 records?\)|no (sport )?records|没有|0 件/i.test(r.text)) note = r.text.trim().slice(0, 160);
+    found.push(...recs.filter((x) => RUN_SPORTS.includes(x.sportType)));
   }
+  if (note) { const qn = await loadQueue(env); qn.last_error = `COROS の応答: ${note}`; await saveQueue(env, qn); }
   if (!found.length) { const q0 = await loadQueue(env); q0.last_found = 0; q0.last_sync = new Date().toISOString(); await saveQueue(env, q0); return 0; }
   const ids = [...new Set(found.map((x) => x.labelId))];
   const have = new Set<string>();
@@ -508,17 +514,17 @@ export async function startCorosFullScan(env: Env): Promise<void> {
   await saveQueue(env, q);
 }
 
-/** さかのぼりを 1 歩 (30 日) 進める。2 年 (24 回) 続けてランが無ければ、そこで終わり */
+/** さかのぼりを 1 歩 (4 週) 進める。2 年続けてランが無ければ、そこで終わり */
 async function scanStep(env: Env): Promise<void> {
   const q0 = await loadQueue(env);
   if (!q0.scan_to) return;
-  const end = q0.scan_to, start = addDays(end, -29);
-  const r = await corosTool(env, 'querySportRecords', { startDate: ymd(start), endDate: ymd(end), sportTypeCodes: RUN_SPORTS, limit: 100 });
-  const n = parseRecords(r.text, r.structured).filter((x) => RUN_SPORTS.includes(x.sportType)).length;
+  // 1 分に 4 週 (7 日 × 4 回)
+  const end = q0.scan_to, start = addDays(end, -27);
   await enqueueCoros(env, start, end);
   const q = await loadQueue(env);
+  const n = q.last_found ?? 0;
   q.scan_empty = n ? 0 : (q.scan_empty ?? 0) + 1;
-  q.scan_to = q.scan_empty >= 24 || start <= '2012-01-01' ? null : addDays(start, -1);
+  q.scan_to = q.scan_empty >= 26 || start <= '2012-01-01' ? null : addDays(start, -1); // 4 週 × 26 = 2 年ランが無ければ終わり
   await saveQueue(env, q);
 }
 
