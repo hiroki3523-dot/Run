@@ -751,3 +751,19 @@ body::after {
 .wk-preset { min-height: 48px; border-radius: 14px; font-size: 14px; white-space: nowrap; }
 .wk-own { width: 100%; margin-top: 10px; min-height: 48px; border-radius: 14px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; background: transparent; border-style: dashed; box-shadow: none; color: var(--accent); }
 .wh-cols .wh-col { flex: 1 1 96px; max-width: 96px; min-width: 0; }
+
+/* 週を自動配置: 回数は 1 行のセグメント、走れない日は 7 日のマス */
+.pf-note { margin: 0 0 10px; font-size: 13px; }
+.pf-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.pf-row > b { font-size: 15px; white-space: nowrap; }
+.pf-seg { display: grid; grid-template-columns: repeat(var(--n), 52px); gap: 4px; padding: 3px; border-radius: 14px; background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
+.pf-seg button { all: unset; box-sizing: border-box; text-align: center; min-height: 44px; border-radius: 11px; font-size: 18px; font-weight: 700; color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 1px; }
+.pf-seg button small { font-size: 11px; font-weight: 600; }
+.pf-seg button.on { background: linear-gradient(135deg, #2b3dff, #7a5cff); color: #fff; }
+.pf-block { margin: 14px 0 12px; }
+.pf-h { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.pf-h b { font-size: 15px; }
+.pf-h span { font-size: 12px; }
+.wk-day:disabled { opacity: .35; }
+.wk-day.off-day { background: color-mix(in srgb, var(--bad) 28%, var(--surface)); border-color: var(--bad); color: var(--text); }
+.wk-day.off-day small { color: var(--text); }
