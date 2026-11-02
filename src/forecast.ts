@@ -1,4 +1,4 @@
-import { daySky, type DaySky } from './weather';
+import { daySky, overlayJma, type DaySky } from './weather';
 /** 天気予報 (Open-Meteo・無料・キー不要)。気温・湿度・日射から暑さ指数 (WBGT 推定) と走りやすさを計算する */
 
 export interface Place { name: string; lat: number; lon: number }
@@ -102,6 +102,7 @@ export async function forecast(place: Place, nowMs = Date.now()): Promise<Foreca
   ]);
   if (!res.ok) return null;
   const j = (await res.json()) as { hourly: Record<string, (number | string | null)[]>; daily: Record<string, (number | string | null)[]> };
+  await overlayJma(place.lat, place.lon, j, { forecast: 7 });
   const H = j.hourly, D = j.daily;
   if (!H?.time || !D?.time) return null;
 
