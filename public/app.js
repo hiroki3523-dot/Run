@@ -803,13 +803,15 @@ function wirePrefs(root, settings, ws) {
   const t = today();
   const from = ws > t ? ws : t;
   const weekDays = [...Array(7)].map((_, i) => addDays(ws, i)).filter((d) => d >= t);
-  const chip = (attr, val, label, on) => `<button type="button" class="chip ${on ? 'on' : ''}" ${attr}="${val}">${label}</button>`;
+  const seg = (label, attr, vals, cur) => `<div class="pf-row"><b>${label}</b><div class="pf-seg" style="--n:${vals.length}">${vals.map((n) => `<button type="button" class="${cur === n ? 'on' : ''}" ${attr}="${n}">${n}<small>回</small></button>`).join('')}</div></div>`;
   const draw = () => {
     body.innerHTML = `
-      <div class="field"><span class="lbl">ポイント走</span><div class="chips">${[0, 1, 2, 3].map((n) => chip('data-pp', n, `${n}回`, prefs.points_per_week === n)).join('')}</div></div>
-      <div class="field"><span class="lbl">ロング走</span><div class="chips">${[0, 1].map((n) => chip('data-lp', n, `${n}回`, prefs.long_per_week === n)).join('')}</div></div>
-      <div class="field"><span class="lbl">休息日</span><div class="chips">${[0, 1, 2, 3].map((n) => chip('data-rp', n, `${n}回`, prefs.rest_per_week === n)).join('')}</div></div>
-      ${weekDays.length ? `<div class="field"><span class="lbl">走れない日 (予定がある日)</span><span class="sub">あれば選びます。その日は休みにします</span><div class="chips">${weekDays.map((d) => chip('data-bl', d, `${Number(d.slice(5, 7))}/${Number(d.slice(8))}(${dow(d)})`, prefs.blocked.includes(d))).join('')}</div></div>` : ''}
+      <p class="muted pf-note">1週間の回数を選びます。選んだ回数は保存され、次の週にも使われます。</p>
+      ${seg('ポイント練', 'data-pp', [0, 1, 2, 3], prefs.points_per_week)}
+      ${seg('ロング走', 'data-lp', [0, 1], prefs.long_per_week)}
+      ${seg('休息日', 'data-rp', [0, 1, 2, 3], prefs.rest_per_week)}
+      ${weekDays.length ? `<div class="pf-block"><div class="pf-h"><b>走れない日</b><span class="muted">タップした日は休みにします</span></div>
+        <div class="wk-days">${[...Array(7)].map((_, i) => addDays(ws, i)).map((d) => `<button type="button" class="wk-day ${prefs.blocked.includes(d) ? 'on off-day' : ''}" data-bl="${d}" ${d < t ? 'disabled' : ''}><small>${dow(d)}</small><b class="num">${Number(d.slice(8))}</b></button>`).join('')}</div></div>` : ''}
       <button type="button" id="regen" class="primary wide" ${weekDays.length ? '' : 'disabled'}>この週を自動で配置</button>
       <p class="muted" id="prefs-msg">${weekDays.length ? '配置したあと、カレンダーの「⠿」をドラッグして入れ替えられます' : '過ぎた週は作り直せません'}</p>`;
   };
