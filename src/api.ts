@@ -9,6 +9,7 @@ import { generatePlan, type PlannerRace } from './planner';
 import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
+import { runningNews } from './news';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
 import { getBackfill, startBackfill, stopBackfill } from './backfill';
@@ -44,7 +45,7 @@ api.put('/settings', async (c) => {
     const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
     body.plan_prefs = {
       points_per_week: Math.min(3, Math.max(0, Math.round(Number(pp.points_per_week) || 0))),
-      long_per_week: Number(pp.long_per_week) > 0 ? 1 : 0,
+      long_per_week: Math.min(2, Math.max(0, Math.round(Number(pp.long_per_week) || 0))),
       long_day: Math.min(6, Math.max(0, Math.round(Number(pp.long_day) || 0))),
       rest_per_week: Math.min(3, Math.max(0, Math.round(Number(pp.rest_per_week) || 0))),
       rest_days: [...new Set((pp.rest_days ?? []).map(Number).filter((n) => n >= 0 && n <= 6))],
@@ -535,6 +536,12 @@ api.get('/weather/forecast', async (c) => {
 });
 
 /** 次のレース (16 日以内) の当日予報 */
+/** ランニングのニュース (シューズ・大会・レース)。1 時間キャッシュ */
+api.get('/news', async (c) => {
+  c.header('Cache-Control', 'private, max-age=1800');
+  return c.json(await runningNews(8));
+});
+
 api.get('/race-weather', async (c) => {
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
   const race = await c.env.DB.prepare('SELECT name, date FROM races WHERE date >= ? ORDER BY date LIMIT 1')

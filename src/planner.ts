@@ -158,10 +158,20 @@ function buildWeek(days: { date: string; vol: number; weeksOut: number; w: numbe
   // ロング走: 希望の曜日。使えなければ一番近い走れる日
   const hard: string[] = [];
   let longDay: string | null = null;
-  if (prefs.long_per_week > 0 && !(c.done?.long)) {
+  let nLong = Math.min(2, Math.max(0, prefs.long_per_week));
+  if (c.done?.long) nLong = Math.max(0, nLong - 1);
+  if (nLong > 0) {
     const want = (prefs.long_day + 6) % 7;
     longDay = [...open].sort((a, b) => Math.abs(monIndex(a) - want) - Math.abs(monIndex(b) - want) || monIndex(b) - monIndex(a))[0];
     hard.push(longDay);
+  }
+  // 2 回目のロング走: 1 回目からいちばん離れた日 (距離は短め)
+  let long2: string | null = null;
+  if (nLong > 1 && longDay) {
+    // 週をまたいでも近くならないよう、曜日の差は一周 (7 日) で測る
+    const gap = (d: string) => { const g = Math.abs(monIndex(d) - monIndex(longDay!)); return Math.min(g, 7 - g); };
+    const cand = open.filter((d) => d !== longDay).sort((a, b) => gap(b) - gap(a) || monIndex(a) - monIndex(b));
+    if (cand.length > 1) { long2 = cand[0]; hard.push(long2); }
   }
   // ポイント練習: すでにある硬い日からできるだけ離す。同点なら水・土・火・木の順
   const PREF = [2, 5, 1, 3, 0, 4, 6];
@@ -173,7 +183,7 @@ function buildWeek(days: { date: string; vol: number; weeksOut: number; w: numbe
     const cand = open.filter((d) => !hard.includes(d) && !points.includes(d));
     if (cand.length === 0) break;
     const score = (d: string) => {
-      const gap = Math.min(3, ...[...hard, ...points].map((x) => Math.abs(monIndex(x) - monIndex(d))));
+      const gap = Math.min(3, ...[...hard, ...points].map((x) => { const g = Math.abs(monIndex(x) - monIndex(d)); return Math.min(g, 7 - g); }));
       return gap * 10 + (7 - PREF.indexOf(monIndex(d)));
     };
     cand.sort((a, b) => score(b) - score(a));
@@ -189,22 +199,26 @@ function buildWeek(days: { date: string; vol: number; weeksOut: number; w: numbe
 
   const rowFor = (d: string, type: PlanType): PlanRow => qualityRow(d, type, vol, c);
   const longRow = longDay ? longRunRow(longDay, vol, weeksOut, c) : null;
+  const long2Row: PlanRow | null = long2 && longRow ? (() => {
+    const k = km(Math.max(14, ((longRow.distance_m ?? 0) / 1000) * 0.7));
+    return { date: long2, type: 'long', distance_m: m(k), pace_min_s: null, pace_max_s: null, notes: `ロング走 (2本目) ${k}km: 5:00〜5:20/km で一定。1本目より短め` };
+  })() : null;
   const pointRows = points.map((d, i) => rowFor(d, seq[i]));
-  const used = (longRow?.distance_m ?? 0) + pointRows.reduce((a, r) => a + (r.distance_m ?? 0), 0);
+  const used = (longRow?.distance_m ?? 0) + (long2Row?.distance_m ?? 0) + pointRows.reduce((a, r) => a + (r.distance_m ?? 0), 0);
 
   // 休養日: ロング走の翌日とポイント走の前日を優先して、回数ぶんを自動で選ぶ
-  const restN = Math.min(Math.round((prefs.rest_per_week ?? 0) * days.length / 7), Math.max(0, open.length - 1 - (longDay ? 1 : 0) - points.length));
+  const restN = Math.min(Math.round((prefs.rest_per_week ?? 0) * days.length / 7), Math.max(0, open.length - 1 - (longDay ? 1 : 0) - (long2 ? 1 : 0) - points.length));
   const autoRest: string[] = [];
   const afterLong = longDay ? addDays(longDay, 1) : null;
   while (autoRest.length < restN) {
-    const cand = open.filter((d) => d !== longDay && !points.includes(d) && !autoRest.includes(d));
+    const cand = open.filter((d) => d !== longDay && d !== long2 && !points.includes(d) && !autoRest.includes(d));
     if (cand.length === 0) break;
     const sc = (d: string) => (d === afterLong ? 10 : 0) + (points.some((x) => addDays(x, -1) === d) ? 6 : 0) + (points.some((x) => addDays(x, 1) === d) ? 3 : 0) - (autoRest.some((x) => Math.abs(monIndex(x) - monIndex(d)) <= 1) ? 8 : 0);
     cand.sort((a, b) => sc(b) - sc(a) || monIndex(a) - monIndex(b));
     autoRest.push(cand[0]);
   }
   for (const d of autoRest) out.push(rest(d, '休養日'));
-  const easyDays = open.filter((d) => d !== longDay && !points.includes(d) && !autoRest.includes(d));
+  const easyDays = open.filter((d) => d !== longDay && d !== long2 && !points.includes(d) && !autoRest.includes(d));
   const easyKm = easyDays.length ? Math.min(14, Math.max(5, (vol * 1000 - used) / 1000 / easyDays.length)) : 0;
   for (const d of easyDays) {
     const k = km(easyKm);
@@ -213,6 +227,7 @@ function buildWeek(days: { date: string; vol: number; weeksOut: number; w: numbe
       : { date: d, type: 'easy', distance_m: m(k), pace_min_s: null, pace_max_s: null, notes: 'Easy。心拍を上げずに楽に (5:00〜5:45/km)' });
   }
   if (longRow) out.push(longRow);
+  if (long2Row) out.push(long2Row);
   out.push(...pointRows);
   return out;
 }
