@@ -3,7 +3,6 @@ import { Hono } from 'hono';
 import { addDays, weekStart } from './format';
 import { ingestActivity, morningBriefing, SHOE_TOTAL_SQL } from './process';
 import { notify } from './notify';
-import { seedInitial } from './seed';
 import { weatherDays, raceWeather, weatherAdvice } from './weather';
 import { DEFAULT_PLACE, forecast, searchPlaces } from './forecast';
 import { generatePlan, type PlannerRace } from './planner';
@@ -707,8 +706,6 @@ api.get('/strava/backfill/status', async (c) => {
 });
 api.post('/strava/backfill/stop', async (c) => (await stopBackfill(c.env), c.json(await getBackfill(c.env))));
 
-/** レース5件と福岡までの計画を登録 (登録済みの日付は飛ばす) */
-api.post('/seed', async (c) => c.json(await seedInitial(c.env)));
 
 // ---------------------------------------------------------------- 通知テスト
 
