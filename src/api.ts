@@ -664,7 +664,7 @@ api.get('/insights', async (c) => {
 /** ランニングのニュース (シューズ・大会・レース)。1 時間キャッシュ */
 api.get('/news', async (c) => {
   c.header('Cache-Control', 'private, max-age=1800');
-  return c.json(await runningNews(8));
+  return c.json(await runningNews(10));
 });
 
 api.get('/race-weather', async (c) => {

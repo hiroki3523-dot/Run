@@ -7,6 +7,9 @@ const FEEDS: [string, string][] = [
   ['シューズ', 'ランニングシューズ 新作 OR 新モデル OR 発売'],
   ['大会', 'マラソン エントリー OR 募集開始 OR 抽選'],
   ['レース', 'マラソン 優勝 OR 日本記録 OR 自己ベスト'],
+  // メーカーとショップのセール情報
+  ['セール', '(ナイキ OR アディダス OR On OR ニューバランス OR アシックス OR プーマ OR ホカ) ランニング (セール OR SALE OR 値下げ OR アウトレット)'],
+  ['セール', '(ゼビオ OR ステップスポーツ OR アートスポーツ OR スポーツデポ OR アルペン) (セール OR SALE OR 初売り OR 割引) ランニング'],
 ];
 
 const decode = (s: string) => s
@@ -63,5 +66,8 @@ export async function runningNews(limit = 8): Promise<NewsItem[]> {
       return [];
     }
   }));
-  return mergeNews(groups, limit);
+  // 同じ種類 (セールが 2 つ) はまとめてから交互に並べる
+  const byTag = new Map<string, NewsItem[]>();
+  FEEDS.forEach(([tag], i) => byTag.set(tag, [...(byTag.get(tag) ?? []), ...groups[i]]));
+  return mergeNews([...byTag.values()], limit);
 }
