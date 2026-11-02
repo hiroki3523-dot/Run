@@ -10,7 +10,7 @@ import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './re
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
-import { corosDisconnect, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
+import { corosDisconnect, getAuth as getCorosAuth, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns } from './insights';
 import { applyDerived } from './derive-apply';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
@@ -32,6 +32,7 @@ api.get('/status', async (c) => {
   const sig = await calendarSig(c.env);
   return c.json({
     strava_connected: athlete != null,
+    coros_connected: (await getCorosAuth(c.env)) != null,
     athlete_id: athlete,
     ntfy_topic_set: !!c.env.NTFY_TOPIC,
     bark_set: !!c.env.BARK_KEY,

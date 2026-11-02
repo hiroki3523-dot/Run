@@ -153,7 +153,7 @@ async function homeView() {
   const summary = await api(`/summary?from=${addDays(ws, -7 * 6)}&to=${endDay}`);
 
   return `
-    ${status.strava_connected ? '' : '<div class="card error">Strava が未連携です。<a href="#/settings">設定</a>から連携してください。</div>'}
+    ${status.strava_connected || status.coros_connected || settings.source === 'coros' ? '' : '<div class="card error">ランのデータが未連携です。<a href="#/settings">設定</a>から COROS か Strava と連携してください。</div>'}
     <div class="card">
       <div class="row spread"><h2>今日 ${md(t)}(${dow(t)})</h2><a href="#/plans" class="muted">計画を編集</a></div>
       ${todays.length === 0 ? '<p class="muted">メニュー未登録</p>' : todays.map((p, i) => planLine(p, false, i === 0 ? markHtml(dayJudge(t, todays, acts.filter((x) => x.date === t), settings)) : '')).join('')}
