@@ -2198,7 +2198,7 @@ async function settingsView() {
         const when = (iso) => (iso ? new Date(iso).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-');
         box.innerHTML = cs.connected ? `
           <div class="coros-st"><span class="dot ok"></span><b>COROS と連携済み</b><span class="muted">${esc((cs.region || '').replace('https://', ''))}</span></div>
-          <div class="muted num coros-q">取り込み済み ${cs.done} 件・取り込み待ち ${cs.queue} 件${cs.scan_to ? `・${cs.scan_to.slice(0, 7)} までさかのぼり中` : ''}${cs.pause_until ? `・${when(cs.pause_until)} から再開` : ''}・最後の確認 ${when(cs.last_sync)}</div>
+          <div class="muted num coros-q">取り込み済み ${cs.done} 件・取り込み待ち ${cs.queue} 件${cs.last_found != null ? `・最後の確認で見つかったラン ${cs.last_found} 件` : ''}${cs.scan_to ? `・${cs.scan_to.slice(0, 7)} までさかのぼり中` : ''}${cs.pause_until ? `・${when(cs.pause_until)} から再開` : ''}・最後の確認 ${when(cs.last_sync)}</div>
           ${cs.last_error ? `<p class="coros-err">${esc(cs.last_error)}</p>` : ''}
           <div class="row coros-btns"><button type="button" data-cs="sync" class="primary">今すぐ確認</button><button type="button" data-cs="b30">過去30日</button><button type="button" data-cs="all">全期間</button><button type="button" data-cs="fit">体力データ</button></div>
           <p class="muted coros-msg" style="margin:6px 0 0"></p>

@@ -163,7 +163,7 @@ export function extractJson(text: string): any {
 
 const toSec = (s: string) => s.split(':').map(Number).reduce((a, b) => a * 60 + b, 0);
 
-export interface CorosRecord { labelId: string; sportType: number; date: string | null; name: string | null; dist_m?: number | null; dur_s?: number | null }
+export interface CorosRecord { labelId: string; sportType: number; date: string | null; name: string | null; dist_m?: number | null; dur_s?: number | null; start?: number | null }
 
 /** querySportRecords の結果からランの一覧を取り出す (JSON でも文章でも) */
 export function parseRecords(text: string, structured: any): CorosRecord[] {
@@ -194,7 +194,9 @@ export function parseRecords(text: string, structured: any): CorosRecord[] {
     const d = b.match(/(\d{4})-(\d{2})-(\d{2})/) ?? b.match(/\b(20\d{2})(\d{2})(\d{2})\b/);
     const km = b.match(/distance[^0-9]{0,6}(\d+(?:\.\d+)?)\s*km/i)?.[1] ?? b.match(/(\d+(?:\.\d+)?)\s*km\b/i)?.[1];
     const du = b.match(/duration[^0-9]{0,6}(\d{1,2}:\d{2}(?::\d{2})?)/i)?.[1];
-    out.push({ labelId: id, sportType: Number(st), date: d ? `${d[1]}-${d[2]}-${d[3]}` : null, name: null, dist_m: km ? Math.round(Number(km) * 1000) : null, dur_s: du ? toSec(du) : null });
+    const loc = b.match(/Location:\s*([^\n]+)/i)?.[1]?.trim();
+    const ts = b.match(/startTimestamp=(\d{9,})/)?.[1];
+    out.push({ labelId: id, sportType: Number(st), date: d ? `${d[1]}-${d[2]}-${d[3]}` : null, name: loc || null, dist_m: km ? Math.round(Number(km) * 1000) : null, dur_s: du ? toSec(du) : null, ...(ts ? { start: Number(ts) } : {}) });
   }
   return out;
 }
@@ -255,7 +257,7 @@ export async function syncCorosFitness(env: Env): Promise<CorosFitness> {
 
 // ---------------------------------------------------------------- ランの取り込み
 
-interface Queue { items: CorosRecord[]; pause_until?: number; last_sync?: string; last_error?: string; done: number; skipped?: number; scan_to?: string | null; scan_empty?: number }
+interface Queue { last_found?: number; items: CorosRecord[]; pause_until?: number; last_sync?: string; last_error?: string; done: number; skipped?: number; scan_to?: string | null; scan_empty?: number }
 const loadQueue = async (env: Env): Promise<Queue> => ({ items: [], done: 0, ...JSON.parse((await kvGet(env, 'coros_queue')) || '{}') });
 const saveQueue = (env: Env, q: Queue) => kvSet(env, 'coros_queue', JSON.stringify(q));
 const ymd = (d: string) => d.replace(/-/g, '');
@@ -270,7 +272,7 @@ export async function enqueueCoros(env: Env, from: string, to: string): Promise<
     const r = await corosTool(env, 'querySportRecords', { startDate: ymd(start), endDate: ymd(end), sportTypeCodes: RUN_SPORTS, limit: 100 });
     found.push(...parseRecords(r.text, r.structured).filter((x) => RUN_SPORTS.includes(x.sportType)));
   }
-  if (!found.length) return 0;
+  if (!found.length) { const q0 = await loadQueue(env); q0.last_found = 0; q0.last_sync = new Date().toISOString(); await saveQueue(env, q0); return 0; }
   const ids = [...new Set(found.map((x) => x.labelId))];
   const have = new Set<string>();
   for (let i = 0; i < ids.length; i += 50) {
@@ -285,6 +287,7 @@ export async function enqueueCoros(env: Env, from: string, to: string): Promise<
   const uniq = [...new Map(add.map((x) => [x.labelId, x])).values()];
   // 新しいランから順に取り込む (全期間をさかのぼっている間も、最近のぶんが先)
   q.items = [...uniq, ...q.items].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+  q.last_found = found.length;
   q.last_sync = new Date().toISOString();
   await saveQueue(env, q);
   return uniq.length;
@@ -339,7 +342,7 @@ export function buildExt(rec: CorosRecord, fit: FitData | null, lapsJson: any): 
   const id = extIdToNumber(rec.labelId);
   const s = fit?.session;
   const tz = fit?.tz_offset_s ?? 9 * 3600;
-  const start = s?.start ?? fit?.records[0]?.t ?? (rec.date ? Date.parse(`${rec.date}T00:00:00Z`) / 1000 - 9 * 3600 : now());
+  const start = s?.start ?? fit?.records[0]?.t ?? rec.start ?? (rec.date ? Date.parse(`${rec.date}T00:00:00Z`) / 1000 - 9 * 3600 : now());
   const local = new Date((start + tz) * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
   const recs = (fit?.records ?? []).filter((r) => r.t >= start);
   // ラップ (JSON) が FIT より詳しいことがあるので、無ければ FIT のラップ
@@ -470,7 +473,7 @@ export async function corosStatus(env: Env) {
   return {
     connected: !!a, region: a?.issuer ?? null, queue: q.items.length, done: q.done ?? 0,
     pause_until: q.pause_until && q.pause_until > now() ? new Date(q.pause_until * 1000).toISOString() : null,
-    last_sync: q.last_sync ?? null, last_error: q.last_error ?? null, skipped: q.skipped ?? 0, scan_to: q.scan_to ?? null,
+    last_sync: q.last_sync ?? null, last_error: q.last_error ?? null, skipped: q.skipped ?? 0, scan_to: q.scan_to ?? null, last_found: q.last_found ?? null,
   };
 }
 
