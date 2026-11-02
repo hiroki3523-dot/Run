@@ -15,6 +15,10 @@ describe('coros', () => {
     expect(r[0].dist_m).toBe(9010);
     expect(r[0].dur_s).toBe(2832);
   });
+  it('ランの一覧: COROS の実際の書き方 (Location・startTimestamp・LabelId | SportType)', () => {
+    const t = '1. Outdoor Run — 2026-11-01\n   Location: 福岡市 ラン\n   Time Window: startTimestamp=1793522170 | endTimestamp=1793525401\n   Duration: 53:50 | Distance: 12.01 km\n   LabelId: 481446915685253226 | SportType: 100';
+    expect(parseRecords(t, null)[0]).toEqual({ labelId: '481446915685253226', sportType: 100, date: '2026-11-01', name: '福岡市 ラン', dist_m: 12010, dur_s: 3230, start: 1793522170 });
+  });
   it('ランの一覧: JSON (structuredContent でも文章の中でも)', () => {
     const js = { dataList: [{ labelId: '47', sportType: 100, date: 20261101, name: '朝ラン' }] };
     expect(parseRecords('', js)[0]).toEqual({ labelId: '47', sportType: 100, date: '2026-11-01', name: '朝ラン' });
