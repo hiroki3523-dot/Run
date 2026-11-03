@@ -1753,7 +1753,7 @@ const typeOf = (a) => a.eff_type || a.type || a.plan_type || null;
 const typeLabel = (t) => (t && PLAN_LABELS[t]) || 'フリー';
 /** 種類のまとまり (src/review.ts kindGroup と同じ) */
 const kindOf = (t, role, kmv) => (role === 'warmup' || role === 'cooldown' ? 'link' : t === 'race' ? 'race' : ['m', 'lt', 'interval'].includes(t) ? 'point' : t === 'long' || kmv >= 20 ? 'long' : ['easy', 'jog'].includes(t) ? 'easy' : 'free');
-const KIND_FILTER = [['all', 'すべて'], ['point', 'ポイント'], ['long', 'ロング'], ['easy', 'Easy・Jog'], ['race', 'レース']];
+const KIND_FILTER = [['all', 'すべて'], ['point', 'ポイント'], ['long', 'ロング'], ['easy', 'Easy/Jog'], ['race', 'レース']];
 const RUN_IC = {
   point: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
   long: '<path d="M3 17c4-8 8 4 12-4s4-6 6-6"/>',

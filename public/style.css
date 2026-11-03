@@ -1257,8 +1257,8 @@ h3.sect { margin: 18px 4px 8px; font-size: 15px; font-weight: 700; }
 .hl-tile b { font-size: 20px; font-weight: 800; line-height: 1.2; white-space: nowrap; }
 .hl-tile b small { font-size: 11px; color: var(--muted); font-weight: 600; margin-left: 1px; }
 .hl-tile span { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hl-chips { display: flex; gap: 6px; overflow-x: auto; margin: 0 0 12px; padding-bottom: 2px; scrollbar-width: none; }
-.hl-chips .chip { white-space: nowrap; padding: 7px 12px; font-size: 13px; text-decoration: none; }
+.hl-chips { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin: 0 0 12px; } /* 5 つが画面の幅に収まるように */
+.hl-chips .chip { white-space: nowrap; padding: 7px 2px; font-size: 12px; justify-content: center; min-height: 40px; letter-spacing: -0.01em; text-decoration: none; text-align: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .hl-day { padding: 6px 12px; }
 .hl-dh { display: flex; align-items: center; gap: 10px; padding: 8px 2px; text-decoration: none; color: var(--text); border-bottom: 1px solid var(--line); }
 .hl-dh b { font-size: 15px; }
