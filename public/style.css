@@ -1049,3 +1049,46 @@ body::after {
 .race-st-v .seg-r span b { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; background: color-mix(in srgb, var(--text) 10%, transparent); }
 .rl-foot { flex-wrap: wrap; }
 .rf-entry { font-size: 12px; margin-top: 2px; color: var(--muted); } .rf-entry.warn-t { color: var(--mid); font-weight: 700; }
+
+/* レース一覧: 左にスライドで「状態」「削除」 */
+.list > li.sw { position: relative; padding: 0; overflow: hidden; }
+.sw-front { position: relative; z-index: 1; background: var(--surface); padding: 14px 0; touch-action: pan-y; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.sw-acts { position: absolute; inset: 1px 0 1px auto; display: flex; z-index: 0; }
+.sw-act { all: unset; box-sizing: border-box; width: 76px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; font-weight: 700; color: #fff; cursor: pointer; }
+.sw-act.st { background: #4b56ff; }
+.sw-act.del { background: #e5484d; }
+.sw-act:first-child { border-radius: 14px 0 0 14px; }
+.sw-act:last-child { border-radius: 0 14px 14px 0; }
+.sw-act:only-child { border-radius: 14px; }
+.sw-hint { font-size: 12px; text-align: center; margin: -4px 0 12px; }
+
+/* 下から出る選択シート */
+.asheet .sheet-body { padding: 8px 12px calc(14px + env(safe-area-inset-bottom)); }
+.asheet.out .sheet-body { transform: translateY(100%); transition: transform .16s ease-in; }
+.asheet.out .sheet-bg { opacity: 0; transition: opacity .16s; }
+.as-grab { width: 38px; height: 5px; border-radius: 3px; margin: 2px auto 12px; background: color-mix(in srgb, var(--text) 22%, transparent); }
+.as-title { text-align: center; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 10px; }
+.as-list { border-radius: 18px; overflow: hidden; background: color-mix(in srgb, var(--text) 5%, var(--surface)); }
+.as-row { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 14px; padding: 14px 16px; cursor: pointer; }
+.as-row + .as-row { border-top: 1px solid var(--line); }
+.as-row:active { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.as-ic { width: 38px; height: 38px; flex: none; border-radius: 12px; display: grid; place-items: center; color: var(--muted); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.as-row.on .as-ic { color: #fff; background: linear-gradient(135deg, #2b3dff, #7a5cff); }
+.as-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.as-t b { font-size: 16px; font-weight: 600; }
+.as-t small { font-size: 12px; color: var(--muted); }
+.as-ck { color: var(--accent); flex: none; }
+.as-cancel { display: block; width: 100%; margin-top: 10px; min-height: 52px; border-radius: 16px; font-size: 16px; font-weight: 700; }
+
+/* レース詳細の下: 状態・編集 */
+.rd-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+.rd-acts button { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 16px; text-align: left; min-height: 64px; }
+.rd-acts svg { color: var(--accent); flex: none; }
+.rd-acts span { display: flex; flex-direction: column; font-size: 15px; font-weight: 700; min-width: 0; }
+.rd-acts small { font-size: 11.5px; font-weight: 600; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.linkdanger { all: unset; display: block; margin: 18px auto 4px; color: var(--bad); font-size: 14px; font-weight: 600; cursor: pointer; text-align: center; }
+
+/* 編集画面の状態: すっきりした切り替え */
+.race-st { padding: 3px; gap: 2px; border-radius: 14px; background: color-mix(in srgb, var(--text) 7%, transparent); }
+.race-st .seg-r span { min-height: 38px; border: 0; background: transparent; border-radius: 11px; font-size: 13px; }
+.race-st .seg-r input:checked + span { background: var(--surface); color: var(--text); box-shadow: 0 1px 6px rgb(0 0 0 / .35); }

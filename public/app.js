@@ -2070,12 +2070,8 @@ async function raceDetailView(id) {
       route();
     }));
     view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
-    view.querySelector('[data-rmng]')?.addEventListener('click', () => manageRace(r));
-    view.querySelector('#del-race').onclick = async () => {
-      if (!confirm(`「${r.name}」を削除しますか？ (持ち物のチェックなども消えます)`)) return;
-      await api(`/races/${r.id}`, { method: 'DELETE' });
-      location.hash = '#/races';
-    };
+    view.querySelector('#st-race').onclick = () => manageRace(r);
+    view.querySelector('#del-race').onclick = async () => { if (await deleteRace(r)) location.hash = '#/races'; };
     wireRaceInfo(view, r);
   });
   const wireChecks = () => {
@@ -2131,7 +2127,7 @@ async function raceDetailView(id) {
   const upcoming = dleft != null;
   return `
     <div class="card hero">
-      <div class="row spread"><h2>${esc(r.name)}</h2><span>${rstBtn(r)} <span class="badge">${esc(r.priority)}</span></span></div>
+      <div class="row spread"><h2>${esc(r.name)}</h2><span class="badge">${esc(r.priority)}</span></div>
       <div class="row spread">
         <div>${dleft != null ? `<span class="big">${dleft}</span> 日` : '<span class="muted">終了</span>'}</div>
         <div class="muted num">${md(r.date)}・${km(r.distance_m)}km${r.goal_time_s ? `<br>目標 ${dur(r.goal_time_s)} (${pace(r.goal_time_s / (r.distance_m / 1000))}/km)` : ''}</div>
@@ -2159,8 +2155,11 @@ async function raceDetailView(id) {
         <button type="button" class="linkbtn" id="ck-reset" style="margin-top:10px">最初の一覧に戻す</button>
       </form>
     </div>` : ''}
-    <button id="edit-race" class="wide">レースの情報を編集</button>
-    <button id="del-race" class="danger wide" style="margin-top:10px">このレースを削除</button>`;
+    <div class="rd-acts">
+      <button type="button" id="st-race">${ST_ICON[r.status || 'confirmed']}<span><small>状態</small>${RACE_STATUS.find(([k]) => k === (r.status || 'confirmed'))[1]}</span></button>
+      <button type="button" id="edit-race">${SVG('<path d="M4 20h4L19 9l-4-4L4 16z"/>')}<span><small>大会名・日付・目標</small>編集</span></button>
+    </div>
+    <button id="del-race" class="linkdanger">このレースを削除</button>`;
 }
 
 // ---- レースの状態と大会情報
@@ -2176,18 +2175,76 @@ function normUrl(v) {
   if (!/^[^\s/]+\.[^\s/]+/.test(u)) return null;
   return `${http ? 'http' : 'https'}://${u}`;
 }
-/** 状態のボタン (押すと 状態の変更・削除) */
-const rstBtn = (r) => { const k = r.status || 'confirmed'; return `<button type="button" class="rst rst-${k} rst-btn" data-rmng="${r.id}">${RACE_STATUS.find(([x]) => x === k)[1]}<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>`; };
+/** 下から出る選択シート (iPhone 風)。押したらすぐ決まる。opts: [{key, label, sub, icon, on, danger}] */
+function actionSheet(title, opts) {
+  return new Promise((resolve) => {
+    const el = document.createElement('div');
+    el.className = 'sheet asheet';
+    el.innerHTML = `<div class="sheet-bg"></div><div class="sheet-body">
+      <div class="as-grab"></div><div class="as-title">${title}</div>
+      <div class="as-list">${opts.map((o) => `<button type="button" class="as-row ${o.on ? 'on' : ''} ${o.danger ? 'danger' : ''}" data-k="${o.key}">
+        <span class="as-ic">${o.icon || ''}</span><span class="as-t"><b>${o.label}</b>${o.sub ? `<small>${o.sub}</small>` : ''}</span>
+        ${o.on ? '<svg class="as-ck" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' : ''}</button>`).join('')}</div>
+      <button type="button" class="as-cancel">キャンセル</button></div>`;
+    document.body.appendChild(el);
+    const done = (k) => { el.classList.add('out'); setTimeout(() => el.remove(), 160); resolve(k); };
+    el.querySelector('.sheet-bg').onclick = () => done(null);
+    el.querySelector('.as-cancel').onclick = () => done(null);
+    el.querySelectorAll('.as-row').forEach((b) => (b.onclick = () => done(b.dataset.k)));
+  });
+}
+const SVG = (d) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ST_ICON = {
+  candidate: SVG('<path d="M7 4h10v16l-5-3.5L7 20z"/>'),
+  entered: SVG('<path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/>'),
+  confirmed: SVG('<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>'),
+};
+const ST_SUB = { candidate: '出るか検討中 (計画には入れない)', entered: '申し込んだ・抽選や入金の結果待ち', confirmed: '出場が決まった' };
+/** 状態を変える (下から出るシート) */
 async function manageRace(r) {
   if (!r) return;
   const cur = r.status || 'confirmed';
-  const v = await openDialog(`<h2>${esc(r.name)}</h2>
-    <div class="field"><span class="lbl">状態</span><div class="race-st race-st-v">${RACE_STATUS.map(([k, l], i) => `<label class="seg-r"><input type="radio" name="status" value="${k}" ${cur === k ? 'checked' : ''}><span><b>${i + 1}</b>${l}</span></label>`).join('')}</div></div>
-    <p class="muted" style="font-size:12.5px;margin:4px 0 0">エントリー候補は計画やホームの目標に入りません。エントリー済み・出場決定は入ります。</p>`,
-    { onDelete: async () => { await api(`/races/${r.id}`, { method: 'DELETE' }); location.hash = '#/races'; route(); } });
-  if (!v || v.status === cur) return;
-  await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, status: v.status } });
+  const k = await actionSheet(esc(r.name), RACE_STATUS.map(([key, label]) => ({ key, label, sub: ST_SUB[key], icon: ST_ICON[key], on: key === cur })));
+  if (!k || k === cur) return;
+  await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, status: k } });
   route();
+}
+async function deleteRace(r) {
+  if (!confirm(`「${r.name}」を削除しますか？`)) return false;
+  await api(`/races/${r.id}`, { method: 'DELETE' });
+  return true;
+}
+/** 左にスライドすると「状態」「削除」が出る行 */
+function wireSwipe(root, onAct) {
+  let openEl = null;
+  const W = 152;
+  const setX = (el, x, anim) => { el.style.transition = anim ? 'transform .2s ease' : 'none'; el.style.transform = x ? `translateX(${x}px)` : ''; };
+  const close = () => { if (openEl) { setX(openEl, 0, true); openEl.closest('.sw').classList.remove('open'); openEl = null; } };
+  root.querySelectorAll('.sw-front').forEach((f) => {
+    let x0 = 0, y0 = 0, dx = 0, mode = null, base = 0, moved = false;
+    f.addEventListener('pointerdown', (e) => { x0 = e.clientX; y0 = e.clientY; dx = 0; mode = null; moved = false; base = openEl === f ? -W : 0; if (openEl && openEl !== f) close(); });
+    f.addEventListener('pointermove', (e) => {
+      if (e.buttons === 0 && e.pointerType === 'mouse') return;
+      const ddx = e.clientX - x0, ddy = e.clientY - y0;
+      if (!mode) { if (Math.abs(ddx) > 8 && Math.abs(ddx) > Math.abs(ddy)) { mode = 'h'; f.setPointerCapture(e.pointerId); } else if (Math.abs(ddy) > 8) mode = 'v'; }
+      if (mode !== 'h') return;
+      moved = true; dx = ddx;
+      setX(f, Math.max(-W - 30, Math.min(0, base + dx)), false);
+    });
+    const end = () => {
+      if (mode !== 'h') return;
+      const x = base + dx;
+      if (x < -W / 2) { setX(f, -W, true); openEl = f; f.closest('.sw').classList.add('open'); } else { setX(f, 0, true); if (openEl === f) openEl = null; f.closest('.sw').classList.remove('open'); }
+      mode = null;
+    };
+    f.addEventListener('pointerup', end); f.addEventListener('pointercancel', end);
+    f.addEventListener('click', (e) => {
+      if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; return; }
+      if (openEl) { e.preventDefault(); e.stopPropagation(); close(); return; }
+      onAct('open', f.closest('.sw').dataset.id);
+    });
+  });
+  root.querySelectorAll('.sw-act').forEach((b) => (b.onclick = (e) => { e.stopPropagation(); const id = b.closest('.sw').dataset.id; close(); onAct(b.dataset.act, id); }));
 }
 const RACE_STATUS = [['candidate', 'エントリー候補'], ['entered', 'エントリー済み'], ['confirmed', '出場決定']];
 const raceInfoOf = (r) => { try { return typeof r.info === 'string' ? JSON.parse(r.info) : r.info || {}; } catch { return {}; } };
@@ -2484,20 +2541,24 @@ async function racesView() {
   const t = today();
   setTimeout(() => {
     view.querySelector('#add-race').onclick = () => editRace({ priority: 'A', distance_m: 42195 });
-    view.querySelectorAll('[data-race]').forEach((el) => (el.onclick = (e) => {
-      const m = e.target.closest('[data-rmng]');
-      if (m) return manageRace(races.find((x) => x.id === Number(m.dataset.rmng)));
-      location.hash = `#/races/${el.dataset.race}`;
-    }));
+    wireSwipe(view, async (act, id) => {
+      const r = races.find((x) => x.id === Number(id));
+      if (act === 'open') location.hash = `#/races/${id}`;
+      else if (act === 'status') manageRace(r);
+      else if (act === 'del' && (await deleteRace(r))) route();
+    });
   });
   const row = (r) => {
     const goalPace = r.goal_time_s ? pace(r.goal_time_s / (r.distance_m / 1000)) : null;
     const diff = r.goal_time_s && r.result_time_s ? r.result_time_s - r.goal_time_s : null;
-    return `<li data-race="${r.id}" style="cursor:pointer">
+    return `<li class="sw" data-id="${r.id}">
+      <div class="sw-acts">${r.date >= t ? `<button type="button" class="sw-act st" data-act="status">${ST_ICON[r.status || 'confirmed']}<span>状態</span></button>` : ''}<button type="button" class="sw-act del" data-act="del">${SVG('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>')}<span>削除</span></button></div>
+      <div class="sw-front">
       <div class="row spread"><span><span class="badge">${esc(r.priority)}</span> ${esc(r.name)}</span><span class="muted num">${r.date} ›</span></div>
       <div class="muted num">${km(r.distance_m, 3)}km・目標 ${dur(r.goal_time_s)}${goalPace ? ` (${goalPace}/km)` : ''}${r.date >= t ? `・あと${daysBetween(t, r.date)}日` : ''}</div>
-      <div class="row spread rl-foot">${entryLine(r, t) || '<span></span>'}${r.date >= t ? rstBtn(r) : ''}</div>
+      ${entryLine(r, t)}
       ${r.result_time_s ? `<div class="num">結果 <strong>${dur(r.result_time_s)}</strong>${diff != null ? ` <span class="score ${diff <= 0 ? 'good' : 'bad'}">${diff <= 0 ? '-' : '+'}${dur(Math.abs(diff))}</span>` : ''}${r.activity_id ? ` <a href="#/activities/${r.activity_id}">記録</a>` : ''}</div>` : ''}
+      </div>
     </li>`;
   };
   const upcoming = races.filter((r) => r.date >= t);
@@ -2509,7 +2570,7 @@ async function racesView() {
     ${sect('confirmed', '出場決定')}
     ${sect('entered', 'エントリー済み', '抽選や入金の結果待ち。計画はこの大会も目標に入れます')}
     ${sect('candidate', 'エントリー候補', '出るか検討中。計画やホームの目標には入れません')}
-    ${upcoming.length ? '' : '<div class="card"><p class="muted">予定のレースはありません</p></div>'}
+    ${upcoming.length ? '<p class="muted sw-hint">左にスライドすると、状態の変更と削除ができます</p>' : '<div class="card"><p class="muted">予定のレースはありません</p></div>'}
     <div class="card"><h2>過去</h2>${past.length ? `<ul class="list">${past.map(row).join('')}</ul>` : '<p class="muted">なし</p>'}</div>`;
 }
 
