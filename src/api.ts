@@ -10,7 +10,7 @@ import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './re
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
-import { applyCoach, askCoach } from './coach';
+import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
 import { corosDisconnect, getAuth as getCorosAuth, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns } from './insights';
 import { applyDerived } from './derive-apply';
@@ -423,6 +423,12 @@ api.post('/coach', async (c) => {
     const m = (e as Error).message;
     return c.json({ error: /neuron|quota|limit|4006/i.test(m) ? 'AI の 1 日の無料枠を使い切りました。明日 9:00 に戻ります' : m }, 500);
   }
+});
+/** 今週の見立て (計画画面を開いたときに出す。同じ状況ならキャッシュ) */
+api.post('/coach/brief', async (c) => {
+  const { force } = await c.req.json<{ force?: boolean }>().catch(() => ({ force: false }));
+  try { return c.json({ ...(await coachBrief(c.env, !!force)), q: BRIEF_Q }); }
+  catch (e) { const m = (e as Error).message; return c.json({ error: /neuron|quota|limit|4006/i.test(m) ? 'AI の 1 日の無料枠を使い切りました。明日 9:00 に戻ります' : m }, 500); }
 });
 /** 相談で出た変更案を計画に反映 */
 api.post('/coach/apply', async (c) => {
