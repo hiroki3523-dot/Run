@@ -769,13 +769,11 @@ function wireCopy(root, ws) {
 }
 
 // ---- 予定の相談 (AI)。会話はこの画面を開いている間だけ残す
-const COACH_QUICK = ['脚に痛みがある', '疲れが残っている', '走り足りない', '今日は走れない', '今日のメニューを軽くしたい', '雨で走れない'];
 let COACH_LOG = (() => { try { return JSON.parse(sessionStorage.getItem('coach') || '[]'); } catch { return []; } })();
 const saveCoach = () => { try { sessionStorage.setItem('coach', JSON.stringify(COACH_LOG.slice(-20))); } catch {} };
 function coachPane() {
   return `<div class="coach">
     <div class="coach-log" id="coach-log"></div>
-    <div class="coach-quick">${COACH_QUICK.map((q) => `<button type="button" class="chip" data-cq="${esc(q)}">${esc(q)}</button>`).join('')}</div>
     <form class="coach-in" id="coach-form">
       <textarea id="coach-text" rows="2" placeholder="例: 右ふくらはぎに張りがある。明日の LT 走はどうする？"></textarea>
       <button class="primary" id="coach-send" aria-label="送信"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
@@ -827,7 +825,6 @@ function wireCoach(root) {
     log.lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   };
   root.querySelector('#coach-form').onsubmit = (e) => { e.preventDefault(); send(ta.value); };
-  root.querySelectorAll('[data-cq]').forEach((b) => (b.onclick = () => { ta.value = ta.value ? `${ta.value}。${b.dataset.cq}` : b.dataset.cq; ta.focus(); }));
   root.querySelector('#coach-clear').onclick = () => { COACH_LOG = []; saveCoach(); draw(); };
   draw();
 }

@@ -958,3 +958,4 @@ body::after {
 .cal-more summary { color: var(--muted); font-size: 13px; cursor: pointer; }
 .cal-more p { font-size: 13px; }
 #cal-card .cal-btn { margin-top: 0; }
+.coach-log + .coach-in { margin-top: 10px; }
