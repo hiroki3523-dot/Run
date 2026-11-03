@@ -233,7 +233,16 @@ async function loadNews() {
       <span class="news-tag" style="--tc:${NEWS_TAG[n.tag] || 'var(--muted)'}">${esc(n.tag)}</span>
       <b>${esc(n.title)}</b><small class="muted">${esc(n.source)}・${ago(n.date)}</small></a></li>`;
     // 初めは 5 件。残りは「もっと見る」で
-    box.innerHTML = list.length ? `<ul class="news-l">${list.slice(0, 5).map(item).join('')}</ul>${list.length > 5 ? `<details class="news-more"><summary>もっと見る (${list.length - 5}件)</summary><ul class="news-l">${list.slice(5).map(item).join('')}</ul></details>` : ''}` : '<p class="muted">いまは表示できるニュースがありません。</p>';
+    // 開いたあとはボタンを下に置いたまま「閉じる」に変える (同じ記事を二重に出さない)
+    box.innerHTML = list.length ? `<ul class="news-l">${list.map((n, i) => item(n).replace('<li>', i >= 5 ? '<li class="news-x hidden">' : '<li>')).join('')}</ul>${list.length > 5 ? `<button type="button" class="news-tg" aria-expanded="false">もっと見る (${list.length - 5}件)</button>` : ''}` : '<p class="muted">いまは表示できるニュースがありません。</p>';
+    const tg = box.querySelector('.news-tg');
+    if (tg) tg.onclick = () => {
+      const open = tg.getAttribute('aria-expanded') !== 'true';
+      box.querySelectorAll('.news-x').forEach((li) => li.classList.toggle('hidden', !open));
+      tg.setAttribute('aria-expanded', String(open));
+      tg.innerHTML = open ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>閉じる' : `もっと見る (${list.length - 5}件)`;
+      if (!open) box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    };
   } catch { box.innerHTML = '<p class="muted">ニュースを読み込めませんでした。</p>'; }
 }
 
@@ -1028,9 +1037,22 @@ function wireCopy(root, ws) {
 }
 
 // ---- 予定の相談 (AI)。会話はこの画面を開いている間だけ残す
+const COACH_BAD = '回答をうまく表示できませんでした。もう一度お試しください。';
+const COACH_NET = 'AIコーチに接続できませんでした。';
+// JSON のように見える文字列 (キー名や波括弧を画面に出さない)
+const coachLooksJson = (s) => /^\s*(```|\{|\[|"\s*\{)|"(conclusion|reasons|reply|changes|keep)"\s*:/.test(String(s || ''));
+/** サーバーの返事・保存していた会話を、画面に出せる形にそろえる (通常の相談と今週の見立てで共通) */
+function coachMsg(r, extra = {}) {
+  const strs = (v, n) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim() && !coachLooksJson(x)).slice(0, n) : []);
+  const conclusion = typeof r?.conclusion === 'string' && !coachLooksJson(r.conclusion) ? r.conclusion.trim() : '';
+  const reply = typeof r?.reply === 'string' && !coachLooksJson(r.reply) ? r.reply.trim() : '';
+  const changes = (Array.isArray(r?.changes) ? r.changes : []).filter((c) => c && /^\d{4}-\d{2}-\d{2}$/.test(c.date) && typeof c.type === 'string');
+  const invalid = !!r?.invalid || (!conclusion && !reply && !changes.length);
+  return { role: 'assistant', content: invalid ? '' : reply || conclusion, conclusion, reasons: strs(r?.reasons, 5), keep: strs(r?.keep, 4), changes: invalid ? [] : changes, invalid, model: r?.model, ...extra };
+}
 let COACH_LOG = (() => { try { return JSON.parse(sessionStorage.getItem('coach') || '[]'); } catch { return []; } })();
-// 前に読み取れずに JSON のまま残った「今週の見立て」は捨てて、開き直したときに取り直す
-if (COACH_LOG.some((m) => m.brief && !m.conclusion && /^\s*\{/.test(m.content || ''))) COACH_LOG = [];
+// 前に保存した会話も同じ形にそろえる (JSON のまま残った返事は「読めなかった」扱い)
+COACH_LOG = Array.isArray(COACH_LOG) ? COACH_LOG.filter((m) => m && (m.role === 'user' || m.role === 'assistant')).map((m) => (m.role === 'assistant' && !m.error ? { ...coachMsg({ ...m, reply: m.content }), brief: m.brief, applied: m.applied } : m)) : [];
 const saveCoach = () => { try { sessionStorage.setItem('coach', JSON.stringify(COACH_LOG.slice(-20))); } catch {} };
 function coachPane() {
   return `<div class="coach">
@@ -1047,61 +1069,107 @@ function wireCoach(root) {
   if (!log) return;
   const ta = root.querySelector('#coach-text');
   const fmtChange = (c) => `${PLAN_LABELS[c.type] || c.type}${c.distance_km ? ` ${c.distance_km}km` : ''}${c.pace ? ` ${c.pace.split('-')[0] === c.pace.split('-')[1] ? c.pace.split('-')[0] : c.pace}` : ''}`;
+  let confirmAt = -1; // 「予定に反映」を押して確認中の返事
+  const aiCard = (m, i, before) => {
+    const tag = m.brief ? '今週の見立て' : '相談への回答';
+    if (m.invalid || m.error) {
+      return `<div class="cm ai cm-card cm-err"><div class="cm-hd"><b>AIコーチ</b><span class="cm-tag">${tag}</span></div>
+        <p class="cm-concl">${m.error ? COACH_NET : COACH_BAD}</p>${m.error && m.detail ? `<p class="muted cm-sub">${esc(m.detail)}</p>` : ''}
+        <button type="button" class="ghost cm-retry" data-cretry="${i}">もう一度試す</button></div>`;
+    }
+    const n = m.changes?.length || 0;
+    const head = m.conclusion || m.content;
+    const extra = m.conclusion && m.content && m.content !== m.conclusion ? m.content : '';
+    return `<div class="cm ai cm-card"><div class="cm-hd"><b>AIコーチの見立て</b><span class="cm-tag">${tag}</span><span class="cm-st ${n ? 'chg' : ''}">${n ? `変更案あり：${n}件` : '計画変更なし'}</span></div>
+      <div class="cm-concl clamp" data-cclamp>${esc(head).replace(/\n/g, '<br>')}</div><button type="button" class="linkbtn cm-more hidden" data-cmore>続きを表示</button>
+      ${m.reasons?.length ? `<details class="cm-why"><summary>判断した理由 (${m.reasons.length})</summary><ul>${m.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}
+      ${m.keep?.length ? `<div class="cm-keep"><b>予定どおりにする練習</b>${m.keep.map((x) => `<p>${esc(x)}</p>`).join('')}</div>` : ''}
+      ${extra ? `<details class="cm-why"><summary>コーチのコメント</summary><p class="cm-sub">${esc(extra).replace(/\n/g, '<br>')}</p></details>` : ''}
+      ${n ? `<div class="cchg"><b>変更案</b>${m.changes.map((c) => `<div class="cchg-r"><span class="num">${md(c.date)}(${dow(c.date)})</span><span class="muted">${esc(m.applied ? '' : before(c.date))}</span><span>→ <b>${esc(fmtChange(c))}</b>${c.notes ? `<small class="muted">${esc(c.notes)}</small>` : ''}</span></div>`).join('')}
+        ${m.applied ? '<p class="muted" style="margin:8px 0 0">予定に反映しました</p>'
+          : confirmAt === i ? `<p class="cm-sub">上の ${n} 日の予定を置き換えます (実績の付いた予定は変えません)。</p><div class="row cm-cf"><button type="button" class="ghost" data-cno>やめる</button><button type="button" class="primary" data-capply="${i}">反映する</button></div>`
+          : `<button type="button" class="primary wide" data-cask="${i}">予定に反映する…</button>`}</div>` : ''}</div>`;
+  };
   const draw = async () => {
     const dates = COACH_LOG.flatMap((m) => (m.changes || []).map((c) => c.date)).sort();
     let cur = [];
     if (dates.length) { try { cur = uniqPlans(await api(`/plans?from=${dates[0]}&to=${dates[dates.length - 1]}`)); } catch {} }
     const before = (d) => cur.filter((p) => p.date === d).map((p) => `${PLAN_LABELS[p.type]}${p.distance_m ? ` ${km(p.distance_m)}km` : ''}`).join('・') || 'なし';
-    log.innerHTML = COACH_LOG.length ? COACH_LOG.map((m, i) => m.hidden ? '' : m.role === 'user'
-      ? `<div class="cm me">${esc(m.content)}</div>`
-      : `<div class="cm ai">${m.brief ? '<span class="cm-tag">今週の見立て</span>' : ''}${m.conclusion
-        ? `<p class="cm-concl">${esc(m.conclusion)}</p>${m.reasons?.length ? `<details class="cm-why"><summary>理由 (${m.reasons.length})</summary><ul>${m.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}${m.keep?.length ? `<div class="cm-keep"><b>変えない練習</b>${m.keep.map((x) => `<p>${esc(x)}</p>`).join('')}</div>` : ''}`
-        : esc(m.content).replace(/\n/g, '<br>')}${m.changes?.length ? `<div class="cchg">
-          <b>変更する練習</b>${m.changes.map((c) => `<div class="cchg-r"><span class="num">${md(c.date)}(${dow(c.date)})</span><span class="muted">${esc(m.applied ? '' : before(c.date))}</span><span>→ <b>${esc(fmtChange(c))}</b>${c.notes ? `<small class="muted">${esc(c.notes)}</small>` : ''}</span></div>`).join('')}
-          ${m.applied ? '<p class="muted" style="margin:8px 0 0">反映しました</p>' : `<button type="button" class="primary wide" data-capply="${i}">この内容で予定に反映</button>`}</div>` : ''}</div>`).join('')
-      : '<p class="muted coach-empty">体の状態や都合を書くと、計画の組み直しを提案します。反映するかはあとで選べます。</p>';
+    const shown = COACH_LOG.filter((m) => !m.hidden);
+    log.innerHTML = shown.length ? COACH_LOG.map((m, i) => m.hidden ? '' : m.role === 'user' ? `<div class="cm me">${esc(m.content)}</div>` : aiCard(m, i, before)).join('')
+      : `<div class="coach-empty"><p class="muted">体の状態や都合を書くと、計画の組み直しを提案します。反映するかはあとで選べます。</p><button type="button" class="ghost" id="coach-brief-btn">今週の見立てを出す</button></div>`;
     const lastModel = [...COACH_LOG].reverse().find((m) => m.model)?.model;
-    if (lastModel) root.querySelector('#coach-model').textContent = `AI: ${lastModel.split('/').pop()}`;
+    root.querySelector('#coach-model').textContent = lastModel ? `AI: ${lastModel.split('/').pop()}` : '計画と直近 3 週間の実績・ふりかえりを見て答えます';
+    // 結論が長いときだけ「続きを表示」
+    log.querySelectorAll('[data-cclamp]').forEach((el) => {
+      const more = el.nextElementSibling;
+      if (el.scrollHeight > el.clientHeight + 2) { more.classList.remove('hidden'); more.onclick = () => { el.classList.remove('clamp'); more.remove(); }; }
+    });
+    root.querySelector('#coach-brief-btn')?.addEventListener('click', () => openBrief(false));
+    log.querySelectorAll('[data-cask]').forEach((b) => (b.onclick = () => { confirmAt = Number(b.dataset.cask); draw(); }));
+    log.querySelectorAll('[data-cno]').forEach((b) => (b.onclick = () => { confirmAt = -1; draw(); }));
     log.querySelectorAll('[data-capply]').forEach((b) => (b.onclick = async () => {
       const m = COACH_LOG[Number(b.dataset.capply)];
+      if (!m?.changes?.length) return;
       b.disabled = true;
-      try { await api('/coach/apply', { method: 'POST', body: { changes: m.changes } }); m.applied = true; saveCoach(); route(); }
-      catch (e) { alert(e.message); b.disabled = false; }
+      try { await api('/coach/apply', { method: 'POST', body: { changes: m.changes } }); m.applied = true; confirmAt = -1; saveCoach(); route(); }
+      catch (e) { b.disabled = false; b.insertAdjacentHTML('afterend', `<p class="muted cm-sub">反映できませんでした (${esc(e.message)})</p>`); }
+    }));
+    log.querySelectorAll('[data-cretry]').forEach((b) => (b.onclick = () => {
+      const i = Number(b.dataset.cretry);
+      const m = COACH_LOG[i];
+      if (m.brief) { COACH_LOG = COACH_LOG.filter((x, k) => k !== i && !(x.hidden && k === i - 1)); saveCoach(); openBrief(true); return; }
+      // 通常の相談: 読めなかった返事を消して、直前の相談をもう一度送る
+      COACH_LOG.splice(i, 1);
+      ask();
     }));
   };
-  const send = async (text) => {
-    text = text.trim();
-    if (!text) return;
-    COACH_LOG.push({ role: 'user', content: text });
-    ta.value = '';
+  const errMsg = (e, extra) => ({ role: 'assistant', content: '', error: true, detail: /無料枠/.test(e?.message || '') ? e.message : '', changes: [], ...extra });
+  // 会話を送る (最後がユーザーの相談のとき)
+  const ask = async () => {
     await draw();
     log.insertAdjacentHTML('beforeend', '<div class="cm ai typing"><i></i><i></i><i></i></div>');
     log.lastElementChild.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     const btn = root.querySelector('#coach-send'); btn.disabled = true;
     try {
-      const r = await api('/coach', { method: 'POST', body: { messages: COACH_LOG.map((m) => ({ role: m.role, content: m.content, changes: m.changes })) } });
-      COACH_LOG.push({ role: 'assistant', content: r.reply, conclusion: r.conclusion, reasons: r.reasons, keep: r.keep, changes: r.changes || [], model: r.model });
+      // 読めなかった返事・エラーは AI に送り返さない
+      const hist = COACH_LOG.filter((m) => !m.invalid && !m.error).map((m) => ({ role: m.role, content: m.content, changes: m.changes }));
+      COACH_LOG.push(coachMsg(await api('/coach', { method: 'POST', body: { messages: hist } })));
     } catch (e) {
-      COACH_LOG.push({ role: 'assistant', content: `エラー: ${e.message}` });
+      COACH_LOG.push(errMsg(e));
     }
     saveCoach();
     btn.disabled = false;
     await draw();
     log.lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   };
-  root.querySelector('#coach-form').onsubmit = (e) => { e.preventDefault(); send(ta.value); };
-  root.querySelector('#coach-clear').onclick = () => { COACH_LOG = []; saveCoach(); draw(); root._coachOpen(); };
-  // 開いたとき、会話が空なら「今週の見立て」を出す (同じ状況ならサーバーのキャッシュ)
-  root._coachOpen = async () => {
-    if (COACH_LOG.length) return;
+  const send = async (text) => {
+    text = text.trim();
+    if (!text) return;
+    COACH_LOG.push({ role: 'user', content: text });
+    ta.value = '';
+    await ask();
+  };
+  // 今週の見立て。force なら作り直す (サーバーのキャッシュを使わない)
+  const openBrief = async (force = false) => {
     log.innerHTML = '<div class="cm ai typing"><i></i><i></i><i></i></div>';
-    try {
-      const r = await api('/coach/brief', { method: 'POST', body: {} });
-      if (COACH_LOG.length) return;
-      COACH_LOG.push({ role: 'user', content: r.q || '今週の見立てをください', hidden: true }, { role: 'assistant', content: r.reply, conclusion: r.conclusion, reasons: r.reasons, keep: r.keep, changes: r.changes || [], brief: true, model: r.model });
-      saveCoach();
-    } catch (e) { log.innerHTML = `<p class="muted coach-empty">今週の見立てを出せませんでした (${esc(e.message)})。下に書いて相談できます。</p>`; return; }
+    let m;
+    try { m = coachMsg(await api('/coach/brief', { method: 'POST', body: { force } }), { brief: true }); }
+    catch (e) { m = errMsg(e, { brief: true }); }
+    if (COACH_LOG.some((x) => !x.hidden)) { draw(); return; } // 待っている間に相談を始めていたら出さない
+    COACH_LOG = [{ role: 'user', content: '今週の見立てをください', hidden: true }, m];
+    saveCoach();
     draw();
+  };
+  root.querySelector('#coach-form').onsubmit = (e) => { e.preventDefault(); send(ta.value); };
+  // 会話を消す: 消したあとは自動で見立てを出し直さない (前と同じ見立てが出て、消えていないように見えるため)
+  root.querySelector('#coach-clear').onclick = () => { COACH_LOG = []; confirmAt = -1; saveCoach(); try { sessionStorage.setItem('coach-cleared', '1'); } catch {} draw(); };
+  // 開いたとき、会話が空なら「今週の見立て」を出す (同じ状況ならサーバーのキャッシュ)。会話を消したあとは出さない
+  root._coachOpen = () => {
+    let cleared = false;
+    try { cleared = sessionStorage.getItem('coach-cleared') === '1'; } catch {}
+    if (COACH_LOG.length || cleared) return;
+    openBrief(false);
   };
   draw();
 }
@@ -3568,19 +3636,31 @@ function shoeAdvice(shoes, race) {
   const live = shoes.filter((x) => !x.retired);
   const out = [];
   const daysTo = race ? Math.round((new Date(race.date) - new Date(today())) / 86400000) : null;
+  const link = (xs) => (xs.length === 1 ? `#/shoes/${xs[0].id}` : null);
   const over = live.filter((x) => x.total_km >= x.limit_km);
-  if (over.length) out.push({ tone: 'bad', text: `交換目安を超えています: ${over.map((x) => esc(shoeName(x))).join("、")}。目安なので、使用感に問題がなければ続けても大丈夫。底のすり減りや脚の違和感が出たら入れ替えを。` });
+  if (over.length) out.push({ tone: 'bad', title: '交換の目安を超えたシューズ', text: over.map((x) => esc(shoeName(x))).join('、'), sub: '目安なので、使用感に問題がなければ続けても大丈夫。底のすり減りや脚の違和感が出たら入れ替えを。', href: link(over) });
+  const near = live.filter((x) => x.total_km < x.limit_km && x.total_km / x.limit_km >= 0.85);
+  if (near.length) out.push({ tone: 'warn', title: '交換の目安が近いシューズ', text: near.map((x) => `${esc(shoeName(x))} (残り${Math.round(x.limit_km - x.total_km)}km)`).join('、'), href: link(near) });
   const raceShoe = live.find((x) => purposesOf(x.purpose).includes('race'));
   if (race && daysTo != null && daysTo >= 0 && daysTo <= 56) {
-    if (!raceShoe) out.push({ tone: 'warn', text: `本番用がありません。${esc(race.name)}まで${daysTo}日。` });
-    else if (raceShoe.total_km < 30) out.push({ tone: 'warn', text: `${esc(raceShoe.name)}は${Math.round(raceShoe.total_km)}km。本番前に 30〜50km で慣らしを。` });
+    if (!raceShoe) out.push({ tone: 'warn', title: '本番用のシューズがありません', text: `${esc(race.name)}まで${daysTo}日。` });
+    else if (raceShoe.total_km < 30) out.push({ tone: 'warn', title: '本番用の慣らし', text: `${esc(shoeName(raceShoe))}は${Math.round(raceShoe.total_km)}km。本番前に 30〜50km で慣らしを。`, href: `#/shoes/${raceShoe.id}` });
   }
   const missing = ['recovery', 'pace', 'speed', 'long'].filter((pu) => !live.some((x) => purposesOf(x.purpose).includes(pu)));
-  if (missing.length && live.length) out.push({ tone: 'info', text: `用途が未設定: ${missing.map((pu) => PURPOSE_LABELS[pu]).join('・')}。` });
-  const near = live.filter((x) => x.total_km < x.limit_km && x.total_km / x.limit_km >= 0.85);
-  if (near.length) out.push({ tone: 'warn', text: `そろそろ交換: ${near.map((x) => `${esc(x.name)}(残り${Math.round(x.limit_km - x.total_km)}km)`).join('、')}` });
+  if (missing.length && live.length) out.push({ tone: 'info', title: '用途が未設定', text: missing.map((pu) => PURPOSE_LABELS[pu]).join('・') });
   return out.slice(0, 3);
 }
+const ALERT_IC = {
+  bad: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+  warn: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>',
+};
+/** シューズの注意 (交換の目安など) をカードで */
+const shoeAlert = (a) => {
+  const inner = `<span class="sa-ic"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ALERT_IC[a.tone] || ALERT_IC.info}</svg></span>
+    <span class="sa-tx"><b>${a.title}</b><span>${a.text}</span>${a.sub ? `<small class="muted">${a.sub}</small>` : ''}</span>${a.href ? '<span class="pm-chev">›</span>' : ''}`;
+  return a.href ? `<a class="sa ${a.tone}" href="${a.href}">${inner}</a>` : `<div class="sa ${a.tone}">${inner}</div>`;
+};
 
 const STATUS = [[0, '使用中'], [2, '予備'], [1, '引退']];
 
@@ -3599,6 +3679,7 @@ async function shoesView(params) {
   const [shoes, races] = await Promise.all([api('/shoes'), api('/races').catch(() => [])]);
   const nextRace = races.filter((r) => r.date >= today() && ['A', 'B'].includes(r.priority)).sort((a, b) => a.date.localeCompare(b.date))[0];
   const advice = shoeAdvice(shoes, nextRace);
+  SHOES = shoes; // 相性の比較で写真を出すため
   const guesses = shoes.filter((x) => !x.retired && guessPurposes(x.name) && purposesOf(x.purpose).join() !== guessPurposes(x.name).join());
   setTimeout(() => {
     view.querySelector('#add-shoe').onclick = () => editShoe({ purpose: 'easy', limit_km: 700, initial_km: 0 });
@@ -3688,10 +3769,10 @@ async function shoesView(params) {
   const active = pick(shoes.filter((s) => !s.retired)), spare = pick(shoes.filter((s) => s.retired === 2)), retired = pick(shoes.filter((s) => s.retired === 1));
   const chips = `<div class="hl-chips">${SHOE_FILTER.map(([k, l]) => `<a class="chip ${k === sf ? 'on' : ''}" href="#/shoes${k === 'all' ? '' : `?f=${k}`}">${l}</a>`).join('')}</div>`;
   return `
-    <div class="row spread" style="margin-bottom:8px"><h2>シューズ</h2><button class="primary" id="add-shoe">＋ 追加</button></div>
+    <div class="sh-top"><h2>シューズ</h2><button class="primary sh-add" id="add-shoe"><span aria-hidden="true">＋</span> 追加</button></div>
     ${chips}
-    ${advice.length ? `<div class="card"><ul class="advice">${advice.map((a) => `<li class="${a.tone}">${a.text}</li>`).join('')}</ul></div>` : ''}
-    ${guesses.length ? `<div class="card"><p class="muted" style="margin-top:0">名前から、用途を自動で設定できます (${guesses.length}足)。</p><button id="guess" class="primary wide">用途をまとめて設定</button></div>` : ''}
+    ${advice.length ? `<div class="sa-list">${advice.map(shoeAlert).join('')}</div>` : ''}
+    ${guesses.length ? `<button id="guess" class="wide sh-guess"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>用途をまとめて設定 (${guesses.length}足)</button>` : ''}
     ${!shoes.length ? '<div class="card"><b>シューズが登録されていません</b><p class="muted">「＋ 追加」から登録すると、走行距離と使用履歴がここに出ます。Strava のシューズを付けたランは自動で登録されます。</p></div>' : `
     <h3 class="sect">使用中 <small class="muted">${active.length}足</small></h3>
     <div class="card"><ul class="list shoes">${active.map(row).join('') || '<li class="muted">この用途の使用中のシューズはありません</li>'}</ul></div>
@@ -3794,6 +3875,12 @@ async function shoeDetailView(id) {
 
 /** シューズの相性: 同じ種類のランで、シューズごとに比べる (2 本以上走ったシューズだけ) */
 const GROUP_LABEL = { easy: 'ジョグ・イージー', tempo: 'ポイント練', long: 'ロング走', interval: 'インターバル', race: 'レース' };
+/** 相性の「おすすめ」の観点。値は相性の集計 (主観・実績) から。データが 2 足分そろわなければ出さない */
+const FIT_CRIT = [
+  ['natural', '自然に走れる', '<path d="M4 20c4-1 7-4 8-8s4-7 8-8"/><path d="M12 12c-2 0-4 1-5 3"/>', (r) => r.form, false, (r) => `走りやすさ ${r.form}/10`],
+  ['easy', '疲れにくい', '<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/>', (r) => r.leg ?? r.next_leg, true, (r) => (r.leg != null ? `脚の疲労 ${r.leg}/10` : `翌朝の脚 ${r.next_leg}/10`)],
+  ['speed', 'スピード寄り', '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>', (r) => r.pace, true, (r) => `平均 ${pace(r.pace)}/km`],
+];
 async function loadShoeCompare() {
   const box = document.getElementById('shoe-cmp');
   if (!box) return;
@@ -3802,25 +3889,45 @@ async function loadShoeCompare() {
   const keys = Object.keys(GROUP_LABEL).filter((k) => data[k]?.length);
   if (!keys.length) { box.innerHTML = '<p class="muted">シューズを付けたランが、同じ種類で 2 本以上あるシューズが出てくると比べられます。</p>'; return; }
   let cur = keys.find((k) => data[k].length >= 2) || keys[0];
+  let crit = 'natural', all = false;
   const f = (v, u = '') => (v == null ? '-' : `${v}${u}`);
+  const img = (id) => { const s = SHOES.find((x) => x.id === id); return s?.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'; };
   const draw = () => {
-    const rows = data[cur];
-    const best = (k, low) => { const v = rows.map((r) => r[k]).filter((x) => x != null); return v.length >= 2 ? (low ? Math.min(...v) : Math.max(...v)) : null; };
+    const rowsAll = [...data[cur]].sort((a, b) => b.n - a.n);
+    const rows = all ? rowsAll : rowsAll.slice(0, 3);
+    const best = (k, low) => { const v = rowsAll.map((r) => r[k]).filter((x) => x != null); return v.length >= 2 ? (low ? Math.min(...v) : Math.max(...v)) : null; };
     const mark = (r, k, low) => (r[k] != null && r[k] === best(k, low) ? ' class="sc-best"' : '');
+    // おすすめ: 選んだ観点でいちばん良いシューズ (2 足以上に値があるときだけ)
+    const C = FIT_CRIT.find((c) => c[0] === crit);
+    const vals = rowsAll.filter((r) => C[3](r) != null);
+    const top = vals.length >= 2 ? [...vals].sort((a, b) => (C[4] ? C[3](a) - C[3](b) : C[3](b) - C[3](a)))[0] : null;
+    const tie = top && vals.filter((r) => C[3](r) === C[3](top)).length > 1;
+    const rec = top && !tie
+      ? `<div class="sc-rec"><span class="sc-rec-l">結論</span><div><small>おすすめ・${C[1]}</small><b>${esc(top.name)}</b><span class="muted num">${C[5](top)} (${GROUP_LABEL[cur]}・${top.n}本)</span></div></div>`
+      : `<div class="sc-rec none"><span class="sc-rec-l">結論</span><div><small>${C[1]}</small><span class="muted">${tie ? '差がありません' : 'この観点の記録がある靴が 2 足未満のため、比べられません'}</span></div></div>`;
+    const th = rows.map((r) => `<th><span class="sc-img">${img(r.shoe_id)}</span><span class="sc-nm">${esc(r.name)}</span><small>${r.n}本・${r.km}km</small></th>`).join('');
+    const tr = (label, cells) => `<tr><td>${label}</td>${cells}</tr>`;
     box.innerHTML = `<div class="seg sc-tabs">${keys.map((k) => `<a href="javascript:void 0" data-sg="${k}" class="${k === cur ? 'on' : ''}">${GROUP_LABEL[k]}</a>`).join('')}</div>
-      <div class="sc-wrap"><table class="an-cmp num sc-t"><tr><th></th>${rows.map((r) => `<th>${esc(r.name)}<br><small>${r.n}本・${r.km}km</small></th>`).join('')}</tr>
-      <tr><td>ペース</td>${rows.map((r) => `<td${mark(r, 'pace', true)}>${r.pace ? pace(r.pace) : '-'}</td>`).join('')}</tr>
-      <tr><td>心拍</td>${rows.map((r) => `<td${mark(r, 'hr', true)}>${f(r.hr)}</td>`).join('')}</tr>
-      <tr><td>ピッチ</td>${rows.map((r) => `<td>${f(r.cad)}</td>`).join('')}</tr>
-      <tr><td>ストライド</td>${rows.map((r) => `<td>${f(r.stride, 'cm')}</td>`).join('')}</tr>
-      <tr><td>接地時間</td>${rows.map((r) => `<td${mark(r, 'gct', true)}>${f(r.gct, 'ms')}</td>`).join('')}</tr>
-      <tr><td>走りやすさ</td>${rows.map((r) => `<td${mark(r, 'form', false)}>${f(r.form, '/10')}</td>`).join('')}</tr>
-      <tr><td>呼吸</td>${rows.map((r) => `<td${mark(r, 'breath', true)}>${f(r.breath, '/10')}</td>`).join('')}</tr>
-      <tr><td>脚の疲労</td>${rows.map((r) => `<td${mark(r, 'leg', true)}>${f(r.leg, '/10')}</td>`).join('')}</tr>
-      <tr><td>翌朝の脚</td>${rows.map((r) => `<td${mark(r, 'next_leg', true)}>${f(r.next_leg, '/10')}</td>`).join('')}</tr>
-      <tr><td>痛み (3以上)</td>${rows.map((r) => `<td>${r.pain_n}回</td>`).join('')}</tr></table></div>
+      ${rec}
+      <div class="sc-crit">${FIT_CRIT.map(([k, l, ic]) => `<button type="button" class="chip ${k === crit ? 'on' : ''}" data-crit="${k}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ic}</svg>${l}</button>`).join('')}</div>
+      <table class="an-cmp num sc-t sc-fix"><tr><th></th>${th}</tr>
+      ${tr('ペース', rows.map((r) => `<td${mark(r, 'pace', true)}>${r.pace ? pace(r.pace) : '-'}</td>`).join(''))}
+      ${tr('心拍', rows.map((r) => `<td${mark(r, 'hr', true)}>${f(r.hr)}</td>`).join(''))}
+      ${tr('ピッチ', rows.map((r) => `<td>${f(r.cad)}</td>`).join(''))}
+      ${tr('ストライド', rows.map((r) => `<td>${f(r.stride, 'cm')}</td>`).join(''))}
+      ${tr('走りやすさ', rows.map((r) => `<td${mark(r, 'form', false)}>${f(r.form, '/10')}</td>`).join(''))}
+      ${tr('脚の疲労', rows.map((r) => `<td${mark(r, 'leg', true)}>${f(r.leg, '/10')}</td>`).join(''))}
+      </table>
+      <details class="rv-acc sc-more"><summary>ほかの項目 (接地時間・呼吸・翌朝の脚・痛み)</summary><div class="rv-acc-b"><table class="an-cmp num sc-t sc-fix"><tr><th></th>${rows.map((r) => `<th><span class="sc-nm">${esc(r.name)}</span></th>`).join('')}</tr>
+      ${tr('接地時間', rows.map((r) => `<td${mark(r, 'gct', true)}>${f(r.gct, 'ms')}</td>`).join(''))}
+      ${tr('呼吸', rows.map((r) => `<td${mark(r, 'breath', true)}>${f(r.breath, '/10')}</td>`).join(''))}
+      ${tr('翌朝の脚', rows.map((r) => `<td${mark(r, 'next_leg', true)}>${f(r.next_leg, '/10')}</td>`).join(''))}
+      ${tr('痛み (3以上)', rows.map((r) => `<td>${r.pain_n}回</td>`).join(''))}</table></div></details>
+      ${rowsAll.length > 3 ? `<button type="button" class="linkbtn sc-all" data-scall>${all ? '使用回数の多い 3 足だけにする' : `ほかの ${rowsAll.length - 3} 足も表示`}</button>` : ''}
       <p class="muted an-note">同じ種類のランだけで比べています。速さより「自然に走れるか (走りやすさ)」「疲れが少ないか (脚・翌朝の脚)」を重く見てください。緑はその項目でいちばん良いシューズ。主観は、ふりかえりと毎朝の体調から。</p>`;
     box.querySelectorAll('[data-sg]').forEach((a) => (a.onclick = () => { cur = a.dataset.sg; draw(); }));
+    box.querySelectorAll('[data-crit]').forEach((b) => (b.onclick = () => { crit = b.dataset.crit; draw(); }));
+    box.querySelector('[data-scall]')?.addEventListener('click', () => { all = !all; draw(); });
   };
   draw();
 }

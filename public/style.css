@@ -947,7 +947,8 @@ body::after {
 .coach-in textarea { flex: 1; min-height: 46px; max-height: 140px; resize: none; border-radius: 14px; padding: 11px 13px; font: inherit; font-size: 15px; background: var(--bg); color: var(--text); border: 1px solid var(--line); }
 .coach-in button { flex: none; width: 46px; height: 46px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
 .coach-foot { margin-top: 8px; font-size: 11.5px; gap: 8px; }
-.coach-foot .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.coach-foot .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.coach-foot .linkbtn { flex: none; white-space: nowrap; }
 
 /* カレンダーに反映 */
 .cal-done { display: flex; align-items: center; gap: 12px; }
@@ -1444,3 +1445,54 @@ body { padding-bottom: calc(120px + env(safe-area-inset-bottom)); } /* 下の固
 .hero.has-img { background-image: linear-gradient(90deg, rgb(10 12 38 / .85), rgb(10 12 38 / .45) 55%, rgb(10 12 38 / .15)), var(--img); }
 .art-th { display: block; width: 44px; height: 28px; border-radius: 6px; background-size: cover; background-position: right center; }
 .hm-race.has-art, .hm-race.has-img { background-image: linear-gradient(90deg, rgb(10 12 38 / .92), rgb(10 12 38 / .6) 50%, rgb(10 12 38 / .15)), var(--art, var(--img)); background-size: cover; background-position: right center; }
+/* AI コーチの回答カード (通常の相談・今週の見立てで共通) */
+.cm.cm-card { max-width: 100%; width: 100%; box-sizing: border-box; }
+.cm-hd { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; font-size: 12.5px; }
+.cm-hd .cm-tag { display: inline-block; margin: 0; }
+.cm-st { margin-left: auto; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.cm-st.chg { color: var(--mid); border-color: color-mix(in srgb, var(--mid) 50%, transparent); }
+.cm-concl.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.cm-more { font-size: 12px; padding: 2px 0; }
+.cm-sub { margin: 6px 0 0; font-size: 12.5px; }
+.cm-err .cm-concl { font-weight: 600; }
+.cm-retry, .coach-empty button { margin-top: 8px; min-height: 36px; padding: 6px 14px; font-size: 13px; }
+.cm-cf { gap: 8px; margin-top: 8px; } .cm-cf button { flex: 1; min-height: 40px; }
+/* シューズ画面の上部: 見出し + 追加・絞り込み・注意のカード・まとめて設定 */
+.sh-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.sh-top h2 { margin: 0; }
+.sh-add { min-height: 40px; padding: 6px 16px; border-radius: 999px; font-size: 14px; background: linear-gradient(135deg, #2b3dff, #7a5cff); border-color: transparent; color: #fff; }
+.sa-list { display: grid; gap: 8px; margin-bottom: 10px; }
+.sa { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); color: var(--text); text-decoration: none; }
+.sa:active { opacity: .7; }
+.sa .sa-ic { flex: none; display: grid; place-items: center; color: var(--accent); }
+.sa.warn { border-color: color-mix(in srgb, var(--c-m) 55%, transparent); } .sa.warn .sa-ic { color: var(--c-m); }
+.sa.bad { border-color: color-mix(in srgb, var(--bad) 55%, transparent); } .sa.bad .sa-ic { color: var(--bad); }
+.sa-tx { flex: 1; min-width: 0; display: grid; gap: 2px; font-size: 13.5px; line-height: 1.5; }
+.sa-tx b { font-size: 13px; }
+.sa-tx small { font-size: 11.5px; }
+.sa .pm-chev { flex: none; color: var(--muted); font-size: 20px; }
+.sh-guess { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; margin-bottom: 12px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); color: var(--text); background: color-mix(in srgb, var(--accent) 10%, transparent); font-size: 14px; }
+/* シューズの相性: 結論・観点・3 足を横スクロールなしで */
+.sc-rec { display: flex; align-items: center; gap: 12px; padding: 12px; margin: 0 0 10px; border-radius: 14px; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.sc-rec.none { background: var(--surface); border-color: var(--line); }
+.sc-rec-l { flex: none; font-size: 11.5px; font-weight: 700; padding: 8px 6px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.sc-rec > div { display: grid; gap: 1px; min-width: 0; }
+.sc-rec small { font-size: 11.5px; color: var(--c-m); font-weight: 700; }
+.sc-rec b { font-size: 15px; line-height: 1.4; }
+.sc-rec span.muted { font-size: 12px; }
+.sc-crit { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 0 0 10px; }
+.sc-crit .chip { display: inline-flex; align-items: center; justify-content: center; gap: 3px; min-height: 34px; padding: 4px 2px; font-size: 11.5px; white-space: nowrap; min-width: 0; letter-spacing: -0.02em; }
+.sc-crit .chip svg { flex: none; }
+.sc-fix { table-layout: fixed; }
+.sc-fix tr > :first-child { width: 4.6em; }
+.sc-fix th { white-space: normal; vertical-align: bottom; padding: 4px 2px; }
+.sc-fix td { white-space: nowrap; padding: 7px 2px; font-size: 12.5px; }
+.sc-img { display: grid; place-items: center; height: 34px; margin-bottom: 4px; color: var(--muted); }
+.sc-img img { max-width: 100%; max-height: 34px; object-fit: contain; border-radius: 6px; }
+.sc-nm { display: block; font-size: 11.5px; line-height: 1.3; word-break: break-word; }
+.sc-fix th small { display: block; font-size: 10.5px; font-weight: 400; }
+.sc-more { margin-top: 8px; }
+.sc-more > summary { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.sc-all { margin-top: 6px; font-size: 12.5px; }
+/* ニュース: もっと見る ⇄ 閉じる */
+.news-tg { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 42px; margin-top: 6px; border-radius: 12px; font-size: 13px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-color: transparent; }

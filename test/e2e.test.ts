@@ -391,4 +391,123 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     const an = (await call(env, 'GET', `/activities/${runId}/analysis`)).json;
     expect(an.fitness.items.find((x: any) => x.key === 'reserve').value).toBe('あと 5〜10km');
   }, 60000);
+  it('AI コーチ: 崩れた JSON を生のまま出さない・会話を消すと消えたままになる・読めないときは再試行', async () => {
+    const realAI = env.AI;
+    // 2026-11-04 に画面に出た形 (」で閉じ、配列の ] も抜けている)
+    const BROKEN = '{"conclusion":"今日は休養を続け、明日の Jog 5km は予定どおり","reasons":["脚の張りは 2","11/3 の M ペース走で刺激は入っている","レース前なのでリカバリーが最重要」,"keep":["11/7 Jog 3km"],"reply":"無理せずいきましょう。","changes":[]}';
+    let next = BROKEN, calls = 0;
+    env.AI = { run: async () => { calls++; return { response: next }; } };
+    try {
+      await page.evaluate(() => { sessionStorage.clear(); sessionStorage.setItem('pm', 'coach'); });
+      await open('#/plans');
+      await page.waitForSelector('#coach-log .cm-card', { timeout: 15000 });
+      if (SHOTS) await (await page.$('#pm-coach')).screenshot({ path: `${SHOTS}/40-coach-brief.png` });
+      const text = await page.$eval('#coach-log', (e: Element) => e.textContent || '');
+      expect(text).toContain('今日は休養を続け');
+      expect(text).toContain('計画変更なし');
+      expect(text).not.toMatch(/"conclusion"|[{}]/);
+      expect(await page.$('#coach-log [data-cask]')).toBeNull(); // 変更が無いので反映ボタンは出さない
+      expect(await page.$$eval('#coach-log .cm-why li', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['脚の張りは 2', '11/3 の M ペース走で刺激は入っている', 'レース前なのでリカバリーが最重要']);
+
+      // 会話を消す → 消えたまま (同じ見立てを自動で出し直さない)
+      const before = calls;
+      await page.click('#coach-clear');
+      await page.waitForTimeout(800);
+      expect(await page.$('#coach-log .cm-card')).toBeNull();
+      expect(await page.$('#coach-brief-btn')).toBeTruthy();
+      await open('#/plans');
+      expect(await page.$('#coach-log .cm-card')).toBeNull();
+      expect(calls).toBe(before);
+
+      // 読めない返事 → 利用者向けの文と「もう一度試す」。キー名や波括弧は出さない
+      next = '{"conclusion": 今週は軽め, "reply": "休養を';
+      await page.fill('#coach-text', '明日は走れる？');
+      await page.click('#coach-send');
+      await page.waitForSelector('#coach-log .cm-err', { timeout: 15000 });
+      if (SHOTS) await (await page.$('#pm-coach')).screenshot({ path: `${SHOTS}/41-coach-invalid.png` });
+      const t2 = await page.$eval('#coach-log', (e: Element) => e.textContent || '');
+      expect(t2).toContain('回答をうまく表示できませんでした');
+      expect(t2).not.toMatch(/"conclusion"|"reply"|[{}]/);
+      // 再試行 → 変更案つきの返事。反映は確認してから
+      const d = addDays(TODAY, 3);
+      next = JSON.stringify({ conclusion: '3 日後は Jog に軽くする', reasons: ['疲れが残っている'], keep: [], reply: '軽めにしましょう', changes: [{ date: d, type: 'jog', distance_km: 5 }] });
+      await page.click('[data-cretry]');
+      await page.waitForSelector('#coach-log [data-cask]', { timeout: 15000 });
+      expect(await page.$eval('#coach-log', (e: Element) => e.textContent || '')).toContain('変更案あり：1件');
+      expect(await page.$('#coach-log .cm-err')).toBeNull();
+      const plansBefore = (await call(env, 'GET', `/plans?from=${d}&to=${d}`)).json;
+      await page.click('#coach-log [data-cask]');
+      await page.waitForSelector('#coach-log [data-capply]');
+      expect((await call(env, 'GET', `/plans?from=${d}&to=${d}`)).json).toEqual(plansBefore); // 確認の前は変えない
+      await page.click('#coach-log [data-cno]');
+      expect(await page.$('#coach-log [data-capply]')).toBeNull();
+      expect((await call(env, 'GET', `/plans?from=${d}&to=${d}`)).json).toEqual(plansBefore);
+    } finally {
+      env.AI = realAI;
+      await page.evaluate(() => sessionStorage.clear());
+    }
+  }, 90000);
+  it('シューズ: 上部 (追加・絞り込み・注意のカード・まとめて設定)・相性は結論と 3 足を横スクロールなしで', async () => {
+    // 交換の目安が近いシューズ (目安 700km の 90%)・名前から用途を推定できるシューズ
+    const near = (await call(env, 'POST', '/shoes', { name: 'Nike Pegasus 41', initial_km: 640, limit_km: 700, purpose: 'race' })).json;
+    const cmp = { easy: [
+      { shoe_id: 1001, name: 'Nike ボメロプラス', n: 59, km: 737, pace: 329, hr: 154.8, cad: 177, stride: null, form: 8, leg: 3, next_leg: null, breath: null, gct: null, pain_n: 0 },
+      { shoe_id: 1002, name: 'Nike ボメロ18', n: 38, km: 482, pace: 334, hr: 151.8, cad: 175.1, stride: 106, form: 7, leg: 4, next_leg: null, breath: 2, gct: null, pain_n: 0 },
+      { shoe_id: 1003, name: 'Nike ズームフライ 6', n: 26, km: 376, pace: 312, hr: 157.1, cad: 177.3, stride: null, form: null, leg: null, next_leg: null, breath: null, gct: null, pain_n: 1 },
+      { shoe_id: 1004, name: 'テストシューズA', n: 4, km: 30, pace: 330, hr: 150, cad: 176, stride: null, form: null, leg: null, next_leg: null, breath: null, gct: null, pain_n: 0 },
+    ] };
+    await page.route('**/api/shoes/compare', (r: any) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(cmp) }));
+    try {
+      await open('#/shoes', '11d-shoes-top');
+      expect(await page.$eval('.sh-top', (e: Element) => e.textContent)).toContain('追加');
+      const alert = await page.$eval('.sa-list', (e: Element) => e.textContent || '');
+      expect(alert).toContain('交換の目安が近いシューズ');
+      expect(alert).toContain('残り60km');
+      expect(await page.$eval('.sa-list a.sa', (a: HTMLAnchorElement) => a.getAttribute('href'))).toBe(`#/shoes/${near.id}`);
+      expect(await page.$eval('#guess', (e: Element) => e.textContent)).toMatch(/用途をまとめて設定 \(\d+足\)/);
+      await page.waitForSelector('#shoe-cmp .sc-rec');
+      await (await page.$('#shoe-cmp')).scrollIntoViewIfNeeded();
+      if (SHOTS) await (await page.$('#shoe-cmp')).screenshot({ path: `${SHOTS}/11e-shoe-compat.png` });
+      expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('Nike ボメロプラス');
+      // 3 足・名前は省略しない・横にはみ出さない
+      expect(await page.$$eval('#shoe-cmp .sc-fix:not(.sc-more *) th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6']);
+      const over = await page.$eval('#shoe-cmp', (e: HTMLElement) => e.scrollWidth - e.clientWidth);
+      expect(over).toBeLessThanOrEqual(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+      // 観点を変える: 疲れにくい → 脚の疲労がいちばん少ないシューズ / スピード寄り → いちばん速い
+      await page.click('[data-crit="easy"]');
+      expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('脚の疲労 3/10');
+      await page.click('[data-crit="speed"]');
+      expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('Nike ズームフライ 6');
+      await page.click('[data-scall]');
+      expect(await page.$$eval('#shoe-cmp > table.sc-fix th .sc-nm', (els: Element[]) => els.length)).toBe(4);
+    } finally {
+      await page.unroute('**/api/shoes/compare');
+      await call(env, 'DELETE', `/shoes/${near.id}`);
+    }
+  }, 60000);
+
+  it('ニュース: もっと見る → 閉じる (同じ記事を二重に出さない)', async () => {
+    const news = Array.from({ length: 8 }, (_, i) => ({ title: `テスト記事 ${i + 1}`, url: `https://example.com/${i}`, source: 'テスト', date: new Date().toISOString(), tag: 'シューズ' }));
+    await page.route('**/api/news', (r: any) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(news) }));
+    try {
+      await open('#/');
+      await page.waitForSelector('#news-list .news-tg', { timeout: 15000 });
+      const visible = () => page.$$eval('#news-list li', (els: HTMLElement[]) => els.filter((e) => e.offsetParent !== null).map((e) => e.querySelector('b')?.textContent));
+      expect(await visible()).toHaveLength(5);
+      expect(await page.textContent('#news-list .news-tg')).toBe('もっと見る (3件)');
+      await page.click('#news-list .news-tg');
+      const all = await visible();
+      expect(all).toHaveLength(8);
+      expect(new Set(all).size).toBe(8);
+      expect((await page.textContent('#news-list .news-tg'))?.trim()).toBe('閉じる');
+      // ボタンは一覧の下
+      expect(await page.$eval('#news-list', (e: Element) => e.lastElementChild?.classList.contains('news-tg'))).toBe(true);
+      if (SHOTS) await (await page.$('#news-list')).screenshot({ path: `${SHOTS}/01b-news-open.png` });
+      await page.click('#news-list .news-tg');
+      expect(await visible()).toHaveLength(5);
+    } finally {
+      await page.unroute('**/api/news');
+    }
+  }, 60000);
 });

@@ -12,7 +12,7 @@ export const COACH_MODELS = ['@cf/openai/gpt-oss-120b', '@cf/meta/llama-3.3-70b-
 
 export interface CoachMsg { role: 'user' | 'assistant'; content: string; changes?: CoachChange[] }
 export interface CoachChange { date: string; type: PlanType; distance_km: number | null; pace: string | null; notes: string }
-export interface CoachReply { reply: string; changes: CoachChange[]; model?: string; conclusion?: string; reasons?: string[]; keep?: string[] }
+export interface CoachReply { reply: string; changes: CoachChange[]; model?: string; conclusion?: string; reasons?: string[]; keep?: string[]; /** AI の返事を読み取れなかった */ invalid?: boolean }
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const dow = (d: string) => DOW[new Date(`${d}T00:00:00Z`).getUTCDay()];
@@ -181,38 +181,42 @@ export function repairJson(src: string): string {
   while (stack.length) out += stack.pop() === '[' ? ']' : '}';
   return out;
 }
-function looseJson(raw: string): any {
-  const m = raw.match(/\{[\s\S]*\}/);
-  const i0 = raw.indexOf('{');
-  const body = m ? m[0] : i0 >= 0 ? raw.slice(i0) : '';
-  if (!body) return null;
-  for (const t of [body, repairJson(body)]) {
-    try { const o = JSON.parse(t); if (o && typeof o === 'object') return o; } catch { /* 次へ */ }
+/** AI の返事 (文字列) から JSON を取り出す。コードフェンス・二重にエンコードされた文字列・少し崩れた JSON に対応 */
+function looseJson(raw: string, depth = 0): any {
+  let t = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  // 二重にエンコード: "{\"conclusion\": ...}"
+  if (t.startsWith('"') && depth < 2) {
+    try { const v = JSON.parse(t); if (typeof v === 'string') return looseJson(v, depth + 1); if (v && typeof v === 'object') return v; } catch { /* 次へ */ }
   }
-  // それでも読めなければ、項目ごとに拾う
-  const str = (k: string) => { const r = body.match(new RegExp(`"${k}"\\s*:\\s*"([\\s\\S]*?)(?:"|」)\\s*(?=,\\s*"\\w+"\\s*:|\\})`)); return r ? r[1] : undefined; };
-  const arr = (k: string) => {
-    const r = body.match(new RegExp(`"${k}"\\s*:\\s*\\[([\\s\\S]*?)\\]\\s*(?=,\\s*"\\w+"\\s*:|\\})`));
-    if (!r) return undefined;
-    return r[1].split(/["」]\s*,\s*"/).map((x) => x.replace(/^\s*"|["」]\s*$/g, '').trim()).filter(Boolean);
-  };
-  const o = { conclusion: str('conclusion'), reasons: arr('reasons'), keep: arr('keep'), reply: str('reply'), changes: [] };
-  return o.conclusion || o.reply || o.reasons?.length ? o : null;
+  const i0 = t.indexOf('{');
+  if (i0 < 0) return null;
+  const i1 = t.lastIndexOf('}');
+  const body = i1 > i0 ? t.slice(i0, i1 + 1) : t.slice(i0);
+  for (const x of [body, repairJson(body)]) {
+    try {
+      const o = JSON.parse(x);
+      if (typeof o === 'string' && depth < 2) return looseJson(o, depth + 1);
+      if (o && typeof o === 'object' && !Array.isArray(o)) return o;
+    } catch { /* 次へ */ }
+  }
+  return null;
 }
-/** JSON のように見える文字列をそのまま見せない */
-function plainText(raw: string): string {
-  const t = raw.trim();
-  if (!/^\{|^\[|"\w+"\s*:/.test(t)) return t;
-  return t.replace(/"\w+"\s*:/g, '').replace(/[{}\[\]"]/g, '').replace(/\s*,\s*/g, '\n').replace(/\n{2,}/g, '\n').trim();
-}
+/** JSON のように見える文字列か (キー名や波括弧を画面に出さないため) */
+export const looksJson = (s: string) => /^\s*(```|\{|\[|"\s*\{)|"(conclusion|reasons|reply|changes|keep)"\s*:/.test(s);
+export const INVALID_REPLY = '回答をうまく表示できませんでした。もう一度お試しください。';
 
 /** AI の返事から JSON を取り出す (文字列でもオブジェクトでも) */
 export function parseCoach(raw: unknown, today: string): CoachReply {
   let o: any = raw;
   if (typeof raw === 'string') {
     o = looseJson(raw);
-    if (!o) return { reply: plainText(raw) || 'うまく答えられませんでした。もう一度送ってください。', changes: [] };
+    if (!o) {
+      // JSON でないふつうの文章は返事として使う。JSON の形で読めないものは「読めなかった」とする (生の JSON を返事にしない)
+      const t = raw.trim();
+      return t && !looksJson(t) ? { reply: t.slice(0, 2000), changes: [] } : { reply: INVALID_REPLY, changes: [], invalid: true };
+    }
   }
+  if (!o || typeof o !== 'object') return { reply: INVALID_REPLY, changes: [], invalid: true };
   const changes: CoachChange[] = (Array.isArray(o?.changes) ? o.changes : [])
     .filter((c: any) => /^\d{4}-\d{2}-\d{2}$/.test(c?.date) && c.date >= today && c.date <= addDays(today, 30) && PLAN_TYPES.includes(c.type) && c.type !== 'race')
     .slice(0, 14)
@@ -228,9 +232,12 @@ export function parseCoach(raw: unknown, today: string): CoachReply {
     });
   // 同じ日が 2 回あれば後のほう
   const byDate = new Map(changes.map((c) => [c.date, c]));
-  const strs = (v: unknown, n: number) => (Array.isArray(v) ? v.map((x) => String(x ?? '').trim()).filter(Boolean).slice(0, n).map((x) => x.slice(0, 160)) : []);
-  const conclusion = String(o?.conclusion ?? '').trim().slice(0, 240);
-  const reply = String(o?.reply ?? '').trim() || conclusion || '変更案を作りました。';
+  const strs = (v: unknown, n: number) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' || typeof x === 'number').map((x) => String(x).trim()).filter(Boolean).slice(0, n).map((x) => x.slice(0, 160)) : []);
+  const txt = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? String(v).trim() : '');
+  const conclusion = txt(o.conclusion).slice(0, 240);
+  const reply0 = txt(o.reply);
+  if (!conclusion && !reply0 && !byDate.size) return { reply: INVALID_REPLY, changes: [], invalid: true };
+  const reply = (reply0 && !looksJson(reply0) ? reply0 : '') || conclusion || '変更案を作りました。';
   return { reply, conclusion: conclusion || undefined, reasons: strs(o?.reasons, 5), keep: strs(o?.keep, 4), changes: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)) };
 }
 
@@ -332,7 +339,7 @@ export async function applyCoach(env: Env, changes: CoachChange[]): Promise<numb
 }
 
 /** 計画画面を開いたときの「今週の見立て」。同じ日・同じ計画と実績なら作り直さない (無料枠の節約) */
-const isRawJson = (r: any) => typeof r?.reply === 'string' && !r.conclusion && /^\s*\{[\s\S]*"(conclusion|reply)"/.test(r.reply);
+const isRawJson = (r: any) => typeof r?.reply === 'string' && !r.conclusion && looksJson(r.reply);
 export const BRIEF_Q = '今週の見立てをください。直近の疲れ具合、今週いちばん大事な練習 (外さないでほしいもの)、削ってもいい練習、体で気をつけること。変える必要があるときだけ変更案も。';
 export async function coachBrief(env: Env, force = false): Promise<CoachReply & { cached?: boolean }> {
   const t = jstToday();
@@ -348,11 +355,14 @@ export async function coachBrief(env: Env, force = false): Promise<CoachReply & 
       try {
         const o = JSON.parse(c);
         // 前に読み取れずに JSON のまま保存された見立ては、読み直して返す
-        if (o.key === key) return { ...(isRawJson(o.r) ? { ...parseCoach(o.r.reply, t), model: o.r.model } : o.r), cached: true };
+        if (o.key === key) {
+          const r = isRawJson(o.r) ? { ...parseCoach(o.r.reply, t), model: o.r.model } : o.r;
+          if (!r.invalid) return { ...r, cached: true };
+        }
       } catch { /* 作り直す */ }
     }
   }
   const r = await askCoach(env, [{ role: 'user', content: BRIEF_Q }]);
-  await kvSet(env, 'coach_brief', JSON.stringify({ key, r }));
+  if (!r.invalid) await kvSet(env, 'coach_brief', JSON.stringify({ key, r }));
   return r;
 }
