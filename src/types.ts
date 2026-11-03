@@ -166,6 +166,8 @@ export interface MetricResult {
 
 export interface Evaluation {
   type: PlanType | 'free';
+  /** 実際に評価した種類 (ロング走の中の M ペース区間なら m)。距離だけでロング走と見ないため */
+  eff_type?: PlanType | 'free';
   score: number;
   pace: MetricResult;
   hr: MetricResult;
