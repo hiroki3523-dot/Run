@@ -300,7 +300,7 @@ const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) 
 const jstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
 
 /** 期間内のランを調べ、まだ取り込んでいないものを順番待ちに入れる (30 日ずつ) */
-export async function enqueueCoros(env: Env, from: string, to: string): Promise<number> {
+export async function enqueueCoros(env: Env, from: string, to: string, force = false): Promise<number> {
   const found: CorosRecord[] = [];
   let note: string | null = null;
   // 件数を指定しないと 20 件までしか返らないので、100 件を指定して 28 日ずつ調べる
@@ -324,7 +324,7 @@ export async function enqueueCoros(env: Env, from: string, to: string): Promise<
   }
   const q = await loadQueue(env);
   const queued = new Set(q.items.map((x) => x.labelId));
-  const add = found.filter((x) => !have.has(x.labelId) && !queued.has(x.labelId));
+  const add = found.filter((x) => (force || !have.has(x.labelId)) && !queued.has(x.labelId));
   const uniq = [...new Map(add.map((x) => [x.labelId, x])).values()];
   // 新しいランから順に取り込む (全期間をさかのぼっている間も、最近のぶんが先)
   q.items = [...uniq, ...q.items].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
@@ -421,6 +421,7 @@ export function buildExt(rec: CorosRecord, fit: FitData | null, lapsJson: any): 
       ...(pick.some((r) => r.gct) ? { gct: { data: pick.map((r) => Math.round(r.gct ?? 0)) } } : {}),
       ...(pick.some((r) => r.vo) ? { vosc: { data: pick.map((r) => Math.round((r.vo ?? 0) * 10) / 10) } } : {}),
       ...(pick.some((r) => r.vr) ? { vratio: { data: pick.map((r) => Math.round((r.vr ?? 0) * 10) / 10) } } : {}),
+      ...(pick.some((r) => r.sl) ? { stride_cm: { data: pick.map((r) => Math.round((r.sl ?? 0) * 10) / 10) } } : {}),
     };
   }
   // 1km ごとのスプリット (詳細画面・レビュー用)
@@ -468,6 +469,8 @@ async function importOne(env: Env, rec: CorosRecord, notifyNew: boolean): Promis
     const res = await fetch(link);
     if (res.ok) fit = parseFit(await res.arrayBuffer());
   }
+  // 時計の FIT にどんな項目があったか (ランニングダイナミクスが出ないときの確認用)
+  if (fit?.fields?.length) await kvSet(env, 'coros_fit_fields', JSON.stringify({ label: rec.labelId, date: rec.date, fields: fit.fields })).catch(() => null);
   if (!fit && !lapsJson) throw new Error(`COROS のラン ${rec.labelId} のデータを取得できませんでした`);
   const ext = buildExt(rec, fit, lapsJson);
   // Strava に同じランがあれば、その行の中身を COROS のデータに置き換える (計画・シューズ・ふりかえりは残る)

@@ -633,7 +633,14 @@ api.get('/weather/forecast', async (c) => {
 /** 次のレース (16 日以内) の当日予報 */
 // ---------------------------------------------------------------- COROS
 
-api.get('/coros/status', async (c) => c.json({ ...(await corosStatus(c.env)), fitness_raw: (await kvGet(c.env, 'coros_fitness_raw')) || null }));
+api.get('/coros/status', async (c) => c.json({ ...(await corosStatus(c.env)), fitness_raw: (await kvGet(c.env, 'coros_fitness_raw')) || null, fit_fields: JSON.parse((await kvGet(c.env, 'coros_fit_fields')) || 'null') }));
+/** 取り込み済みのランを取り直す (ランニングダイナミクス・歩幅を後から入れるため)。1 日 50 件まで */
+api.post('/coros/reimport', async (c) => {
+  const { days } = await c.req.json<{ days?: number }>().catch(() => ({ days: 14 }));
+  const t = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const from = new Date(Date.parse(t) - Math.min(90, Math.max(1, Number(days) || 14)) * 86400_000).toISOString().slice(0, 10);
+  return c.json({ queued: await enqueueCoros(c.env, from, t, true) });
+});
 /** 新しいランを確認して、少し取り込む */
 api.post('/coros/sync', async (c) => {
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);

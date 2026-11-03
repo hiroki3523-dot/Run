@@ -254,6 +254,9 @@ export async function getSeries(env: Env, id: number, paceBounds: number[], hrBo
     });
     return { vals, avg: Math.round((ok.reduce((p, q) => p + q, 0) / ok.length) * r) / r, max: Math.round(Math.max(...ok) * r) / r };
   };
+  // 時計が測った歩幅があれば、速さとピッチからの計算よりそちらを使う
+  const sl = ex(raw.stride_cm?.data, 30);
+  if (sl.avg) { out.stride = sl.vals; out.avg.stride = Math.round(sl.avg); strideT = 0; }
   out.extra = { power: ex(raw.watts?.data, 20), gct: ex(raw.gct?.data, 50), vo: ex(raw.vosc?.data, 1, 1), vr: ex(raw.vratio?.data, 1, 1) };
   if (hrT) out.avg.hr = Math.round(hrSum / hrT);
   if (cadT) out.avg.cad = Math.round(cadSum / cadT);
