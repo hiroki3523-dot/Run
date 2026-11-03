@@ -2250,6 +2250,9 @@ const RACE_STATUS = [['candidate', 'エントリー候補'], ['entered', 'エン
 const raceInfoOf = (r) => { try { return typeof r.info === 'string' ? JSON.parse(r.info) : r.info || {}; } catch { return {}; } };
 const fmtD = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? `${md(d)}(${dow(d)})` : esc(d || ''));
 /** 一覧の 1 行: エントリー期間 (候補・エントリー済みのとき) */
+const seasonOf = (d) => { const dd = Number(d.slice(8, 10)); return `${Number(d.slice(5, 7))}月${dd <= 10 ? '上旬' : dd <= 20 ? '中旬' : '下旬'}`; };
+const histKey = (n) => String(n).replace(/\s*\(.*?\)\s*/g, '').replace(/20\d\d|第\d+回|[\s・]/g, '');
+const histOf = (name) => { const h = ENTRY_HIST[histKey(name)]; return h && h.length ? h[h.length - 1] : null; };
 function entryLine(r, t) {
   const inf = raceInfoOf(r);
   const st = r.status || 'confirmed';
@@ -2265,6 +2268,10 @@ function entryLine(r, t) {
       const left = inf.entry_close && /^\d{4}-/.test(inf.entry_close) ? daysBetween(t, inf.entry_close) : null;
       const before = inf.entry_open && /^\d{4}-/.test(inf.entry_open) && inf.entry_open > t;
       entry = `<div class="num entry-l">エントリー ${fmtD(inf.entry_open)}〜${fmtD(inf.entry_close)}${before ? ` <b class="warn-t">開始まで${daysBetween(t, inf.entry_open)}日</b>` : left != null && left >= 0 ? ` <b class="warn-t">締切まで${left}日</b>` : left != null ? '（締切済み）' : ''}</div>`;
+    } else if (inf.entry_last_open || histOf(r.name)) {
+      // 今回分はまだ発表されていない: 前回のエントリー期間から「例年○月○旬ごろ」
+      const h = inf.entry_last_open ? { open: inf.entry_last_open, close: inf.entry_last_close } : histOf(r.name);
+      entry = `<div class="num entry-l"><span class="rf-entry">エントリー 例年${seasonOf(h.open)}ごろ開始 (前回 ${md(h.open)}〜${h.close && /^\d{4}-/.test(h.close) ? md(h.close) : ''})</span></div>`;
     } else {
       // 公式サイトの情報がまだ無いときは、大会の一覧の開始日か、例年・一般的な目安
       const c = RACE_CATALOG.find((x) => baseName(x[0]) === baseName(r.name));
@@ -2312,7 +2319,7 @@ function raceInfoCard(r) {
   </div>`;
 }
 function wireRaceInfo(root, r) {
-  const save = async (info, extra = {}) => { await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, ...extra, info } }); route(); };
+  const save = async (info, extra = {}) => { await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, ...extra, info, no_auto: true } }); route(); };
   const merge = (cur, got) => {
     const out = { ...cur };
     for (const [k, v] of Object.entries(got)) if (!['my_block', 'bib', 'chars', 'date_estimated', 'updated'].includes(k) && v != null && !(Array.isArray(v) && !v.length)) out[k] = v;
@@ -2469,7 +2476,7 @@ async function raceFindView() {
       const info = pre ? { ...pre, updated: today() } : {};
       delete info.chars; delete info.race_date;
       if (est) info.date_estimated = true;
-      const r = await api('/races', { method: 'POST', body: { name: `${x.name.replace(/\s*\(.*?\)\s*/g, '')}${date.slice(0, 4)}`, date, distance_m: x.dist === 'full' ? 42195 : 21097.5, priority: 'B', status: 'candidate', url: x.url || null, info } });
+      const r = await api('/races', { method: 'POST', body: { name: `${x.name.replace(/\s*\(.*?\)\s*/g, '')}${date.slice(0, 4)}`, date, distance_m: x.dist === 'full' ? 42195 : 21097.5, priority: 'B', status: 'candidate', url: x.url || null, info, no_auto: true } });
       b.outerHTML = `<a class="chip on" href="#/races/${r.id}">エントリー候補</a>`;
       if (pre || !x.url) { msg.innerHTML = x.url ? '追加しました' : `追加しました・<a href="${searchUrl(x.name)}" target="_blank" rel="noopener">公式サイトを探す ↗</a>`; return; }
       msg.textContent = '公式サイトからエントリー期間などを読み取り中…';
@@ -2520,7 +2527,7 @@ async function raceFindView() {
           <p class="muted" style="font-size:12.5px">公式サイトを入れると、開催日・エントリー期間などを読み取ります。</p>`);
         if (!v) return;
         const url = normUrl(v.url);
-        const r = await api('/races', { method: 'POST', body: { name: v.name, date: v.date || addDays(today(), 90), distance_m: Number(v.dist), priority: 'B', status: 'candidate', url, info: v.date ? {} : { date_estimated: true } } });
+        const r = await api('/races', { method: 'POST', body: { name: v.name, date: v.date || addDays(today(), 90), distance_m: Number(v.dist), priority: 'B', status: 'candidate', url, info: v.date ? {} : { date_estimated: true }, no_auto: true } });
         if (url) {
           try {
             const got = await api(`/races/${r.id}/extract`, { method: 'POST', body: { url } });
@@ -2549,8 +2556,10 @@ async function raceFindView() {
       <p class="muted" style="font-size:12px;margin:12px 0 0">大会名をタップすると詳細が開きます。一覧は全国の主な ${list.length} 大会。載っていない大会は名前で探して、そのまま候補に追加できます。</p></div>`;
 }
 
+let ENTRY_HIST = {};
 async function racesView() {
-  const races = await api('/races');
+  const [races, hist] = await Promise.all([api('/races'), api('/races/entry-history').catch(() => ({}))]);
+  ENTRY_HIST = hist || {};
   const t = today();
   setTimeout(() => {
     view.querySelector('#add-race').onclick = () => editRace({ priority: 'A', distance_m: 42195 });
