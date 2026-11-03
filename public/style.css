@@ -1113,3 +1113,34 @@ body::after {
 .te-g b { font-size: 13px; color: var(--muted); margin-top: -6px; }
 .te-v { font-size: 26px; font-weight: 800; fill: var(--text); font-variant-numeric: tabular-nums; }
 .te-s { font-size: 11px; font-weight: 600; fill: var(--muted); }
+
+/* この走りの評価 */
+.an-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 4px 0 12px; }
+.an-t { display: flex; flex-direction: column; padding: 12px 14px; border-radius: 16px; background: color-mix(in srgb, var(--text) 5%, transparent); }
+.an-t small { font-size: 12px; font-weight: 700; color: var(--muted); }
+.an-t b { font-size: 34px; font-weight: 800; line-height: 1.15; }
+.an-t .an-hold { font-size: 22px; color: var(--muted); line-height: 1.6; }
+.an-t span { font-size: 11.5px; }
+.an-gi { display: grid; gap: 10px; margin-bottom: 8px; }
+.an-gi b { font-size: 12.5px; }
+.an-gi b.g { color: var(--good); } .an-gi b.b { color: var(--mid); }
+.an-gi p { margin: 3px 0 0; font-size: 14px; }
+.an h4 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
+.an-items { display: flex; flex-direction: column; gap: 10px; }
+.an-it { display: flex; gap: 10px; align-items: flex-start; }
+.an-it > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.an-it b { font-size: 14px; }
+.an-it small { font-size: 12px; }
+.an-j { flex: none; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.j-good { color: var(--good); background: color-mix(in srgb, var(--good) 15%, transparent); }
+.j-ok { color: var(--accent); background: var(--accent-soft); }
+.j-bad { color: var(--mid); background: color-mix(in srgb, var(--mid) 15%, transparent); }
+.j-hold { color: var(--muted); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.an-note { font-size: 12px; margin: 8px 0 0; }
+.an-cmp { width: 100%; border-collapse: collapse; font-size: 13px; }
+.an-cmp th { text-align: left; font-size: 11.5px; color: var(--muted); font-weight: 600; padding: 4px; }
+.an-cmp td { padding: 7px 4px; border-top: 1px solid var(--line); }
+.an-cmp tr.flag td { color: var(--mid); }
+.hp-leg { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11.5px; color: var(--muted); margin: 4px 0 8px; }
+.hp-leg i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.hp-leg i.hp-band { height: 10px; background: var(--accent); opacity: .3; }

@@ -9,6 +9,7 @@ import { generatePlan, type PlannerRace } from './planner';
 import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
+import { analyzeRun, groupOf, type Snapshot } from './analysis';
 import { runningNews } from './news';
 import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
 import { autoFillRace, cleanRaceInfo, entryHistory, extractRaceInfo } from './raceinfo';
@@ -428,6 +429,50 @@ api.get('/activities/:id/review', async (c) => {
     fb,
   });
   return c.json({ ...review, fb });
+});
+
+/** 過去 180 日のランの要約 (比較用)。DB の値に、分析したときに保存した詳しい要約 (snap:) を重ねる */
+async function pastSnapshots(env: Env, beforeDate: string, easyMin: number): Promise<Snapshot[]> {
+  const from = addDays(beforeDate, -180);
+  const [{ results: rows }, { results: snaps }, { results: fbs }] = await Promise.all([
+    env.DB.prepare(`SELECT id, date, distance_m, moving_time_s, avg_hr, avg_cadence_spm, json_extract(evaluation, '$.type') AS type, json_extract(evaluation, '$.pace.details.half_diff_s') AS hd, json_extract(evaluation, '$.role') AS role
+      FROM activities WHERE date BETWEEN ? AND ? AND sport_type LIKE '%Run%' AND distance_m >= 1500 ORDER BY date DESC LIMIT 400`).bind(from, beforeDate).all<any>(),
+    env.DB.prepare(`SELECT key, value FROM kv WHERE key LIKE 'snap:%'`).all<{ key: string; value: string }>(),
+    env.DB.prepare(`SELECT key, value FROM kv WHERE key LIKE 'fb:%'`).all<{ key: string; value: string }>(),
+  ]);
+  const snapOf = new Map(snaps.map((r) => { try { return [Number(r.key.slice(5)), JSON.parse(r.value)] as const; } catch { return [0, null] as const; } }));
+  const rpeOf = new Map(fbs.map((r) => { try { return [Number(r.key.slice(3)), JSON.parse(r.value)?.rpe ?? null] as const; } catch { return [0, null] as const; } }));
+  return rows.filter((r) => r.role !== 'warmup' && r.role !== 'cooldown').map((r) => {
+    const pace = r.moving_time_s / (r.distance_m / 1000);
+    const base: Snapshot = { id: r.id, date: r.date, km: Math.round(r.distance_m / 10) / 100, pace: Math.round(pace), hr: r.avg_hr ? Math.round(r.avg_hr) : null, group: groupOf(r.type, pace, easyMin),
+      rpe: rpeOf.get(r.id) ?? null, half_diff: r.hd ?? null, cad: r.avg_cadence_spm ? Math.round(r.avg_cadence_spm * 2) : null, stride: null, gct: null, vo: null, power: null, elev_per_km: null, drift: null };
+    return { ...base, ...(snapOf.get(r.id) ?? {}), id: r.id, date: r.date };
+  });
+}
+
+/** ランの分析: 練習達成度・走力評価・ペースと心拍・過去との比較・フォーム */
+api.get('/activities/:id/analysis', async (c) => {
+  const id = Number(c.req.param('id'));
+  const row = await c.env.DB.prepare('SELECT * FROM activities WHERE id = ?').bind(id).first<Record<string, any>>();
+  if (!row) return c.notFound();
+  const st = await getSettings(c.env);
+  const ev = row.evaluation ? JSON.parse(row.evaluation) : null;
+  const plan = row.plan_id ? await c.env.DB.prepare('SELECT type FROM plans WHERE id = ?').bind(row.plan_id).first<{ type: string }>() : null;
+  let fb: any = null;
+  try { const raw = JSON.parse((await kvGet(c.env, `fb:${id}`)) ?? 'null'); if (raw) fb = normalizeFb(raw); } catch { /* 無視 */ }
+  const lthr = st.coros?.lthr ?? st.lthr;
+  const series = await getSeries(c.env, id, paceBoundsOf(st), [0.8, 0.9, 0.95, 1.017, 1.057].map((r) => Math.round(lthr * r)), 240).catch(() => null);
+  const past = await pastSnapshots(c.env, row.date, st.paces.easy.min);
+  const a = analyzeRun({
+    id, date: row.date, distance_m: row.distance_m, moving_time_s: row.moving_time_s, avg_hr: row.avg_hr, avg_cad_spm: row.avg_cadence_spm,
+    elev_gain: series?.elev_gain ?? null, ev, plan_type: plan?.type ?? null, has_plan: !!plan, fb, series, easy_min: st.paces.easy.min, lthr, past,
+  });
+  // 次から比較に使えるよう、この走りの要約を保存
+  const { id: _i, date: _d, ...snap } = a.snapshot;
+  await kvSet(c.env, `snap:${id}`, JSON.stringify(snap)).catch(() => null);
+  // ペースと心拍を重ねたグラフ用 (120 点に間引く)
+  const chart = series ? (() => { const step = Math.max(1, Math.ceil(series.d.length / 120)); const pick = <T,>(xs: T[]) => xs.filter((_, k) => k % step === 0); return { d: pick(series.d), pace: pick(series.pace), hr: pick(series.hr) }; })() : null;
+  return c.json({ ...a, chart });
 });
 
 /** ふりかえり (呼吸・脚・全体のきつさ・フォーム・痛み・余裕・メモ・コンディション) を保存する */

@@ -34,17 +34,24 @@ export interface Fb {
   reserve: string | null; // 同じペースであと何km: limit / 1-3 / 3-5 / 5-10 / 10+
   memo: string;
   tags: string[];
+  /** 痛みの部位 (複数) */
+  pain_part?: string[];
+  /** 後半だけのきつさ・脚 (前半と分けて記録するとき) */
+  rpe_late?: number | null;
+  leg_late?: number | null;
 }
 
 export const RESERVE_LABEL: Record<string, string> = { limit: 'ほぼ限界', '1-3': '1〜3km', '3-5': '3〜5km', '5-10': '5〜10km', '10+': '10km以上' };
 const TAGS = ['hot', 'cold', 'wind', 'sleep', 'hungry', 'tired'];
+export const PAIN_PARTS = ['足裏', 'かかと', 'アキレス腱', 'ふくらはぎ', 'すね', '足首', '膝', '太もも前', 'ハムストリング', '股関節', 'お尻', '腰', 'その他'];
 
 /** 保存されている値を新しい形に揃える (旧形式: rpe 1〜4 / leg light・normal・heavy・pain) */
 export function normalizeFb(raw: any): Fb {
   const n = (v: unknown) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Math.max(0, Math.min(10, Math.round(Number(v)))));
   const tags = Array.isArray(raw?.tags) ? raw.tags.filter((t: string) => TAGS.includes(t)) : [];
   if (raw?.v === 2) {
-    return { breath: n(raw.breath), leg: n(raw.leg), rpe: n(raw.rpe), form: n(raw.form), pain: n(raw.pain), reserve: raw.reserve in RESERVE_LABEL ? raw.reserve : null, memo: String(raw.memo ?? '').slice(0, 500), tags };
+    const parts = Array.isArray(raw.pain_part) ? raw.pain_part.filter((x: string) => PAIN_PARTS.includes(x)).slice(0, 6) : [];
+    return { breath: n(raw.breath), leg: n(raw.leg), rpe: n(raw.rpe), form: n(raw.form), pain: n(raw.pain), reserve: raw.reserve in RESERVE_LABEL ? raw.reserve : null, memo: String(raw.memo ?? '').slice(0, 500), tags, pain_part: parts, rpe_late: n(raw.rpe_late), leg_late: n(raw.leg_late) };
   }
   const oldRpe: Record<number, number> = { 1: 2, 2: 4, 3: 6, 4: 8 };
   const oldLeg: Record<string, number> = { light: 2, normal: 4, heavy: 7, pain: 6 };
