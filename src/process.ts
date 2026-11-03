@@ -240,7 +240,7 @@ export async function morningBriefing(env: Env, today = jstDate()) {
     lines.push('', `今週 ${fmtKm(week.done)} / ${fmtKm(week.planned)}km・直近7日 ${fmtKm(week.last7)}km`);
   }
 
-  const race = await env.DB.prepare('SELECT * FROM races WHERE date >= ? ORDER BY date LIMIT 1')
+  const race = await env.DB.prepare("SELECT * FROM races WHERE date >= ? AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date LIMIT 1")
     .bind(today)
     .first<{ name: string; date: string; distance_m: number; goal_time_s: number | null }>();
   if (race) {

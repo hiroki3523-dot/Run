@@ -27,7 +27,7 @@ export async function coachContext(env: Env): Promise<{ text: string; races: { n
   const [plans, acts, races] = await Promise.all([
     env.DB.prepare('SELECT date, type, distance_m, pace_min_s, pace_max_s, notes FROM plans WHERE date BETWEEN ? AND ? ORDER BY date, id').bind(addDays(t, -7), addDays(t, 20)).all<any>(),
     env.DB.prepare("SELECT id, date, distance_m, moving_time_s, avg_hr, score FROM activities WHERE date BETWEEN ? AND ? AND sport_type LIKE '%Run%' ORDER BY date, start_date_local").bind(addDays(t, -21), t).all<any>(),
-    env.DB.prepare('SELECT name, date, distance_m, goal_time_s, priority FROM races WHERE date >= ? ORDER BY date LIMIT 3').bind(t).all<any>(),
+    env.DB.prepare("SELECT name, date, distance_m, goal_time_s, priority FROM races WHERE date >= ? AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date LIMIT 3").bind(t).all<any>(),
   ]);
   const fbs = await Promise.all(acts.results.slice(-10).map(async (a: any) => [a.id, await kvGet(env, `fb:${a.id}`)] as const));
   const fbOf = new Map(fbs.filter(([, v]) => v).map(([id, v]) => [id, normalizeFb(JSON.parse(v!))]));
@@ -177,14 +177,14 @@ function outText(out: any): unknown {
 
 const fmtChanges = (cs: CoachChange[]) => cs.map((c) => `${c.date}(${dow(c.date)}) → ${PLAN_LABELS[c.type]}${c.distance_km ? ` ${c.distance_km}km` : ''}${c.pace ? ` ${c.pace}` : ''}`).join('、');
 
-async function runModel(env: Env, msgs: { role: string; content: string }[]): Promise<{ text: unknown; model: string }> {
+export async function runModel(env: Env, msgs: { role: string; content: string }[], schema: object = SCHEMA, maxTokens = 1200): Promise<{ text: unknown; model: string }> {
   let last: unknown = null;
   for (const model of COACH_MODELS) {
     try {
       const gpt = model.includes('gpt-oss');
       const out: any = await env.AI!.run(model as any, (gpt
         ? { messages: msgs, max_tokens: 4000, reasoning: { effort: 'medium' } }
-        : { messages: msgs, response_format: { type: 'json_schema', json_schema: SCHEMA }, max_tokens: 1200, temperature: 0.3 }) as any);
+        : { messages: msgs, response_format: { type: 'json_schema', json_schema: schema }, max_tokens: maxTokens, temperature: 0.3 }) as any);
       const t = outText(out);
       if (t && (typeof t !== 'string' || t.includes('{'))) return { text: t, model };
       last = t;

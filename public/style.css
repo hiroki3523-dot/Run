@@ -984,3 +984,34 @@ body::after {
 .stp .wk-pick2 .wk-pick { margin: 0; font-size: 22px; padding: 10px 4px; }
 .stp-tiles { grid-template-columns: 1fr; }
 .stp-tiles .wk-tile { align-items: center; text-align: center; }
+
+/* レースの状態 (ラジオを 3 つ並べたボタン) */
+.seg-r { position: relative; display: block; margin: 0; cursor: pointer; }
+.seg-r input { position: absolute; opacity: 0; pointer-events: none; }
+.seg-r span { display: flex; align-items: center; justify-content: center; min-height: 42px; padding: 6px 4px; border-radius: 12px; font-size: 13px; font-weight: 600; white-space: nowrap; background: var(--surface); border: 1px solid var(--line); color: var(--muted); }
+.seg-r input:checked + span { background: linear-gradient(135deg, #2b3dff, #7a5cff); border-color: transparent; color: #fff; }
+.race-st { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.chip-r { display: inline-block; margin: 0 6px 6px 0; } .chip-r span { min-width: 56px; padding: 6px 14px; }
+.rst { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; vertical-align: middle; }
+.rst-confirmed { color: var(--good); background: color-mix(in srgb, var(--good) 16%, transparent); }
+.rst-entered { color: var(--accent); background: var(--accent-soft); }
+.rst-candidate { color: var(--muted); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.entry-l { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.warn-t { color: var(--mid); font-weight: 700; }
+
+/* レース詳細の大会情報 */
+.ri-me { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0 12px; }
+.ri-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 14px; border-radius: 14px; text-align: left; min-height: 64px; }
+.ri-tile small { color: var(--muted); font-size: 12px; font-weight: 600; }
+.ri-tile b { font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ri-dl { display: grid; grid-template-columns: 6.5em 1fr; gap: 8px 10px; margin: 0; font-size: 14px; }
+.ri-dl dt { color: var(--muted); font-size: 12.5px; padding-top: 2px; }
+.ri-dl dd { margin: 0; line-height: 1.5; word-break: break-word; }
+.ri-more { margin-top: 12px; }
+.ri-more summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 600; }
+.ri-t { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13.5px; }
+.ri-t th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 4px 6px; }
+.ri-t td { padding: 7px 6px; border-top: 1px solid var(--line); }
+.ri-t tr.me td { color: var(--accent); font-weight: 700; }
+.ri-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.ri-acts button { font-size: 13px; padding: 10px 6px; white-space: nowrap; }
