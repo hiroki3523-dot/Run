@@ -193,7 +193,6 @@ export function buildRunReview(i: ReviewIn): RunReview {
     const text: string[] = [];
     text.push(stable ? 'ピッチ・ストライドとも、走り出しから終盤まで大きな乱れが小さい。' : `終盤は ピッチ ${dc >= 0 ? '+' : ''}${Math.round(dc)}spm、ストライド ${ds >= 0 ? '+' : ''}${Math.round(ds)}cm の変化。`);
     if (diff >= 5) text.push(`終盤にペースを上げても、ピッチ ${dc >= 0 ? '+' : ''}${Math.round(dc)}spm・ストライド ${ds >= 0 ? '+' : ''}${Math.round(ds)}cm と、${stable ? '大きな乱れは見られない' : '変化がある'}。`);
-    if (sr.avg.cad < 176) text.push(`平均ピッチ ${sr.avg.cad}spm は目標の 180 をやや下回る。`);
     if (i.fb?.form != null) text.push(i.fb.form >= 7 ? `本人の感覚でもフォームは自然 (${i.fb.form}/10)。数値と感覚が一致している。` : i.fb.form <= 4 ? `本人の感覚ではフォームに力みがある (${i.fb.form}/10)。肩・腕の力を抜き、接地を体の真下に戻すことを意識したい。` : `フォームの感覚は ${i.fb.form}/10。`);
     text.push('フォームの数値が良いことだけでは、42km 後半の脚持ちまで保証はできない。');
     form = {

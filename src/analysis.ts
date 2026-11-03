@@ -17,10 +17,22 @@ export interface Snapshot {
   gct: number | null; vo: number | null; power: number | null; elev_per_km: number | null; drift: number | null;
   /** 走った時間の気温 (℃) */ temp?: number | null;
 }
-export interface CompareMetric { key: string; label: string; now: string; past: string; diff: string; trend: 'up' | 'same' | 'down' | 'hold'; note?: string }
+/** trend: up=改善 / same=維持 / down=低下 / ref=良し悪しを決めない参考 (ピッチ・ストライドなど) / hold=保留 */
+export interface CompareMetric { key: string; label: string; now: string; past: string; diff: string; trend: 'up' | 'same' | 'down' | 'ref' | 'hold'; note?: string }
+export interface ReadyRow { label: string; judge: Judge; value: string; reason: string }
 export interface Analysis {
+  /** 最初に出す 3 つ: 総合評価・最も重要な発見・次に活かすこと */
+  top: { overall: string; finding: string; next: string };
+  /** 点数の意味 (何を評価した点か) */
+  defs: { key: string; label: string; text: string }[];
   /** 総評 (1〜2 文) */
   summary: string;
+  /** 数値の出どころ (運動時間・評価区間・記録元) */
+  basis: string[];
+  /** 目標ペース帯より速かったときの、事実と影響の切り分け */
+  overpace: { fact: string; rows: ReadyRow[]; verdict: string } | null;
+  /** 大会直前 (14 日以内) の準備状態 */
+  ready: { race: string; days: number; rows: ReadyRow[]; note: string } | null;
   /** 主観と客観の照らし合わせ */
   subj: { text: string; kind: 'match' | 'gap' | 'fact' }[];
   /** 次に活かすこと */
@@ -64,7 +76,13 @@ export interface AnalysisIn {
   ev: any | null; plan_type: string | null; has_plan: boolean;
   fb: Fb | null; series: Series | null; easy_min: number; lthr: number;
   past: Snapshot[];
+  /** 経過時間 (秒)。運動時間と違えば書き分ける */ elapsed_time_s?: number | null;
+  /** 記録元 (COROS / Strava) */ source?: string | null;
+  /** 次の大会 (このランの日から見て) */ race?: { name: string; date: string; goal_s: number | null; distance_m: number; days: number } | null;
+  /** この日・翌朝の体調 (cond:) */ cond?: { leg?: number | null; tight?: number | null; pain?: number | null; sleep?: number | null; fatigue?: number | null } | null;
 }
+
+const RACE_TYPES = ['m', 'lt', 'race', 'interval'];
 
 export function analyzeRun(i: AnalysisIn): Analysis {
   const pace = i.moving_time_s / (i.distance_m / 1000);
@@ -104,7 +122,7 @@ export function analyzeRun(i: AnalysisIn): Analysis {
       };
       const h1 = eff(s0, mid), h2 = eff(mid + 1, s1);
       drift = Number.isFinite(h1) && Number.isFinite(h2) && h1 > 0 ? Math.round(((h2 - h1) / h1) * 1000) / 10 : null;
-      if (drift != null) text.push(`${steady.from_km}〜${steady.to_km}km はペースが一定 (${mmss(med)}/km 前後)。この区間の心拍ドリフトは ${drift >= 0 ? '+' : ''}${drift}% (${Math.round(h1)} → ${Math.round(h2)}bpm 相当)。${drift <= 3 ? '心拍は安定していて、有酸素の持久力は十分。' : drift <= 5 ? 'やや上昇。長い距離では序盤を少し抑えたい。' : '後半の上昇が大きい。暑さ・補給・疲労、または持久力の不足が考えられる。'}`);
+      if (drift != null) text.push(`${steady.from_km}〜${steady.to_km}km はペースが一定 (${mmss(med)}/km 前後)。この区間の心拍ドリフトは ${drift >= 0 ? '+' : ''}${drift}% (${Math.round(h1)} → ${Math.round(h2)}bpm 相当)。${drift <= 3 ? '心拍は安定していて、有酸素の持久力は十分。' : drift <= 5 ? 'やや上昇。長い距離では序盤を少し抑えたい。' : '後半の上昇が大きい。暑さ・補給・疲労などが考えられる (推測。1 本だけでは原因は決められない)。'}`);
     } else {
       text.push('ペースが一定の区間が短いため、心拍ドリフトは判断を保留します (意図的なペース変化と区別するため)。');
     }
@@ -120,7 +138,7 @@ export function analyzeRun(i: AnalysisIn): Analysis {
       const mp = mean(usable.map((x) => x.p)), mh = mean(usable.map((x) => x.h));
       const cov = mean(usable.map((x) => (x.p - mp) * (x.h - mh))), vp = mean(usable.map((x) => (x.p - mp) ** 2));
       response = vp > 0 ? Math.round((-cov / vp) * 10 * 10) / 10 : null; // 10 秒/km 速くなったときの心拍の増え方
-      if (response != null && Number.isFinite(response) && response > 0) text.push(`ペースを 10 秒/km 上げると、心拍は約 +${response}bpm (1km ごとのペースと心拍から)。${response <= 4 ? '速くしても心拍の上がり方が小さく、余裕がある。' : response <= 8 ? '標準的な反応。' : '速くすると心拍が大きく上がる。今の力ではペースを上げる余地が小さい。'}`);
+      if (response != null && Number.isFinite(response) && response > 0) text.push(`ペースを 10 秒/km 上げると、心拍は約 +${response}bpm (1km ごとのペースと心拍から)。${response <= 4 ? '速くしても心拍の上がり方が小さく、余裕がある。' : response <= 8 ? '標準的な反応。' : '速くすると心拍が大きく上がる (この 1 本からの目安)。'}`);
     }
     hrpace = { steady, drift_pct: drift, response, text };
   }
@@ -147,7 +165,7 @@ export function analyzeRun(i: AnalysisIn): Analysis {
     }
     const text: string[] = [];
     const changed = rows.filter((x) => x.flag);
-    text.push(changed.length ? `後半は ${changed.map((x) => `${x.label} ${x.diff}`).join('・')} の変化。疲れによるフォームの変化の可能性。` : '前半と後半でフォームの数値に大きな変化はない。');
+    text.push(changed.length ? `後半は ${changed.map((x) => `${x.label} ${x.diff}`).join('・')} の変化。${i.ev?.pace?.details?.half_diff_s != null && i.ev.pace.details.half_diff_s < -3 ? '後半にペースを上げたことによる変化の可能性 (推測)。' : '疲れによるフォームの変化の可能性 (推測)。'}` : '前半と後半でフォームの数値に大きな変化はない。');
     // ペースアップの中身: 速い区間 (上位 20%) と、ふだんの区間 (中央 50%) のピッチ・ストライドの差
     let paceup: string | null = null;
     const idx = sr.pace.map((p, k) => ({ p, k })).filter((x) => x.p != null && sr.cad[x.k] != null && sr.stride[x.k] != null).sort((a, b) => a.p! - b.p!);
@@ -202,10 +220,17 @@ export function analyzeRun(i: AnalysisIn): Analysis {
     add('rpe', '主観のきつさ', '/10', 'low', 1, i.fb?.rpe ?? null);
     add('half_diff', '後半の失速 (秒/km)', '', 'low', 3, snapshot.half_diff);
     add('drift', '心拍ドリフト', '%', 'low', 1.5, drift, 1);
-    add('cad', 'ピッチ', 'spm', 'high', 2, snapshot.cad);
-    add('stride', 'ストライド', 'cm', 'high', 3, snapshot.stride);
-    add('gct', '接地時間', 'ms', 'low', 5, snapshot.gct);
-    add('power', 'ランニングパワー', 'W', 'low', 8, snapshot.power);
+    // ピッチ・ストライド・接地時間・パワーは、増えた・減ったに良し悪しを決めない (走り方の違いとして見る)
+    const ref = (key: keyof Snapshot, label: string, unit: string, now: number | null | undefined) => {
+      const ps = nums(sim.map((p) => p[key] as number | null));
+      if (now == null || ps.length < 2) return;
+      const pm = median(ps), d = now - pm;
+      metrics.push({ key, label, now: `${Math.round(now)}${unit}`, past: `${Math.round(pm)}${unit}`, diff: `${d >= 0 ? '+' : ''}${Math.round(d)}`, trend: 'ref' });
+    };
+    ref('cad', 'ピッチ', 'spm', snapshot.cad);
+    ref('stride', 'ストライド', 'cm', snapshot.stride);
+    ref('gct', '接地時間', 'ms', snapshot.gct);
+    ref('power', 'ランニングパワー', 'W', snapshot.power);
     const ep = nums(sim.map((p) => p.elev_per_km));
     if (snapshot.elev_per_km != null && ep.length && Math.abs(snapshot.elev_per_km - median(ep)) >= 8) notes.push(`今回は 1km あたりの上り ${snapshot.elev_per_km}m で、比べたランの ${median(ep)}m と坂の条件が違います。`);
     const kmGap = Math.abs(mean(sim.map((p) => p.km)) - km) / km;
@@ -284,7 +309,12 @@ export function analyzeRun(i: AnalysisIn): Analysis {
     else if (f.rpe >= 7 && hrLow) subj.push({ kind: 'gap', text: `心拍は閾値の ${Math.round(hrRatio * 100)}% と低めなのに、きつさは ${f.rpe}/10。心肺より脚や全身の疲れが原因の可能性 (推測)。翌朝の脚の状態も見たい。` });
     else subj.push({ kind: 'match', text: `きつさ ${f.rpe}/10 と心拍 (閾値の ${Math.round(hrRatio * 100)}%) は釣り合っている。` });
   }
-  if (f && f.breath != null && f.leg != null && Math.abs(f.breath - f.leg) >= 3) subj.push({ kind: 'fact', text: f.breath > f.leg ? `呼吸 ${f.breath}/10 > 脚 ${f.leg}/10。心肺側が先にきつい。` : `脚 ${f.leg}/10 > 呼吸 ${f.breath}/10。脚の筋持久力が先に限界に近い。` });
+  if (f && f.breath != null && f.leg != null && Math.abs(f.breath - f.leg) >= 3) {
+    const hrNote = hrRatio != null ? `心拍は閾値の ${Math.round(hrRatio * 100)}%${hrRatio >= 0.95 ? ' と高め' : hrRatio <= 0.88 ? ' と低め' : ''}。` : '';
+    subj.push({ kind: 'fact', text: f.breath > f.leg
+      ? `呼吸 ${f.breath}/10・脚 ${f.leg}/10。今回は脚より心肺側の負荷を強く感じていた。${hrNote}感覚の記録なので、これだけで心肺の力が足りないとは言えません。`
+      : `脚 ${f.leg}/10・呼吸 ${f.breath}/10。今回は呼吸より脚の負荷を強く感じていた。${hrNote}疲れの残りか、筋持久力か、この 1 本では決められません (翌朝の脚の状態もあわせて見ます)。` });
+  }
   if (f && f.form != null && form) {
     const changed = form.rows.filter((x) => x.flag).length;
     if (f.form >= 7 && changed >= 2) subj.push({ kind: 'gap', text: `フォームの感覚は ${f.form}/10 で自然だが、数値では後半に ${changed} 項目が変化。疲れで気づかないうちに崩れている可能性 (推測)。` });
@@ -296,16 +326,112 @@ export function analyzeRun(i: AnalysisIn): Analysis {
   }
   if (!f || (f.rpe == null && f.reserve == null)) subj.push({ kind: 'fact', text: 'ふりかえりが未入力なので、主観との照らし合わせはできません (未入力は 0 点として扱いません)。' });
 
+  // ---------------- ピッチ・ストライドを、本人の同じペース帯の過去と比べる (一般的な理想値とは比べない)
+  const evPace: number | null = ev?.pace?.details?.avg_pace ?? null;
+  const mainPace = evPace ?? pace;
+  if (form && snapshot.cad != null) {
+    const band = i.past.filter((p) => p.id !== i.id && p.cad != null && Math.abs(p.pace - pace) <= 8);
+    if (band.length >= 3) {
+      const pc = median(nums(band.map((p) => p.cad))), dc = snapshot.cad - pc;
+      const st = nums(band.map((p) => p.stride));
+      const ps = st.length >= 3 && snapshot.stride != null ? median(st) : null;
+      form.text.splice(form.text.length - 1, 0, `同じペース帯 (${mmss(pace - 8)}〜${mmss(pace + 8)}/km) の過去 ${band.length} 本では、ピッチ ${Math.round(pc)}spm${ps != null ? `・ストライド ${Math.round(ps)}cm` : ''}。今回は ${snapshot.cad}spm (${dc >= 0 ? '+' : ''}${Math.round(dc)})${ps != null ? `・${snapshot.stride}cm (${snapshot.stride! - ps >= 0 ? '+' : ''}${Math.round(snapshot.stride! - ps)})` : ''}。${Math.abs(dc) <= 2 && (ps == null || Math.abs(snapshot.stride! - ps) <= 3) ? 'いつもの走り方。' : 'いつもと少し違う走り方 (良し悪しではなく変化として見ます)。'}`);
+    }
+  }
+  // 後半にペースを上げたとき、ピッチとストライドのどちらが変わったか (前半・後半の差の割合)
+  let lateUp: string | null = null;
+  if (form && snapshot.half_diff != null && snapshot.half_diff < -3) {
+    const r = (lb: string) => { const x = form!.rows.find((y) => y.label === lb); return x ? { f: parseFloat(x.first), s: parseFloat(x.second) } : null; };
+    const c = r('ピッチ'), st = r('ストライド');
+    if (c && st && c.f > 0 && st.f > 0) {
+      const rc = (c.s - c.f) / c.f, rs = (st.s - st.f) / st.f;
+      lateUp = rs > Math.max(0.005, rc * 1.5) ? 'stride' : rc > Math.max(0.005, rs * 1.5) ? 'pitch' : 'both';
+      if (form.paceup) form.text = form.text.filter((t) => t !== form!.paceup);
+      form.text.splice(1, 0, `後半 ${-snapshot.half_diff} 秒/km 上がったとき、ピッチ ${rc >= 0 ? '+' : ''}${Math.round(rc * 1000) / 10}%・ストライド ${rs >= 0 ? '+' : ''}${Math.round(rs * 1000) / 10}%。${lateUp === 'stride' ? '主にストライドが伸びて上がっている。' : lateUp === 'pitch' ? '主にピッチが上がって速くなっている。' : 'ピッチとストライドの両方で上がっている。'}`);
+    }
+  }
+  const strideUp = (!!form?.paceup && /主にストライド/.test(form.paceup)) || lateUp === 'stride';
+  const formStable = !!form && form.rows.filter((x) => x.flag && x.label !== 'ストライド' && x.label !== 'ピッチ').length === 0;
+  const noPain = (i.fb?.pain ?? 0) < 3;
+  if (strideUp && formStable && noPain) good.push('ペースを上げたときは主にストライドが伸びていて、接地などほかの数値に崩れは無い。自然な走り方で速度が出せている');
+
+  // ---------------- 目標ペース帯より速かったとき: 事実と影響を分ける
+  let overpace: Analysis['overpace'] = null;
+  const bmin: number | null = ev?.pace?.details?.band_min_s ?? null, bmax: number | null = ev?.pace?.details?.band_max_s ?? null;
+  const evT = ev?.eff_type ?? ev?.type;
+  const daysToRace = i.race?.days ?? null;
+  if (bmin != null && bmax != null && RACE_TYPES.includes(evT) && mainPace < bmin - 3) {
+    const over = Math.round(bmin - mainPace);
+    const rows: ReadyRow[] = [];
+    const hdf = snapshot.half_diff;
+    rows.push({ label: 'いつ速くなったか', judge: 'hold', value: hdf != null && hdf < -3 ? `後半 ${-hdf}秒/km 上げ` : '最初から速め', reason: hdf != null && hdf < -3 ? '前半は帯に近く、後半に上がっている。走りながら自然に上がった可能性 (推測)。' : '前半から目標帯より速く入っている。' });
+    if (hrRatio != null) {
+      const hj: Judge = hrRatio <= 0.92 ? 'good' : hrRatio <= 0.96 ? 'ok' : 'bad';
+      rows.push({ label: '心拍', judge: hj, value: `閾値の ${Math.round(hrRatio * 100)}%${drift != null ? `・ドリフト ${drift >= 0 ? '+' : ''}${drift}%` : ''}`, reason: hj === 'good' ? '速くなっても心拍は上がりすぎていない。' : hj === 'ok' ? 'やや高め。' : '閾値に近く、負荷は高め。' });
+    }
+    const pr = form?.rows.find((x) => x.label === 'ピッチ'), sr2 = form?.rows.find((x) => x.label === 'ストライド');
+    if (form?.paceup || pr || sr2) rows.push({ label: 'ピッチ・ストライド', judge: formStable ? 'good' : 'ok', value: strideUp ? '主にストライド' : form?.paceup && /主にピッチ/.test(form.paceup) ? '主にピッチ' : pr && sr2 ? `ピッチ ${pr.diff}・ストライド ${sr2.diff}` : '-', reason: formStable ? 'ほかのフォームの数値に崩れは無い。' : '後半にフォームの数値の変化がある。' });
+    if (f?.reserve) { const rs = RESERVE_SCORE[f.reserve] ?? 50; rows.push({ label: '余裕度 (主観)', judge: rs >= 80 ? 'good' : rs >= 60 ? 'ok' : 'bad', value: RESERVE_TXT[f.reserve], reason: f.rpe != null ? `きつさ ${f.rpe}/10。` : '' }); }
+    else rows.push({ label: '余裕度 (主観)', judge: 'hold', value: '未入力', reason: 'ふりかえりに入れると、速さの影響を判断できます。' });
+    // 疲労リスク: 心拍・余裕・脚・大会までの日数から
+    let risk = 0;
+    if (hrRatio != null && hrRatio > 0.94) risk++;
+    if (f?.reserve === 'limit' || f?.reserve === '1-3') risk++;
+    if ((f?.leg ?? 0) >= 7 || (f?.leg_late ?? 0) >= 7) risk++;
+    if (over >= 8) risk++;
+    if (daysToRace != null && daysToRace <= 10) risk++;
+    const rj: Judge = risk <= 1 ? 'good' : risk === 2 ? 'ok' : 'bad';
+    rows.push({ label: '疲労のリスク', judge: rj, value: rj === 'good' ? '小さい' : rj === 'ok' ? '中くらい' : '大きい', reason: `心拍・余裕・脚の疲れ・速さ (${over}秒/km)${daysToRace != null ? `・大会まで ${daysToRace} 日` : ''} から。` });
+    const purpose = evT === 'm' ? '本番ペースを体に覚えさせる' : evT === 'lt' ? '閾値付近で刺激を入れる' : '設定どおりに刻む';
+    const verdict = rj === 'good'
+      ? `目的 (${purpose}) からは ${over} 秒/km 速いが、心拍・余裕から見て負担は小さい。速く走れたこと自体は良い材料だが、本番ペースの練習としては帯の中に収める方が狙いに合います。`
+      : `目的 (${purpose}) からは ${over} 秒/km 速く、負担も${rj === 'ok' ? 'やや' : ''}大きい。速く走れたことと、狙いどおりの練習ができたことは別なので、次の同じ練習は帯の中に収めます。`;
+    overpace = { fact: `評価区間の平均 ${mmss(mainPace)}/km は、目標 ${mmss(bmin)}-${mmss(bmax)} より ${over} 秒/km 速い (事実)。`, rows, verdict };
+  }
+
+  // ---------------- 大会直前 (14 日以内): 疲労・脚・痛み・強度・刺激・体調を見る。距離が少ないことは減点しない
+  let ready: Analysis['ready'] = null;
+  if (i.race && i.race.days > 0 && i.race.days <= 14) {
+    const R = i.race, cd = i.cond ?? null, rows: ReadyRow[] = [];
+    const n = (x: number | null | undefined) => (x == null ? null : x);
+    const fat = n(cd?.fatigue) ?? null;
+    const legV = n(f?.leg_late) ?? n(f?.leg) ?? null, legM = n(cd?.leg) ?? null;
+    rows.push(legV == null && legM == null
+      ? { label: '脚の状態', judge: 'hold', value: '未入力', reason: 'ふりかえりか朝の体調に脚の疲労を入れると判断できます。' }
+      : (() => { const v = Math.max(legV ?? 0, legM ?? 0); return { label: '脚の状態', judge: v <= 4 ? 'good' : v <= 6 ? 'ok' : 'bad', value: [legV != null ? `走った後 ${legV}/10` : '', legM != null ? `朝 ${legM}/10` : ''].filter(Boolean).join('・'), reason: v <= 4 ? '疲れは残っていない。' : v <= 6 ? 'やや残っている。次の数日は軽めに。' : '疲れが強い。強度を落として回復を優先。' } as ReadyRow; })());
+    rows.push(fat == null ? { label: '疲労の抜け', judge: 'hold', value: '未入力', reason: '朝の体調の「全身の疲労」が未入力。' } : { label: '疲労の抜け', judge: fat <= 4 ? 'good' : fat <= 6 ? 'ok' : 'bad', value: `全身 ${fat}/10`, reason: '朝の体調から。' });
+    const painV = Math.max(f?.pain ?? -1, cd?.pain ?? -1);
+    rows.push(painV < 0 ? { label: '痛み', judge: 'hold', value: '未入力', reason: 'ふりかえり・朝の体調の痛みが未入力。' } : { label: '痛み', judge: painV <= 1 ? 'good' : painV <= 3 ? 'ok' : 'bad', value: painV === 0 ? 'なし' : `${painV}/10`, reason: painV <= 1 ? '' : painV <= 3 ? '違和感程度。悪化しないか毎日見る。' : '強度を落とし、続くなら受診を。' });
+    const gp = R.goal_s ? R.goal_s / (R.distance_m / 1000) : null;
+    if (group === 'tempo' && gp) {
+      const d = Math.round(mainPace - gp);
+      const j: Judge = Math.abs(d) <= 5 ? 'good' : d < -5 ? (d < -10 ? 'bad' : 'ok') : 'ok';
+      rows.push({ label: '強度の適切さ', judge: j, value: `${mmss(mainPace)}/km (目標ペース ${mmss(gp)}/km ${d === 0 ? 'ちょうど' : d < 0 ? `より ${-d}秒速い` : `より ${d}秒遅い`})`, reason: j === 'good' ? '大会の目標ペース付近。直前の刺激として適切。' : d < 0 ? '目標ペースより速い。直前期は疲れを残さない強度に。' : '目標ペースより遅め。リズム確認としては問題なし。' });
+      rows.push({ label: 'スピード刺激', judge: 'good', value: '入った', reason: `大会 ${R.days} 日前に目標ペース付近の刺激。` });
+    } else if (group === 'easy' || group === 'long') {
+      const j: Judge = hrRatio == null ? 'hold' : hrRatio <= 0.87 ? 'good' : 'ok';
+      rows.push({ label: '強度の適切さ', judge: j, value: hrRatio == null ? '心拍なし' : `心拍 閾値の ${Math.round(hrRatio * 100)}%`, reason: j === 'good' ? '回復を妨げない強さ。' : j === 'ok' ? '直前期のジョグとしてはやや高め。' : '' });
+    }
+    const sleep = cd?.sleep ?? null;
+    const tags = f?.tags ?? [];
+    rows.push(sleep == null && !tags.length ? { label: '体調', judge: 'hold', value: '未入力', reason: '朝の体調の睡眠・コンディションが未入力。' } : { label: '体調', judge: (sleep ?? 10) >= 6 && !tags.includes('sleep') && !tags.includes('tired') ? 'good' : 'ok', value: [sleep != null ? `睡眠 ${sleep}/10` : '', ...tags.map((t) => ({ hot: '暑い', cold: '寒い', wind: '風', sleep: '睡眠不足', hungry: '空腹', tired: '疲れが残っていた' } as Record<string, string>)[t] ?? t)].filter(Boolean).join('・'), reason: '' });
+    ready = { race: `${R.name}${R.goal_s ? ` (目標 ${Math.floor(R.goal_s / 3600)}:${String(Math.floor((R.goal_s % 3600) / 60)).padStart(2, '0')}:${String(R.goal_s % 60).padStart(2, '0')})` : ''}`, days: R.days, rows, note: '調整期なので、距離が少ないことは減点しません。月間の距離の進み具合は、月間の画面で練習の質とは分けて表示しています。' };
+  }
+
   // ---------------- 次に活かすこと (分かったことから、次の練習の行動に)
   const next: string[] = [];
+  if (overpace && overpace.rows.find((r) => r.label === '疲労のリスク')?.judge !== 'good') next.push(`次の同じ練習は、目標 ${mmss(bmin!)}-${mmss(bmax!)} の中に収める (今回は ${Math.round(bmin! - mainPace)} 秒/km 速かった)。`);
+  if (ready) {
+    const bad = ready.rows.filter((r) => r.judge === 'bad');
+    next.push(bad.length ? `大会まで ${ready.days} 日。${bad.map((r) => r.label).join('・')}に注意して、強度を上げずに回復を優先する。` : `大会まで ${ready.days} 日。状態は良いので、ここから距離・強度は増やさず、疲れを残さないことを優先する。`);
+  }
   if ((f?.pain ?? 0) >= 3) next.push(`痛み ${f!.pain}/10。次の練習は Jog か休養にし、翌朝の体調で痛みを記録する。`);
   if (drift != null && drift > 5) next.push(`心拍ドリフト ${drift}%。次の同じ練習では前半を 5〜10 秒/km 抑え、補水を早めに。`);
   if (snapshot.half_diff != null && snapshot.half_diff > 8 && km >= 8) next.push(`後半 ${snapshot.half_diff} 秒/km の失速。次は最初の 2〜3km を目標より 5 秒/km 遅く入る。`);
   const hrCmp2 = compare?.metrics.find((m) => m.key === 'hr_at_pace');
-  if (hrCmp2?.trend === 'up') next.push(`同じペースでの心拍が過去より ${hrCmp2.diff.replace('-', '')}bpm 低い。力がついているので、次のポイント練は設定どおりで良い。`);
+  if (hrCmp2?.trend === 'up') next.push(`同じペースでの心拍が過去より ${hrCmp2.diff.replace('-', '')}bpm 低い (気温などの条件差も含む)。次のポイント練は設定どおりのペースで良い。`);
   if (hrCmp2?.trend === 'down' && !next.length) next.push(`同じペースでの心拍が過去より +${hrCmp2.diff.replace('+', '')}bpm 高い。疲れが残っている可能性があるので、次の Easy はゆっくり、睡眠を優先。`);
   if (f?.rpe != null && f.rpe_late != null && f.rpe_late - f.rpe >= 2) next.push('後半に急にきつくなっている。ロング走で後半の補給 (ジェル) を試す。');
-  if (form?.paceup && /ストライド/.test(form.paceup) && group === 'tempo') next.push('ペースアップは主にストライド頼み。脚への負担が増えやすいので、ピッチも少し上げる意識を試す。');
   if (!next.length) next.push(group === 'easy' ? 'このまま、Easy は楽なペースを守る。' : '今回の内容を基準にして、次の同じ練習と比べる。');
 
   // ---------------- 総評
@@ -315,7 +441,40 @@ export function analyzeRun(i: AnalysisIn): Analysis {
     fz != null ? `走力面は${fz >= 85 ? '余裕を持って走れている' : fz >= 70 ? '標準的' : '余裕が少ない'} (${fz}点)` : '走力面は材料が少なく保留',
   ].join('。') + '。';
 
+  // ---------------- 最初に出す 3 つ
+  const pick = <T,>(...xs: (T | null | undefined | false)[]) => xs.find((x) => !!x) as T | undefined;
+  const raceNote = ready ? `大会 ${ready.days} 日前の${group === 'tempo' ? '刺激入れ' : '調整'}として` : '';
+  const overall = a != null
+    ? `${overpace ? `${raceNote ? raceNote.replace(/として$/, '。') : ''}ペースは目標帯より速め` : raceNote}${overpace ? '' : a >= 85 ? '計画どおりにできた' : a >= 70 ? 'おおむね計画どおり' : '計画とずれが残った'} (練習達成度 ${a}点)。${fz != null ? `走りの中身は${fz >= 85 ? '余裕があった' : fz >= 70 ? '標準的' : '余裕が少なかった'} (走力評価 ${fz}点)。` : '走力評価は材料が少なく保留。'}`
+    : `計画の無いラン。${fz != null ? `走りの中身は${fz >= 85 ? '余裕があった' : fz >= 70 ? '標準的' : '余裕が少なかった'} (走力評価 ${fz}点)。` : '走力評価は材料が少なく保留。'}`;
+  const gapS = subj.find((x) => x.kind === 'gap');
+  const finding = pick<string>(
+    (f?.pain ?? 0) >= 3 && `痛み ${f!.pain}/10${f!.pain_part?.length ? ` (${f!.pain_part.join('・')})` : ''} の記録がある。`,
+    overpace && `${overpace.fact.replace(' (事実)', '')}${overpace.rows.find((r) => r.label === '疲労のリスク')?.judge === 'good' ? '心拍・余裕から見て負担は小さい。' : '負担はやや大きい。'}`,
+    strideUp && formStable && snapshot.half_diff != null && snapshot.half_diff < -3 && `後半 ${-snapshot.half_diff} 秒/km 上がったのは、主にストライドが伸びたため。ほかのフォームの数値に崩れは無く、自然な走り方で上がっている。`,
+    drift != null && drift > 5 && `一定ペース区間で心拍が ${drift}% 上がった (心拍ドリフト)。`,
+    hrCmp2?.trend === 'up' && `同じペースでの心拍が、似た過去のランより ${hrCmp2.diff.replace('-', '')}bpm 低い。`,
+    hrCmp2?.trend === 'down' && `同じペースでの心拍が、似た過去のランより +${hrCmp2.diff.replace('+', '')}bpm 高い (気温・疲れの影響もありうる)。`,
+    gapS?.text,
+    drift != null && drift <= 3 && `一定ペース区間の心拍ドリフトは ${drift >= 0 ? '+' : ''}${drift}% で安定。`,
+    snapshot.half_diff != null && snapshot.half_diff <= 0 && km >= 5 && `後半は前半より ${-snapshot.half_diff} 秒/km 速く、最後までペースを保てた。`,
+  ) ?? '大きな変化は見られない。今回の数値を次の同じ練習の基準にする。';
+  // 発見と同じ話を「次に活かすこと」で繰り返さない
+  const topic = (t: string) => (/同じペースでの心拍/.test(t) ? 'hr' : /ドリフト/.test(t) ? 'drift' : /失速/.test(t) ? 'fade' : /痛み/.test(t) ? 'pain' : t);
+  const topNext = next.find((t) => topic(t) !== topic(finding)) ?? next[0] ?? '';
+  const top = { overall, finding, next: topNext };
+  const defs = [
+    { key: 'ach', label: '練習達成度', text: '予定した距離・ペース・練習の目的に対して、どれだけできたか (計画との比較)。' },
+    { key: 'fit', label: '走力評価', text: '心拍・ペースの維持・フォーム・余裕度から見た、走りの中身 (計画とは別)。' },
+    { key: 'day', label: '日次評価', text: 'その日の練習全体 (アップ・メイン・ダウン) を、目的と大会までの日数もふまえて見たもの (日次の画面)。' },
+  ];
+  const basis: string[] = [];
+  basis.push(`平均ペース ${mmss(pace)}/km = 運動時間 ${Math.floor(i.moving_time_s / 60)}:${String(Math.round(i.moving_time_s % 60)).padStart(2, '0')} ÷ ${km.toFixed(2)}km (${i.source ?? '記録'}の値から)。`);
+  if (i.elapsed_time_s && i.elapsed_time_s - i.moving_time_s >= 30) basis.push(`経過時間は ${Math.floor(i.elapsed_time_s / 60)}:${String(Math.round(i.elapsed_time_s % 60)).padStart(2, '0')} (止まっていた時間を含む)。ペースは運動時間で計算しています。`);
+  if (evPace != null && Math.abs(Math.round(evPace) - Math.round(pace)) >= 1 && (ev?.pace?.details?.work_km ?? km) < km - 0.05) basis.push(`評価区間 ${Number(ev.pace.details.work_km).toFixed(2)}km の平均 ${mmss(evPace)}/km は、アップ・ダウンやゆっくりの区間を除いてアプリで計算した値。目標帯の判定に使っています。`);
+  basis.push('ピッチ・ストライドの前半後半・同じペース帯の比較、心拍ドリフトはアプリで計算した値です。');
   return {
+    top, defs, basis, overpace, ready,
     summary, subj, next: next.slice(0, 3),
     achievement: { score: achScore, items: ach, ...(achHold ? { hold_reason: achHold } : {}) },
     fitness: { score: fitScore, items: fit, ...(fitHold ? { hold_reason: fitHold } : {}) },

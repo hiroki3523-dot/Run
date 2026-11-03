@@ -1,4 +1,4 @@
-import { fmtPace } from './format';
+import { fmtDuration, fmtPace } from './format';
 import type { ActivityInput, Evaluation, Lap, MetricResult, PaceBand, Plan, PlanType, Settings } from './types';
 import { PLAN_LABELS } from './types';
 
@@ -46,6 +46,13 @@ function weightedMean(values: number[], weights: number[]): number | null {
     w += weights[i];
   });
   return w > 0 ? sum / w : null;
+}
+
+/** 平均ペース (秒/km) = 走った時間 ÷ 走った距離。1 秒ごとのペースの単純な平均ではなく、記録の「運動時間 ÷ 距離」と同じ計算にそろえる */
+function avgPaceOf(samples: Sample[]): number | null {
+  let t = 0, d = 0;
+  for (const s of samples) { t += s.dt; d += s.dt / s.pace; }
+  return d > 0 ? t / d : null;
 }
 
 function cv(values: number[]): number | null {
@@ -117,8 +124,7 @@ function evalPace(type: EvalType, band: PaceBand | null, samples: Sample[], laps
     return { score: 10, summary: '目標ペース帯の走行がありません', details: {} };
   }
 
-  const dts = work.map((s) => s.dt);
-  const avgPace = weightedMean(work.map((s) => s.pace), dts)!;
+  const avgPace = avgPaceOf(work)!;
   const splits = kmSplits(work);
   let splitCv = cv(splits);
 
@@ -174,6 +180,8 @@ function evalPace(type: EvalType, band: PaceBand | null, samples: Sample[], laps
   details.in_band_pct = round(inBand * 100);
   details.target = `${fmtPace(band.min)}-${fmtPace(band.max)}`;
   details.band_dev_s = round(meanDev, 1);
+  details.band_min_s = band.min;
+  details.band_max_s = band.max;
 
   // 帯からの平均のはみ出しが 0 秒で 100 点、1 秒/km ごとに 7 点減 (約 14 秒で 0 点)
   let score = clamp(100 - meanDev * 7);
@@ -347,17 +355,16 @@ function evalCadence(type: EvalType, samples: Sample[], laps: Lap[], settings: S
   }
   if (avg == null) return { score: null, summary: 'ケイデンスデータなし', details: {} };
 
-  // ゆっくり走る日はケイデンスが下がるのが自然なので目標を少し緩める
-  const target = settings.target_cadence - (EASY_TYPES.includes(type) ? 6 : type === 'long' || type === 'free' ? 3 : 0);
-  const deficit = target - avg;
-  // ピッチは人によって違うので、決まった値 (180 など) からの差では大きく減点しない。
-  // 主に「後半まで保てたか」を見て、目安より大きく低いときだけ少し減点する
-  let score = 100 - Math.max(0, deficit - 6) * 2;
+  // ピッチの理想値は人によって違うので、決まった値 (180 など) との差では減点しない。
+  // 見るのは「後半まで保てたか」だけ (ペースが落ちていないのにピッチだけ落ちたときなど)。
+  // target_spm は設定の参考値として残すだけ (表示・減点には使わない)
+  const target = settings.target_cadence;
+  let score = 100;
   if (fadeSpm != null && fadeSpm > 2) score -= (fadeSpm - 2) * 8;
 
   return {
     score: round(clamp(score), 0),
-    summary: `平均 ${Math.round(avg)}spm (参考 ${target})${fadeSpm != null && fadeSpm > 3 ? `・後半 -${round(fadeSpm, 0)}` : ''}`,
+    summary: `平均 ${Math.round(avg)}spm${fadeSpm != null && fadeSpm > 3 ? `・後半 -${round(fadeSpm, 0)}` : '・後半まで維持'}`,
     details: { avg_spm: round(avg, 0), target_spm: target, fade_spm: fadeSpm == null ? null : round(fadeSpm) },
   };
 }
@@ -524,7 +531,7 @@ export function stepRole(plan: Plan | null, settings: Settings, offsetM: number,
 /** メイン区間ごとのペース帯に対する評価 (帯からはみ出した平均秒数 → 点数) */
 function evalStepPace(parts: { win: StepWin; samples: Sample[] }[]): MetricResult {
   const all = parts.flatMap((p) => p.samples);
-  const avgPace = weightedMean(all.map((s) => s.pace), all.map((s) => s.dt))!;
+  const avgPace = avgPaceOf(all)!;
   const tol = 3;
   let totalD = 0, inD = 0, devSum = 0;
   for (const { win, samples } of parts) {
@@ -539,7 +546,7 @@ function evalStepPace(parts: { win: StepWin; samples: Sample[] }[]): MetricResul
   return {
     score: round(clamp(100 - meanDev * 7), 0),
     summary: `メイン 平均 ${fmtPace(avgPace)}/km・目標 ${fmtPace(lo)}-${fmtPace(hi)} に ${Math.round((inD / totalD) * 100)}%`,
-    details: { avg_pace: round(avgPace, 0), in_band_pct: round((inD / totalD) * 100), band_dev_s: round(meanDev, 1), target: `${fmtPace(lo)}-${fmtPace(hi)}`, work_km: round(all.reduce((a, x) => a + x.dt / x.pace, 0), 2) },
+    details: { avg_pace: round(avgPace, 0), in_band_pct: round((inD / totalD) * 100), band_dev_s: round(meanDev, 1), band_min_s: lo, band_max_s: hi, target: `${fmtPace(lo)}-${fmtPace(hi)}`, work_km: round(all.reduce((a, x) => a + x.dt / x.pace, 0), 2) },
   };
 }
 
@@ -549,6 +556,30 @@ export function cleanText(t: string): string | null {
   const u = t.replace(/\s*[(（][^()（）]*(?:null|NaN|undefined|Infinity)[^()（）]*[)）]/g, '').replace(/[・、]?[^・、。]*(?:null|NaN|undefined|Infinity)[^・、。]*/g, '');
   const v = u.replace(/^[・、\s]+/, "");
   return /null|NaN|undefined|Infinity/.test(v) || v.trim().length < 4 ? null : v;
+}
+/**
+ * 古い評価 (version 2 より前) の文章を、今の計算のしかたに合わせて表示する。点数はそのまま (保存した値を変えない)。
+ * - 平均ペースは 運動時間 ÷ 距離 を先に出し、評価に使った区間の平均は「評価区間」と書き分ける
+ * - サブ3 のペースとの比較は出さない (練習はその日の目標ペースで見る)
+ * - ピッチの参考値 (180 など) との差は出さない
+ */
+export function legacyText(e: any, run: { distance_m: number | null; moving_time_s: number | null }): any {
+  if (!e || (e.version ?? 1) >= EVAL_VERSION) return e;
+  const km = run.distance_m ? run.distance_m / 1000 : null;
+  const r = { km, time: run.moving_time_s, pace: km && run.moving_time_s ? run.moving_time_s / km : null };
+  const secKm = e.pace?.details?.work_km ?? null;
+  const fixLine = (t: string) => t
+    .replace(/平均ペース (\d+:\d\d)\/km \(サブ3の [\d:]+ に対して [+-][\d:]+\)/, (_m: string, p: string) => {
+      const [mm, ss] = p.split(':').map(Number);
+      return paceLine(r, mm * 60 + ss, secKm);
+    })
+    .replace(/^平均心拍 (\d+)bpm \(乳酸閾値心拍/, '評価区間の平均心拍 $1bpm (走り始めの 5 分を除いてアプリで計算・乳酸閾値心拍')
+    .replace(/。ドリフト ([\d.-]+)%/, '。評価区間の前半と後半の心拍ドリフト $1%')
+    .replace(/\s*\(参考 \d+・[+-]?\d+。理想値は人それぞれなので、後半まで保てたかを重視\)/, ' (理想値は人それぞれなので、決まった値とは比べず、後半まで保てたかを見ます)');
+  e.comments = (e.comments ?? []).map(fixLine);
+  if (e.cadence?.summary) e.cadence.summary = e.cadence.summary.replace(/\s*\(参考 \d+\)/, '');
+  if (e.focus) e.focus = e.focus.filter((t: string) => !/腕振りをコンパクトに速くして、ピッチを保つ/.test(t));
+  return e;
 }
 function cleanEval(e: Evaluation): Evaluation {
   const fix = (m?: MetricResult) => { if (m) m.summary = cleanText(m.summary) ?? ''; };
@@ -601,9 +632,11 @@ function evaluateRunRaw(input: ActivityInput, plan: Plan | null, settings: Setti
       pace, hr, cadence, volume, form,
       comments: [
         `計画のステップのうち、メイン区間 ${sectionKm}km を評価しました (アップ・ダウンは評価に入れていません)。`,
-        ...buildComments(effT, pace, hr, cadence, volume, form, settings, 'メイン区間'),
+        ...buildComments(effT, pace, hr, cadence, volume, form, settings, 'メイン区間', runOf(input)),
       ],
       focus: buildFocus(effT, pace, hr, cadence, form, settings),
+      version: EVAL_VERSION,
+      ...(runOf(input).pace != null ? { run_pace_s: round(runOf(input).pace!, 0) } : {}),
     };
   }
 
@@ -650,20 +683,46 @@ function evaluateRunRaw(input: ActivityInput, plan: Plan | null, settings: Setti
     form,
     comments: [
       ...(longQ ? [`ロング走のうち、本番ペース区間 ${sectionKm}km を評価しました (アップ・ダウンは評価に入れていません)。`] : []),
-      ...buildComments(effType, pace, hr, cadence, volume, form, settings, longQ ? 'ロング走のMペース区間' : undefined),
+      ...buildComments(effType, pace, hr, cadence, volume, form, settings, longQ ? 'ロング走のMペース区間' : undefined, runOf(input)),
     ],
     focus: buildFocus(effType, pace, hr, cadence, form, settings),
+    version: EVAL_VERSION,
+    ...(runOf(input).pace != null ? { run_pace_s: round(runOf(input).pace!, 0) } : {}),
   };
 }
 
-/** サブ3 に必要なペース (秒/km) */
-const SUB3_PACE_S = Math.round(10800 / 42.195);
+export const EVAL_VERSION = 2;
 
 const mmss = (sec: number) => fmtPace(sec);
 
+interface RunInfo { km: number | null; time: number | null; pace: number | null }
+/** ラン全体の記録 (運動時間 ÷ 距離)。画面の「平均ペース」と同じ計算 */
+function runOf(input: ActivityInput): RunInfo {
+  const km = input.distance_m > 0 ? input.distance_m / 1000 : null;
+  const time = input.moving_time_s > 0 ? input.moving_time_s : null;
+  return { km, time, pace: km && time ? time / km : null };
+}
+
+/** 平均ペースの行。ラン全体 (運動時間 ÷ 距離) を先に、評価した区間が違えばその平均を「評価区間」と書き分ける */
+export function paceLine(run: { km: number | null; time: number | null; pace: number | null }, sectionPace: number | null, sectionKm: number | null): string {
+  const parts: string[] = [];
+  if (run.pace != null) parts.push(`平均ペース ${mmss(run.pace)}/km (運動時間 ${fmtDuration(run.time)} ÷ ${run.km!.toFixed(2)}km)`);
+  const differs = sectionPace != null && (run.pace == null || Math.abs(Math.round(sectionPace) - Math.round(run.pace)) >= 1) && (sectionKm == null || run.km == null || sectionKm < run.km - 0.05);
+  if (sectionPace != null && (differs || run.pace == null)) parts.push(`${run.pace != null ? '評価区間' : '平均ペース'}${sectionKm != null ? ` ${sectionKm.toFixed(2)}km` : ''} の平均 ${mmss(sectionPace)}/km${run.pace != null ? ' (アップ・ダウンやゆっくりの区間を除いて、アプリで計算)' : ''}`);
+  return parts.join('。');
+}
+
+/** 目標のペース帯に対する事実 (速い・遅い・帯の中)。良し悪しはここでは決めない */
+export function bandFact(p: number, min: number, max: number): string {
+  const tol = 3;
+  if (p < min - tol) return `目標 ${mmss(min)}-${mmss(max)} より ${Math.round(min - p)}秒/km 速い`;
+  if (p > max + tol) return `目標 ${mmss(min)}-${mmss(max)} より ${Math.round(p - max)}秒/km 遅い`;
+  return `目標 ${mmss(min)}-${mmss(max)} の範囲内`;
+}
+
 /**
  * 数字を入れた具体的なコメント。
- * 1) 指標ごとの実測値と基準との差 (ピッチ・心拍・ペース・歩幅)
+ * 1) 指標ごとの実測値と、その練習の目標 (ペース帯・心拍域) との差。将来の目標 (サブ3 など) とは比べない
  * 2) 問題があればその理由
  */
 function buildComments(
@@ -675,6 +734,7 @@ function buildComments(
   form: MetricResult,
   settings: Settings,
   labelOverride?: string,
+  run: RunInfo = { km: null, time: null, pace: null },
 ): string[] {
   const c: string[] = [];
   const pd = pace.details;
@@ -685,15 +745,16 @@ function buildComments(
   // ---- ペース
   if (pace.score != null && pd.avg_pace != null) {
     const avg = pd.avg_pace as number;
-    const gap = avg - SUB3_PACE_S;
-    const base = `平均ペース ${mmss(avg)}/km (サブ3の ${mmss(SUB3_PACE_S)} に対して ${gap >= 0 ? '+' : '-'}${mmss(Math.abs(gap))})`;
+    const secKm = (pd.work_km as number | undefined) ?? null;
     const fast = pd.split_fast_s as number | null;
     const slow = pd.split_slow_s as number | null;
     const cv = pd.split_cv_pct as number | null;
     const spread = fast != null && slow != null ? `。1km ごとは ${mmss(fast)}〜${mmss(slow)} (ばらつき ${cv}%)` : '';
-    c.push(base + spread);
+    c.push(paceLine(run, avg, secKm) + spread);
     if (pd.in_band_pct != null && !easyLike) {
-      c.push(`${label}の目標帯 ${pd.target} に入っていた距離は ${pd.in_band_pct}%${pd.band_dev_s ? `。帯から平均 ${pd.band_dev_s}秒/km はみ出しています (ゼロなら満点)` : ''}。`);
+      const bmin = pd.band_min_s as number | undefined, bmax = pd.band_max_s as number | undefined;
+      const fact = bmin != null && bmax != null ? `。評価区間の平均は${bandFact(avg, bmin, bmax)}` : '';
+      c.push(`${label}の目標帯 ${pd.target} に入っていた距離は ${pd.in_band_pct}%${fact}${pd.band_dev_s ? `。帯から平均 ${pd.band_dev_s}秒/km はみ出しています (ゼロなら満点)` : ''}。`);
     }
     const hdiff = pd.half_diff_s as number | null;
     if (hdiff != null && Math.abs(hdiff) >= 3) {
@@ -713,8 +774,8 @@ function buildComments(
     const avgHr = hd.avg_hr as number;
     const pct = Math.round((avgHr / settings.lthr) * 100);
     const zone = hrZone(avgHr, settings.lthr);
-    let line = `平均心拍 ${avgHr}bpm (乳酸閾値心拍 ${settings.lthr} の ${pct}%・ゾーン${zone})`;
-    if (hd.drift_pct != null) line += `。ドリフト ${hd.drift_pct}%`;
+    let line = `評価区間の平均心拍 ${avgHr}bpm (走り始めの 5 分を除いてアプリで計算・乳酸閾値心拍 ${settings.lthr} の ${pct}%・ゾーン${zone})`;
+    if (hd.drift_pct != null) line += `。評価区間の前半と後半の心拍ドリフト ${hd.drift_pct}%`;
     c.push(line);
     if (easyLike && pct > 85) c.push(`${label}で ${pct}% は高め。ゾーン1〜2 (${Math.round(settings.lthr * 0.85)}bpm 未満) に収めたい強度です。`);
     if (hd.drift_pct != null && (hd.drift_pct as number) > 5) c.push('同じペースでも後半に心拍が上がっています。暑さ・脱水・疲労の影響が考えられます。');
@@ -723,9 +784,7 @@ function buildComments(
   // ---- ピッチ
   if (cad.score != null) {
     const avg = cad.details.avg_spm as number;
-    const target = cad.details.target_spm as number;
-    const diff = avg - target;
-    let line = `ピッチ ${avg}spm (参考 ${target}・${diff >= 0 ? '+' : ''}${diff}。理想値は人それぞれなので、後半まで保てたかを重視)`;
+    let line = `ピッチ ${avg}spm (理想値は人それぞれなので、決まった値とは比べず、後半まで保てたかを見ます)`;
     const fade = cad.details.fade_spm as number | null;
     if (fade != null && fade > 2) line += `。後半は前半より ${fade}spm 低下`;
     c.push(line);
@@ -746,18 +805,17 @@ function buildComments(
 
 /**
  * 「次に意識すること」。減点の大きい指標から最大 3 つ、数字つきで具体的な行動を示す。
- * サブ3 のペース (4:16/km) で走るのに必要な歩幅・ピッチも添える。
+ * ピッチ・歩幅は、ペースが落ちていてフォームが崩れているときだけ触れる (ふだんの走り方を変えさせない)。
  */
 function buildFocus(type: EvalType, pace: MetricResult, hr: MetricResult, cad: MetricResult, form: MetricResult, settings: Settings): string[] {
   const items: { loss: number; text: string }[] = [];
   const easyLike = EASY_TYPES.includes(type) || type === 'long';
 
   if (cad.score != null) {
-    const avg = cad.details.avg_spm as number;
-    const target = cad.details.target_spm as number;
     const fade = cad.details.fade_spm as number | null;
-    if (fade != null && fade > 2) {
-      items.push({ loss: 100 - cad.score, text: `後半にピッチが ${fade}spm 落ちています。残り 1/3 で腕振りをコンパクトに速くして、ピッチを保つ練習を。` });
+    const slowed = ((pace.details.half_diff_s as number | null) ?? 0) > 3;
+    if (fade != null && fade > 2 && slowed) {
+      items.push({ loss: 100 - cad.score, text: `後半にピッチが ${fade}spm 落ち、ペースも落ちています。疲れのサインとして、次の同じ練習でも同じところで落ちるか見てください (無理にフォームを変える必要はありません)。` });
     }
   }
   if (hr.score != null) {

@@ -10,7 +10,7 @@ import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './re
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { analyzeRun, groupOf, type Snapshot } from './analysis';
-import { cleanText } from './evaluate';
+import { cleanText, legacyText } from './evaluate';
 import { runningNews } from './news';
 import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
 import { autoFillRace, cleanRaceInfo, entryHistory, extractRaceInfo } from './raceinfo';
@@ -527,7 +527,7 @@ api.get('/activities/:id/analysis', async (c) => {
   const row = await c.env.DB.prepare('SELECT * FROM activities WHERE id = ?').bind(id).first<Record<string, any>>();
   if (!row) return c.notFound();
   const st = await getSettings(c.env);
-  const ev = row.evaluation ? JSON.parse(row.evaluation) : null;
+  const ev = row.evaluation ? legacyText(JSON.parse(row.evaluation), { distance_m: row.distance_m, moving_time_s: row.moving_time_s }) : null;
   const plan = row.plan_id ? await c.env.DB.prepare('SELECT type FROM plans WHERE id = ?').bind(row.plan_id).first<{ type: string }>() : null;
   let fb: any = null;
   try { const raw = JSON.parse((await kvGet(c.env, `fb:${id}`)) ?? 'null'); if (raw) fb = normalizeFb(raw); } catch { /* 無視 */ }
@@ -538,7 +538,17 @@ api.get('/activities/:id/analysis', async (c) => {
   let temp: number | null = null;
   try { const old = JSON.parse((await kvGet(c.env, `snap:${id}`)) || '{}'); if (typeof old.temp === 'number') temp = old.temp; } catch { /* 無視 */ }
   if (temp == null) temp = await runTemp(st.weather_place ?? DEFAULT_PLACE, String(row.start_date_local)).catch(() => null);
+  // 次の大会 (このランの日から)・その日と翌朝の体調・記録元 (表示と評価の基準をそろえるため)
+  const [nextRace, condRows, extRow] = await Promise.all([
+    c.env.DB.prepare("SELECT name, date, distance_m, goal_time_s FROM races WHERE date > ? AND COALESCE(status, 'confirmed') != 'candidate' AND COALESCE(priority, 'A') != 'C' ORDER BY date LIMIT 1").bind(row.date).first<any>().catch(() => null),
+    c.env.DB.prepare("SELECT key, value FROM kv WHERE key IN (?, ?)").bind(`cond:${row.date}`, `cond:${addDays(row.date, 1)}`).all<{ key: string; value: string }>().catch(() => ({ results: [] as { key: string; value: string }[] })),
+    c.env.DB.prepare("SELECT 1 AS x FROM ext_activities WHERE id = ? AND data NOT LIKE '{\"dup_of\"%'").bind(id).first().catch(() => null),
+  ]);
+  const condOf = (k: string) => { const r = condRows.results.find((x) => x.key === k); try { return r ? JSON.parse(r.value) : null; } catch { return null; } };
+  const cond = condOf(`cond:${addDays(row.date, 1)}`) ?? condOf(`cond:${row.date}`);
+  const race = nextRace ? { name: nextRace.name, date: nextRace.date, goal_s: nextRace.goal_time_s ?? null, distance_m: nextRace.distance_m || 42195, days: Math.round((Date.parse(nextRace.date) - Date.parse(row.date)) / 86400_000) } : null;
   const input = {
+    race, cond, elapsed_time_s: row.elapsed_time_s ?? null, source: extRow ? 'COROS' : row.id > 0 ? 'Strava' : null,
     temp, id, date: row.date, distance_m: row.distance_m, moving_time_s: row.moving_time_s, avg_hr: row.avg_hr, avg_cad_spm: row.avg_cadence_spm,
     elev_gain: series?.elev_gain ?? null, ev, plan_type: plan?.type ?? null, has_plan: !!plan, fb, series, easy_min: st.paces.easy.min, lthr, past,
   };
@@ -1046,7 +1056,7 @@ api.get('/activities/:id', async (c) => {
   const ext = await c.env.DB.prepare(`SELECT ext_id, json_extract(data, '$.act.sport_type') AS st, json_extract(data, '$.act.coros_extra') AS ex FROM ext_activities WHERE id = ? AND data NOT LIKE '{"dup_of"%'`).bind(row.id).first<{ ext_id: string; st: string; ex: string | null }>();
   const coros = ext ? { label_id: ext.ext_id, sport_type: ext.st === 'TrailRun' ? 102 : ext.st === 'VirtualRun' ? 101 : 100, extra: ext.ex ? JSON.parse(ext.ex) : null } : null;
   // 古い評価に残っている「null%」などは、表示前に取り除く
-  const evx = row.evaluation ? JSON.parse(row.evaluation as string) : null;
+  const evx = row.evaluation ? legacyText(JSON.parse(row.evaluation as string), { distance_m: row.distance_m as number, moving_time_s: row.moving_time_s as number }) : null;
   if (evx) { evx.comments = (evx.comments ?? []).map(cleanText).filter(Boolean); if (evx.focus) evx.focus = evx.focus.map(cleanText).filter(Boolean); for (const k of ['pace', 'hr', 'cadence', 'volume', 'form']) if (evx[k]?.summary) evx[k].summary = cleanText(evx[k].summary) ?? ''; }
   return c.json({ ...row, evaluation: evx, plan, siblings, coros });
 });

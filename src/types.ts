@@ -184,4 +184,8 @@ export interface Evaluation {
   comments: string[];
   /** 次に意識すること (数字つき・最大3つ) */
   focus?: string[];
+  /** 評価の計算のしかたの版 (2 = 平均ペースを 運動時間÷距離 にそろえ、ピッチの低さで減点しない版)。古い評価には無い */
+  version?: number;
+  /** ラン全体の平均ペース (運動時間 ÷ 距離・秒/km)。評価区間の平均と区別するため */
+  run_pace_s?: number;
 }
