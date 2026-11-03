@@ -698,7 +698,7 @@ async function plansView(params) {
       <a class="btn" href="#/plans?week=${addDays(ws, 7)}">翌週 ›</a>
     </div>
     <div class="card" id="cal">
-      <div class="row spread num cal-sum"><span>計画 <b>${km(total)}</b>km</span><span>実績 <b>${km(actual)}</b>km</span></div>
+      ${weekSum(total, actual, plans, weekActs, ws)}
       ${days.map((d) => {
         const dp = plans.filter((p) => p.date === d);
         return `
@@ -751,6 +751,26 @@ async function plansView(params) {
     </div>
     <h2 class="sect">カレンダーに反映</h2>
     <div class="card" id="cal-card">${calCard(settings)}</div>`;
+}
+
+/** 計画画面の上: 今週の 実績 / 計画 と進み具合 */
+function weekSum(total, actual, plans, acts, ws) {
+  const t = today();
+  const pct = total ? Math.min(100, Math.round((actual / total) * 100)) : 0;
+  // 昨日までの計画 (ここまでに走っておきたい距離)。今日のぶんは走ったら足す
+  const ranToday = acts.some((a) => a.date === t);
+  const due = plans.filter((p) => p.date < t || (ranToday && p.date === t)).reduce((a, p) => a + (p.distance_m || 0), 0);
+  const duePct = total ? Math.min(100, Math.round((due / total) * 100)) : 0;
+  const cur = t >= ws && t <= addDays(ws, 6);
+  const diff = actual - due;
+  const status = !total ? '' : !cur ? (t > addDays(ws, 6) ? `達成率 ${pct}%` : 'これからの週')
+    : Math.abs(diff) < 500 ? '予定どおり' : diff < 0 ? `予定より ${km(-diff, 1)}km 少ない` : `予定より ${km(diff, 1)}km 多い`;
+  const cls = !cur || !total ? '' : Math.abs(diff) < 500 ? 'ok' : diff < 0 ? 'gap' : 'over';
+  return `<div class="wsum">
+    <div class="wsum-n num"><div><small>実績</small><b>${km(actual, 1)}</b><span>km</span></div><div class="wsum-of"><small>計画</small><b>${km(total, 1)}</b><span>km</span></div></div>
+    <div class="wsum-bar"><i style="width:${pct}%"></i>${cur && total ? `<em style="left:${duePct}%" title="ここまでの計画"></em>` : ''}</div>
+    <div class="row spread wsum-f"><span class="num">${total ? `${pct}%・残り ${km(Math.max(0, total - actual), 1)}km` : '計画なし'}</span>${status ? `<span class="dchip ${cls}">${status}</span>` : ''}</div>
+  </div>`;
 }
 
 /** 予定をコピー (この週 → 翌週 / 前の週 → この週) */
