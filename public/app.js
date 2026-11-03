@@ -2253,14 +2253,27 @@ const fmtD = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? `${md(d)}(${dow(d)})`
 function entryLine(r, t) {
   const inf = raceInfoOf(r);
   const st = r.status || 'confirmed';
-  if (st === 'confirmed' || r.date < t) return inf.my_block ? `<div class="muted num" style="font-size:12.5px">${esc(inf.my_block)}ブロック${inf.bib ? `・No.${esc(inf.bib)}` : ''}</div>` : '';
+  if (r.date < t) return '';
+  const label = RACE_STATUS.find(([k]) => k === st)[1];
+  const icon = ST_ICON[st].replace(/width="20" height="20"/, 'width="14" height="14"');
   const bits = [];
-  if (st === 'candidate' && (inf.entry_open || inf.entry_close)) {
-    const left = inf.entry_close && /^\d{4}-/.test(inf.entry_close) ? daysBetween(t, inf.entry_close) : null;
-    bits.push(`エントリー ${inf.entry_open ? fmtD(inf.entry_open) : ''}〜${inf.entry_close ? fmtD(inf.entry_close) : ''}${left != null && left >= 0 ? ` <b class="warn-t">締切まで${left}日</b>` : left != null ? '（締切済み）' : ''}`);
+  if (st === 'confirmed' && inf.my_block) bits.push(`${esc(inf.my_block)}ブロック${inf.bib ? `・No.${esc(inf.bib)}` : ''}`);
+  if (st === 'entered' && inf.lottery_result) bits.push(`抽選発表 ${fmtD(inf.lottery_result)}`);
+  let entry = '';
+  if (st === 'candidate') {
+    if (inf.entry_open || inf.entry_close) {
+      const left = inf.entry_close && /^\d{4}-/.test(inf.entry_close) ? daysBetween(t, inf.entry_close) : null;
+      const before = inf.entry_open && /^\d{4}-/.test(inf.entry_open) && inf.entry_open > t;
+      entry = `<div class="num entry-l">エントリー ${fmtD(inf.entry_open)}〜${fmtD(inf.entry_close)}${before ? ` <b class="warn-t">開始まで${daysBetween(t, inf.entry_open)}日</b>` : left != null && left >= 0 ? ` <b class="warn-t">締切まで${left}日</b>` : left != null ? '（締切済み）' : ''}</div>`;
+    } else {
+      // 公式サイトの情報がまだ無いときは、大会の一覧の開始日か、例年・一般的な目安
+      const c = RACE_CATALOG.find((x) => baseName(x[0]) === baseName(r.name));
+      const x = c ? { month: c[2], dist: c[3], entry: c[6], known: !!(c[5] && c[5] >= t && c[5] === r.date) }
+        : { month: Number(r.date.slice(5, 7)), dist: r.distance_m >= 40000 ? 'full' : 'half', entry: '' };
+      entry = `<div class="entry-l">${entryHint(x, null, t, true)}</div>`;
+    }
   }
-  if (inf.lottery_result) bits.push(`抽選発表 ${fmtD(inf.lottery_result)}`);
-  return bits.length ? `<div class="num entry-l">${bits.join('・')}</div>` : '';
+  return `<div class="rl-st st-${st}">${icon}<b>${label}</b>${bits.length ? `<span>${bits.join('・')}</span>` : ''}</div>${entry}`;
 }
 /** レース詳細の「大会情報」カード */
 function raceInfoCard(r) {
@@ -2381,7 +2394,7 @@ function entryHint(x, got, t, short) {
     const m = Number(x.entry.slice(5, 7)), dd = Number(x.entry.slice(8, 10));
     const part = dd <= 10 ? '上旬' : dd <= 20 ? '中旬' : '下旬';
     if (x.known && x.entry > t) return `<span ${cls(daysBetween(t, x.entry) <= 45)}>エントリー ${fmtD(x.entry)} 開始予定</span>`;
-    if (x.known) return `<span ${cls(false)}>エントリー ${md(x.entry)}〜</span>`;
+    if (x.known) return `<span ${cls(false)}>エントリー ${md(x.entry)}〜 (開始済み・締切は公式サイトで)</span>`;
     return `<span ${cls(false)}>エントリー 例年${m}月${part}ごろ開始</span>`;
   }
   // 分からない大会: 一般的な目安 (フルは 4〜7 か月前、ハーフは 2〜4 か月前)

@@ -1092,3 +1092,11 @@ body::after {
 .race-st { padding: 3px; gap: 2px; border-radius: 14px; background: color-mix(in srgb, var(--text) 7%, transparent); }
 .race-st .seg-r span { min-height: 38px; border: 0; background: transparent; border-radius: 11px; font-size: 13px; }
 .race-st .seg-r input:checked + span { background: var(--surface); color: var(--text); box-shadow: 0 1px 6px rgb(0 0 0 / .35); }
+/* 一覧の状態 (タグではなく、色つきの小さな文字) */
+.rl-st { display: flex; align-items: center; gap: 5px; margin-top: 6px; font-size: 12.5px; }
+.rl-st b { font-weight: 700; }
+.rl-st span { color: var(--muted); margin-left: 6px; }
+.rl-st.st-confirmed { color: var(--good); }
+.rl-st.st-entered { color: var(--accent); }
+.rl-st.st-candidate { color: var(--mid); }
+.entry-l .rf-entry { font-size: 12.5px; margin-top: 2px; }
