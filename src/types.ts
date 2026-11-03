@@ -12,6 +12,8 @@ export interface Env {
   /** Bark (iPhone 通知アプリ) を使う場合のデバイスキー */
   BARK_KEY?: string;
   BARK_SERVER?: string;
+  /** Workers AI (予定の相談)。wrangler.toml の [ai] */
+  AI?: Ai;
 }
 
 export const PLAN_TYPES = ['easy', 'jog', 'long', 'm', 'lt', 'interval', 'race', 'rest'] as const;
@@ -66,6 +68,8 @@ export interface Settings {
   source?: 'strava' | 'coros';
   /** 天気の場所 (未設定なら福岡) */
   weather_place?: { name: string; lat: number; lon: number };
+  /** iPhone カレンダーに購読を追加した日 (二重に追加しないための目印) */
+  calendar_added?: string | null;
 }
 
 export interface PlanPrefs {
