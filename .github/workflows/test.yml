@@ -1,0 +1,62 @@
+# 自動テスト・改修レポート・レビュー用データ。
+# PR を作る/更新するたびと、main に入ったときに動く。テスト用のデータベースだけを使い、本番のデータ・Strava・COROS には接続しない。
+name: テスト
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  test:
+    # コピー (Fork) して使っている人のリポジトリでは動かさない
+    if: github.repository == 'hiroki3523-dot/Run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: 依存パッケージ
+        run: |
+          npm ci
+          npm install --no-save playwright@1.49.1
+          npx playwright install --with-deps chromium
+      - name: 自動テスト (画面のテストとスクリーンショットを含む)
+        id: vitest
+        continue-on-error: true
+        env:
+          SCREENSHOT_DIR: review-shots
+        run: npx vitest run --reporter=default --reporter=json --outputFile=test-results.json
+      - name: 改修レポート
+        if: always()
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          NOTES=docs/changes/${GITHUB_HEAD_REF:-none}.md
+          node scripts/report.mjs --results test-results.json --notes "$NOTES" --out change-report.md
+          cat change-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: レビュー用データ (ChatGPT などに渡す zip)
+        if: always()
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/review-bundle.mjs --results test-results.json --shots review-shots --report change-report.md --out stride-review.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stride-review
+          path: |
+            stride-review.zip
+            change-report.md
+            test-results.json
+          retention-days: 30
+      - name: テストの結果で合否を決める
+        if: steps.vitest.outcome != 'success'
+        run: |
+          echo "不合格のテストがあります。上の「自動テスト」の記録と、レポートを見てください。"
+          exit 1
