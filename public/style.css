@@ -1419,3 +1419,10 @@ body { padding-bottom: calc(120px + env(safe-area-inset-bottom)); } /* 下の固
 .sh-hd { flex: none; width: 3.4em; font-size: 12.5px; font-weight: 700; display: flex; flex-direction: column; }
 .sh-hd small { color: var(--muted); font-weight: 500; }
 .shoe-img { background: #f2f3f7; } .shoe-img svg { color: #8a8f9c; }
+/* レース詳細のタブ: 見出し (iPhone ではノッチの分だけ高い) のすぐ下に固定 */
+.rd-tabs { top: var(--hdr-h, calc(env(safe-area-inset-top) + 66px)); z-index: 15; }
+/* 大会の写真 (自分で選んだもの) を見出しの背景に */
+.hero.has-img { background-image: linear-gradient(160deg, rgb(43 61 255 / .78), rgb(122 92 255 / .55) 55%, rgb(20 16 40 / .85)), var(--img); background-size: cover; background-position: center; }
+.rd-hero { position: relative; }
+.rd-photo { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: rgb(255 255 255 / .2); color: #fff; cursor: pointer; }
+.rd-photo svg { width: 18px; height: 18px; }

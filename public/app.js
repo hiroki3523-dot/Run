@@ -2727,15 +2727,30 @@ async function raceDetailView(id) {
     }));
     // 項目のタブ: 押すとその場所へ。スクロールに合わせて選択を変える
     const tabs = [...view.querySelectorAll('.rd-tabs [data-go]')];
-    tabs.forEach((a) => (a.onclick = () => { const el = view.querySelector(`#rs-${a.dataset.go}`); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 110, behavior: 'smooth' }); }));
+    const offset = () => (document.querySelector('header')?.getBoundingClientRect().height || 70) + (view.querySelector('.rd-tabs')?.getBoundingClientRect().height || 44) + 10;
+    tabs.forEach((a) => (a.onclick = () => { const el = view.querySelector(`#rs-${a.dataset.go}`); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset(), behavior: 'smooth' }); }));
     const onScroll = () => {
       if (!document.body.contains(tabs[0])) { window.removeEventListener('scroll', onScroll); return; }
       let cur = 'about';
-      for (const k of ['about', 'plan', 'prep', 'result']) { const el = view.querySelector(`#rs-${k}`); if (el && el.getBoundingClientRect().top < 140) cur = k; }
+      for (const k of ['about', 'plan', 'prep', 'result']) { const el = view.querySelector(`#rs-${k}`); if (el && el.getBoundingClientRect().top < offset() + 30) cur = k; }
       tabs.forEach((a) => a.classList.toggle('on', a.dataset.go === cur));
     };
     window.addEventListener('scroll', onScroll, { passive: true });
     if (r.date > t) loadRaceReady(r);
+    // 大会の写真: 自分で選んだ写真を見出しの背景に (900px 以内に縮小して保存)
+    view.querySelector('#race-photo').onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try { const url = await resizeImage(file, 900); await saveInfo({ image: url }); route(); } catch (err) { alert(err.message); }
+    };
+    // 写真があるときは「変える / 外す」を選ぶ
+    view.querySelector('.rd-photo').addEventListener('click', async (e) => {
+      if (e.target.id === 'race-photo' || !raceInfoOf(r).image) return; // 無いときはそのまま写真を選ぶ
+      e.preventDefault();
+      const k = await actionSheet('大会の写真', [{ key: 'change', label: '写真を変える' }, { key: 'remove', label: '写真を外す', danger: true }]);
+      if (k === 'change') view.querySelector('#race-photo').click();
+      else if (k === 'remove') { await saveInfo({ image: null }); route(); }
+    });
     view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
     view.querySelector('#st-race').onclick = () => manageRace(r);
     if (r.date <= t) loadRaceResult(r);
@@ -2796,7 +2811,8 @@ async function raceDetailView(id) {
   const inf0 = raceInfoOf(r), st0r = r.status || 'confirmed';
   const est0 = inf0.date_estimated;
   return `
-    <div class="card hero rd-hero">
+    <div class="card hero rd-hero ${inf0.image ? 'has-img' : ''}" ${inf0.image ? `style="--img:url('${inf0.image}')"` : ''}>
+      <label class="rd-photo" aria-label="大会の写真を選ぶ">${SVG('<rect x="3" y="6" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="3.5"/><path d="M8 6l2-2h4l2 2"/>')}<input type="file" id="race-photo" accept="image/*" hidden></label>
       <div class="rl-top"><span class="rb rb-${upcoming ? st0r : r.result_time_s ? 'done' : 'past'}">${upcoming ? RACE_STATUS.find(([k]) => k === st0r)[1] : r.result_time_s ? '完走' : '終了'}</span>${r.priority === 'A' && st0r !== 'candidate' ? '<span class="rb rb-main">本命</span>' : `<span class="rb">優先度 ${esc(r.priority || '-')}</span>`}${est0 ? '<span class="rb rb-est">日付は暫定</span>' : ''}</div>
       <h2 class="rl-hname">${esc(r.name)}</h2>
       <div class="muted num">${r.date.slice(0, 4)}年${md(r.date)}(${dow(r.date)})${inf0.venue ? `・${esc(inf0.venue)}` : ''}・${km(r.distance_m, 3)}km</div>
@@ -3322,7 +3338,7 @@ async function racesView() {
     if (!next) return `<div class="card rl-empty"><b>出場予定の大会はありません</b><p class="muted">「大会を探す」か「＋ 追加」から登録すると、ここに次の大会が大きく出ます。${upcoming.length ? '(エントリー候補は、状態を「エントリー済み」「出場決定」にすると出ます)' : ''}</p></div>`;
     const est = raceInfoOf(next).date_estimated, st = next.status || 'confirmed';
     const inf = raceInfoOf(next);
-    return `<a class="card hero rl-hero" href="#/races/${next.id}">
+    return `<a class="card hero rl-hero ${inf.image ? 'has-img' : ''}" href="#/races/${next.id}" ${inf.image ? `style="--img:url('${inf.image}')"` : ''}>
       <div class="rl-top"><span class="rb rb-${st}">${ST_LABEL[st]}</span>${next.priority === 'A' ? '<span class="rb rb-main">本命</span>' : `<span class="rb">優先度 ${esc(next.priority || '-')}</span>`}</div>
       <h2 class="rl-hname">${esc(next.name)}</h2>
       <div class="muted num">${next.date.slice(0, 4)}年${md(next.date)}(${dow(next.date)})${est ? '・日付は暫定' : ''}${inf.venue ? `・${esc(inf.venue)}` : ''}</div>
@@ -4082,6 +4098,7 @@ async function route() {
       : tab === 'settings' ? await settingsView()
       : await homeView();
     view.innerHTML = html;
+    setHeaderH();
     bindTrend(view);
     if (document.getElementById('news-list')) loadNews();
     if (document.getElementById('insights')) loadInsights();
@@ -4092,6 +4109,9 @@ async function route() {
   }
 }
 
+/** 上の見出し (戻る・STRIDE) の高さ。iPhone ではノッチの分だけ高くなるので、固定するタブをこの下に置く */
+const setHeaderH = () => { const h = document.querySelector('header'); if (h) document.documentElement.style.setProperty('--hdr-h', `${Math.round(h.getBoundingClientRect().height)}px`); };
+window.addEventListener('resize', setHeaderH);
 window.addEventListener('hashchange', route);
 route();
 
