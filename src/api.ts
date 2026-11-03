@@ -416,7 +416,7 @@ const daysSpan = (a: string, b: string) => Math.round((Date.parse(b) - Date.pars
  */
 /** 予定の相談 (AI)。返事と計画の変更案を返す (まだ反映しない) */
 api.post('/coach', async (c) => {
-  const { messages } = await c.req.json<{ messages: { role: 'user' | 'assistant'; content: string }[] }>();
+  const { messages } = await c.req.json<{ messages: any[] }>();
   try {
     return c.json(await askCoach(c.env, Array.isArray(messages) ? messages : []));
   } catch (e) {

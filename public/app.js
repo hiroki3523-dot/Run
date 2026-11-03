@@ -816,7 +816,7 @@ function wireCoach(root) {
     log.lastElementChild.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     const btn = root.querySelector('#coach-send'); btn.disabled = true;
     try {
-      const r = await api('/coach', { method: 'POST', body: { messages: COACH_LOG.map((m) => ({ role: m.role, content: m.content })) } });
+      const r = await api('/coach', { method: 'POST', body: { messages: COACH_LOG.map((m) => ({ role: m.role, content: m.content, changes: m.changes })) } });
       COACH_LOG.push({ role: 'assistant', content: r.reply, changes: r.changes || [] });
     } catch (e) {
       COACH_LOG.push({ role: 'assistant', content: `エラー: ${e.message}` });
