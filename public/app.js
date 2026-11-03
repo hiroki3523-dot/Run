@@ -666,17 +666,22 @@ async function plansView(params) {
         setTimeout(route, 800);
       } catch (e) { out.textContent = `エラー: ${e.message}`; }
     };
-    view.querySelector('#plan-cal').onclick = async (e) => {
-      const b = e.currentTarget; b.disabled = true;
-      try { const st = await api('/status'); location.href = st.calendar_url.replace(/^https?:/, 'webcal:'); } catch (err) { alert(err.message); }
-      b.disabled = false;
-    };
-    view.querySelector('#copy-week').onclick = async () => {
-      if (!confirm(`この週の計画を翌週 (${md(addDays(ws, 7))}〜) に複製しますか？`)) return;
-      const r = await api('/plans/copy-week', { method: 'POST', body: { from: ws, to: addDays(ws, 7) } });
-      alert(`${r.copied} 件を複製しました`);
-      location.hash = `#/plans?week=${addDays(ws, 7)}`;
-    };
+    wireCopy(view, ws);
+    wireCoach(view);
+    wireCalendar(view, settings);
+    // 予定を組むメニュー: 押した 1 つだけ開く
+    view.querySelectorAll('[data-pm]').forEach((b) => (b.onclick = () => {
+      const k = b.dataset.pm;
+      const open = !b.classList.contains('on');
+      view.querySelectorAll('[data-pm]').forEach((x) => x.classList.remove('on'));
+      view.querySelectorAll('.pm-pane').forEach((x) => x.classList.add('hidden'));
+      if (open) {
+        b.classList.add('on');
+        view.querySelector(`#pm-${k}`).classList.remove('hidden');
+        try { sessionStorage.setItem('pm', k); } catch {}
+      } else { try { sessionStorage.removeItem('pm'); } catch {} }
+    }));
+    try { const k = sessionStorage.getItem('pm'); if (k) view.querySelector(`[data-pm="${k}"]`)?.click(); } catch {}
   });
 
   const prefsOf = settings.plan_prefs;
@@ -692,12 +697,8 @@ async function plansView(params) {
       <strong>${md(ws)} 〜 ${md(addDays(ws, 6))}</strong>
       <a class="btn" href="#/plans?week=${addDays(ws, 7)}">翌週 ›</a>
     </div>
-    <div class="card">
-      <div class="row spread num"><span>計画 ${km(total)}km・実績 ${km(actual)}km</span><button id="copy-week">この週を翌週へコピー</button></div>
-      <p class="muted hint" style="margin:10px 0 0">左の「⠿」を押したまま別の日へ動かすと、その日と予定が入れ替わります。メニューをタップすると中身を直せます。</p>
-      <button id="plan-cal" class="cal-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4M12 13v4M10 15h4"/></svg><span>iPhone のカレンダーに表示<small>一度追加すれば、予定を変えると自動で反映</small></span></button>
-    </div>
     <div class="card" id="cal">
+      <div class="row spread num cal-sum"><span>計画 <b>${km(total)}</b>km</span><span>実績 <b>${km(actual)}</b>km</span></div>
       ${days.map((d) => {
         const dp = plans.filter((p) => p.date === d);
         return `
@@ -713,8 +714,17 @@ async function plansView(params) {
         </div>`;
       }).join('')}
     </div>
+    <p class="muted hint" style="margin:8px 4px 0">左の「⠿」を押したまま別の日へ動かすと入れ替わります。メニューをタップすると中身を直せます。</p>
     <h2 class="sect">予定を組む</h2>
-    <div class="card tools">
+    <div class="card pm-list">
+      <button type="button" class="pm-row" data-pm="copy"><span class="pm-ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></span><span class="pm-t"><b>予定をコピー</b><small>前の週の予定を使い回す</small></span><span class="pm-chev">›</span></button>
+      <div class="pm-pane hidden" id="pm-copy">
+        <button type="button" class="pm-act" data-copy="next">この週 (${md(ws)}〜) を翌週へコピー</button>
+        <button type="button" class="pm-act" data-copy="prev">前の週 (${md(addDays(ws, -7))}〜) をこの週へコピー</button>
+        <p class="muted" id="copy-msg">コピー先にある予定はそのまま残り、コピーした予定が追加されます。</p>
+      </div>
+      <button type="button" class="pm-row" data-pm="prefs"><span class="pm-ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></span><span class="pm-t"><b>基本設定で組む</b><small>回数を選んで自動配置・レースまで</small></span><span class="pm-chev">›</span></button>
+      <div class="pm-pane hidden" id="pm-prefs">
       <div class="tool-tabs">
         <button type="button" data-tool="prefs" class="on">週を自動配置</button>
         <button type="button" data-tool="auto">レースまで</button>
@@ -735,7 +745,123 @@ async function plansView(params) {
         <div class="row"><button id="bulk-go" class="primary">登録</button></div>
         <p id="bulk-out"></p>
       </div>
-    </div>`;
+      </div>
+      <button type="button" class="pm-row" data-pm="coach"><span class="pm-ic"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M9 11h.01M12 11h.01M15 11h.01"/></svg></span><span class="pm-t"><b>予定を相談する</b><small>痛み・疲れ・走れない日を AI に相談</small></span><span class="pm-chev">›</span></button>
+      <div class="pm-pane hidden" id="pm-coach">${coachPane()}</div>
+    </div>
+    <h2 class="sect">カレンダーに反映</h2>
+    <div class="card" id="cal-card">${calCard(settings)}</div>`;
+}
+
+/** 予定をコピー (この週 → 翌週 / 前の週 → この週) */
+function wireCopy(root, ws) {
+  root.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = async () => {
+    const next = b.dataset.copy === 'next';
+    const from = next ? ws : addDays(ws, -7), to = next ? addDays(ws, 7) : ws;
+    if (!confirm(`${md(from)}〜の予定を ${md(to)}〜 の週へコピーしますか？`)) return;
+    b.disabled = true;
+    try {
+      const r = await api('/plans/copy-week', { method: 'POST', body: { from, to } });
+      root.querySelector('#copy-msg').textContent = `${r.copied} 件をコピーしました`;
+      setTimeout(() => { if (next) location.hash = `#/plans?week=${to}`; else route(); }, 700);
+    } catch (e) { root.querySelector('#copy-msg').textContent = `エラー: ${e.message}`; b.disabled = false; }
+  }));
+}
+
+// ---- 予定の相談 (AI)。会話はこの画面を開いている間だけ残す
+const COACH_QUICK = ['脚に痛みがある', '疲れが残っている', '走り足りない', '今日は走れない', '今日のメニューを軽くしたい', '雨で走れない'];
+let COACH_LOG = (() => { try { return JSON.parse(sessionStorage.getItem('coach') || '[]'); } catch { return []; } })();
+const saveCoach = () => { try { sessionStorage.setItem('coach', JSON.stringify(COACH_LOG.slice(-20))); } catch {} };
+function coachPane() {
+  return `<div class="coach">
+    <div class="coach-log" id="coach-log"></div>
+    <div class="coach-quick">${COACH_QUICK.map((q) => `<button type="button" class="chip" data-cq="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+    <form class="coach-in" id="coach-form">
+      <textarea id="coach-text" rows="2" placeholder="例: 右ふくらはぎに張りがある。明日の LT 走はどうする？"></textarea>
+      <button class="primary" id="coach-send" aria-label="送信"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </form>
+    <div class="row spread coach-foot"><span class="muted">計画と直近 3 週間の実績・ふりかえりを見て答えます</span><button type="button" class="linkbtn" id="coach-clear">会話を消す</button></div>
+  </div>`;
+}
+function wireCoach(root) {
+  const log = root.querySelector('#coach-log');
+  if (!log) return;
+  const ta = root.querySelector('#coach-text');
+  const fmtChange = (c) => `${PLAN_LABELS[c.type] || c.type}${c.distance_km ? ` ${c.distance_km}km` : ''}${c.pace ? ` ${c.pace.split('-')[0] === c.pace.split('-')[1] ? c.pace.split('-')[0] : c.pace}` : ''}`;
+  const draw = async () => {
+    const dates = COACH_LOG.flatMap((m) => (m.changes || []).map((c) => c.date)).sort();
+    let cur = [];
+    if (dates.length) { try { cur = uniqPlans(await api(`/plans?from=${dates[0]}&to=${dates[dates.length - 1]}`)); } catch {} }
+    const before = (d) => cur.filter((p) => p.date === d).map((p) => `${PLAN_LABELS[p.type]}${p.distance_m ? ` ${km(p.distance_m)}km` : ''}`).join('・') || 'なし';
+    log.innerHTML = COACH_LOG.length ? COACH_LOG.map((m, i) => m.role === 'user'
+      ? `<div class="cm me">${esc(m.content)}</div>`
+      : `<div class="cm ai">${esc(m.content).replace(/\n/g, '<br>')}${m.changes?.length ? `<div class="cchg">
+          <b>変更案</b>${m.changes.map((c) => `<div class="cchg-r"><span class="num">${md(c.date)}(${dow(c.date)})</span><span class="muted">${esc(m.applied ? '' : before(c.date))}</span><span>→ <b>${esc(fmtChange(c))}</b>${c.notes ? `<small class="muted">${esc(c.notes)}</small>` : ''}</span></div>`).join('')}
+          ${m.applied ? '<p class="muted" style="margin:8px 0 0">反映しました</p>' : `<button type="button" class="primary wide" data-capply="${i}">この内容で予定に反映</button>`}</div>` : ''}</div>`).join('')
+      : '<p class="muted coach-empty">体の状態や都合を書くと、計画の組み直しを提案します。反映するかはあとで選べます。</p>';
+    log.querySelectorAll('[data-capply]').forEach((b) => (b.onclick = async () => {
+      const m = COACH_LOG[Number(b.dataset.capply)];
+      b.disabled = true;
+      try { await api('/coach/apply', { method: 'POST', body: { changes: m.changes } }); m.applied = true; saveCoach(); route(); }
+      catch (e) { alert(e.message); b.disabled = false; }
+    }));
+  };
+  const send = async (text) => {
+    text = text.trim();
+    if (!text) return;
+    COACH_LOG.push({ role: 'user', content: text });
+    ta.value = '';
+    await draw();
+    log.insertAdjacentHTML('beforeend', '<div class="cm ai typing"><i></i><i></i><i></i></div>');
+    log.lastElementChild.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const btn = root.querySelector('#coach-send'); btn.disabled = true;
+    try {
+      const r = await api('/coach', { method: 'POST', body: { messages: COACH_LOG.map((m) => ({ role: m.role, content: m.content })) } });
+      COACH_LOG.push({ role: 'assistant', content: r.reply, changes: r.changes || [] });
+    } catch (e) {
+      COACH_LOG.push({ role: 'assistant', content: `エラー: ${e.message}` });
+    }
+    saveCoach();
+    btn.disabled = false;
+    await draw();
+    log.lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+  root.querySelector('#coach-form').onsubmit = (e) => { e.preventDefault(); send(ta.value); };
+  root.querySelectorAll('[data-cq]').forEach((b) => (b.onclick = () => { ta.value = ta.value ? `${ta.value}。${b.dataset.cq}` : b.dataset.cq; ta.focus(); }));
+  root.querySelector('#coach-clear').onclick = () => { COACH_LOG = []; saveCoach(); draw(); };
+  draw();
+}
+
+// ---- iPhone カレンダー。購読は 1 回だけ (2 回追加すると予定が二重に出る)
+function calCard(settings) {
+  const icon = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/><path d="M9 15l2 2 4-4"/></svg>';
+  if (settings.calendar_added) {
+    return `<div class="cal-done">${icon}<span><b>iPhone のカレンダーと連携済み</b><small>予定を変えると自動で反映 (${md(settings.calendar_added)} 追加)</small></span></div>
+      <details class="cal-more"><summary>反映されないとき</summary>
+        <p class="muted">iPhone の「設定 › アプリ › カレンダー › カレンダーアカウント › 照会したカレンダー」で、このカレンダーの「取得頻度」を短くすると早く反映されます。</p>
+        <p class="muted">カレンダーから消してしまったときだけ、下のボタンで追加し直してください。2 回追加すると予定が二重に表示されます。</p>
+        <button type="button" id="cal-re">カレンダーに追加し直す</button>
+      </details>`;
+  }
+  return `<button type="button" id="cal-add" class="cal-btn">${icon}<span>iPhone のカレンダーに追加<small>1 回だけ追加。あとは自動で反映</small></span></button>
+    <p class="muted" style="margin:10px 2px 0;font-size:12.5px">前に追加したことがあるなら、押さずに <button type="button" class="linkbtn" id="cal-mark" style="margin:0">追加済みにする</button> (二重に表示されるのを防ぎます)</p>`;
+}
+async function openCalendar() {
+  const st = await api('/status');
+  await api('/settings', { method: 'PUT', body: { calendar_added: today() } }).catch(() => null);
+  cachedSettings = null;
+  location.href = st.calendar_url.replace(/^https?:/, 'webcal:');
+}
+function wireCalendar(root) {
+  const add = root.querySelector('#cal-add');
+  if (add) add.onclick = async () => { add.disabled = true; try { await openCalendar(); setTimeout(route, 1500); } catch (e) { alert(e.message); add.disabled = false; } };
+  const mark = root.querySelector('#cal-mark');
+  if (mark) mark.onclick = async () => { await api('/settings', { method: 'PUT', body: { calendar_added: today() } }); cachedSettings = null; route(); };
+  const re = root.querySelector('#cal-re');
+  if (re) re.onclick = async () => {
+    if (!confirm('カレンダーにまだ「STRIDE」が残っていると、予定が二重に表示されます。iPhone のカレンダーから消したときだけ追加し直してください。追加しますか？')) return;
+    try { await openCalendar(); } catch (e) { alert(e.message); }
+  };
 }
 
 /** 「週の条件」「自動で作る」「貼り付け」の切り替え (選んだ1つだけ開く) */
@@ -2383,7 +2509,7 @@ async function settingsView() {
       await navigator.clipboard.writeText(status.calendar_url);
       return 'カレンダー購読 URL をコピーしました。iPhone の「設定 > カレンダー > アカウント > アカウントを追加 > その他 >照会カレンダーを追加」に貼り付けてください';
     });
-    run('#open-cal', async () => { location.href = status.calendar_url.replace(/^https?:/, 'webcal:'); return 'カレンダーを開きます'; });
+    run('#open-cal', async () => { await openCalendar(); return 'カレンダーを開きます'; });
     const sf = view.querySelector('#settings-form');
     if (sf) sf.querySelectorAll('[data-pa]').forEach((b) => (b.onclick = async () => {
       b.disabled = true;

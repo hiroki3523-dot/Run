@@ -10,6 +10,7 @@ import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './re
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
+import { applyCoach, askCoach } from './coach';
 import { corosDisconnect, getAuth as getCorosAuth, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns } from './insights';
 import { applyDerived } from './derive-apply';
@@ -413,6 +414,22 @@ const daysSpan = (a: string, b: string) => Math.round((Date.parse(b) - Date.pars
  * 直近の実績と目標レースから、レースまでの日別メニューを作る。
  * commit が false ならプレビューだけ返し、true なら登録する。
  */
+/** 予定の相談 (AI)。返事と計画の変更案を返す (まだ反映しない) */
+api.post('/coach', async (c) => {
+  const { messages } = await c.req.json<{ messages: { role: 'user' | 'assistant'; content: string }[] }>();
+  try {
+    return c.json(await askCoach(c.env, Array.isArray(messages) ? messages : []));
+  } catch (e) {
+    const m = (e as Error).message;
+    return c.json({ error: /neuron|quota|limit|4006/i.test(m) ? 'AI の 1 日の無料枠を使い切りました。明日 9:00 に戻ります' : m }, 500);
+  }
+});
+/** 相談で出た変更案を計画に反映 */
+api.post('/coach/apply', async (c) => {
+  const { changes } = await c.req.json<{ changes: any[] }>();
+  return c.json({ applied: await applyCoach(c.env, Array.isArray(changes) ? changes : []) });
+});
+
 api.post('/plans/generate', async (c) => {
   const b = await c.req.json<{ race_id?: number; overwrite?: boolean; commit?: boolean; from?: string; to?: string }>();
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
