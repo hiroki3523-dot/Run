@@ -21,7 +21,7 @@ const stat = new Map(git('diff', '--numstat', `${base}...HEAD`).split('\n').filt
 const funcs = new Set();
 for (const { f } of status.filter((x) => /\.(ts|js|mjs)$/.test(x.f))) {
   const d = tryGit('diff', '-U0', `${base}...HEAD`, '--', f);
-  for (const m of d.matchAll(/^@@[^@]*@@\s*(?:export\s+)?(?:async\s+)?(?:function\s+)?(?:const\s+)?([A-Za-z0-9_]+)/gm)) funcs.add(m[1]);
+  for (const m of d.matchAll(/^@@[^@]*@@\s*(?:export\s+)?(?:async\s+)?(?:function\s+)?(?:const\s+)?([A-Za-z0-9_]+)(?![.\w])/gm)) funcs.add(m[1]);
   for (const m of d.matchAll(/^[+-](?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)/gm)) funcs.add(m[1]);
 }
 const feats = featuresOf(status.map((x) => x.f), [...funcs]);
