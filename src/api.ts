@@ -133,6 +133,23 @@ api.put('/races/:id', async (c) => {
   return row ? c.json(row) : c.notFound();
 });
 
+/** 大会を探す画面の詳細: 一覧の大会の公式サイトを読む (保存しない。同じ URL は 1 週間覚えておく) */
+api.post('/races/preview', async (c) => {
+  const { name, date, url } = await c.req.json<{ name: string; date: string; url: string }>();
+  if (!url || !/^https?:\/\//.test(url)) return c.json({ error: '公式サイトの URL が必要です' }, 400);
+  const key = `rprev:${url}`;
+  const hit = await kvGet(c.env, key);
+  if (hit) { try { const o = JSON.parse(hit); if (Date.now() - o.at < 7 * 86400_000) return c.json(o.info); } catch {} }
+  try {
+    const info = await extractRaceInfo(c.env, { name: String(name).slice(0, 60), date: String(date).slice(0, 10) }, { url });
+    await kvSet(c.env, key, JSON.stringify({ at: Date.now(), info }));
+    return c.json(info);
+  } catch (e) {
+    const m = (e as Error).message;
+    return c.json({ error: /neuron|quota|4006/i.test(m) ? 'AI の 1 日の無料枠を使い切りました。明日 9:00 に戻ります' : m }, 500);
+  }
+});
+
 /** 公式サイト (または貼り付けた文章) から大会情報を読み取る。保存はしない (画面で確かめてから) */
 api.post('/races/:id/extract', async (c) => {
   const race = await c.env.DB.prepare('SELECT * FROM races WHERE id = ?').bind(c.req.param('id')).first<any>();
