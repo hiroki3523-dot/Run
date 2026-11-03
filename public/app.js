@@ -108,7 +108,31 @@ function setToken(t) {
   try { localStorage.setItem('token', t); } catch { /* private mode */ }
 }
 
+/**
+ * 読み込みの一時保存 (速く切り替えるため)。同じ GET は 30 秒以内なら前の結果を使う。
+ * 保存・削除などの変更をしたら、すべて捨てる。連携の状態など、いつも新しい値が要るものは保存しない
+ */
+const API_CACHE = new Map();
+const API_TTL = 30_000;
+const NO_CACHE = /^\/(status|coros|strava|notify|backup)|\/coros-segments|^\/news/;
+const clearApiCache = () => API_CACHE.clear();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') clearApiCache(); });
 async function api(path, opts = {}) {
+  const method = String(opts.method || 'GET').toUpperCase();
+  if (method !== 'GET') clearApiCache();
+  else if (!NO_CACHE.test(path)) {
+    const hit = API_CACHE.get(path);
+    if (hit && Date.now() - hit.t < API_TTL) return hit.p.then((d) => (d == null ? d : structuredClone(d)));
+    const p = apiFetch(path, opts);
+    API_CACHE.set(path, { t: Date.now(), p });
+    p.catch(() => API_CACHE.delete(path));
+    return p.then((d) => (d == null ? d : structuredClone(d)));
+  }
+  const out = await apiFetch(path, opts);
+  if (method !== 'GET') clearApiCache();
+  return out;
+}
+async function apiFetch(path, opts = {}) {
   const res = await fetch(`/api${path}`, {
     ...opts,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}`, ...opts.headers },
@@ -162,13 +186,20 @@ async function captureView(title) {
     const { toBlob } = await import('https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/+esm');
     // 開いている折りたたみはそのまま、ボタン類 (no-cap) は写さない
     const bg = getComputedStyle(document.body).backgroundColor;
-    const blob = await toBlob(view, { pixelRatio: Math.min(3, window.devicePixelRatio || 2), backgroundColor: bg, cacheBust: true, filter: (n) => !(n.classList && n.classList.contains('no-cap')), style: { padding: '14px', margin: '0' } });
+    // iPhone の Safari は、1 枚の画像の大きさ (縦×横の点の数) に上限がある (約 1,670 万点)。
+    // 画面が長いと上限を超えて保存できなくなるので、超えないように細かさを下げる
+    const box = view.getBoundingClientRect();
+    const area = Math.max(1, (box.width + 28) * (view.scrollHeight + 28));
+    const ratio = Math.max(1, Math.min(3, window.devicePixelRatio || 2, Math.sqrt(14_000_000 / area)));
+    const blob = await toBlob(view, { pixelRatio: ratio, backgroundColor: bg, cacheBust: true, filter: (n) => !(n.classList && n.classList.contains('no-cap')), style: { padding: '14px', margin: '0' } });
+    if (!blob || blob.size < 1000) throw new Error('画像が空になりました。折りたたみを閉じて、もう一度試してください');
     const name = `${String(title || 'STRIDE').replace(/[\\/:*?"<>|]/g, '')}.png`;
     const file = new File([blob], name, { type: 'image/png' });
     const url = URL.createObjectURL(blob);
-    ov.querySelector('.sheet-body').innerHTML = `<div class="cap-prev"><img src="${url}" alt=""></div>
-      <div class="cap-acts"><button type="button" class="primary" data-cap="share">保存・共有</button><button type="button" data-cap="close">閉じる</button></div>
-      <p class="muted" style="text-align:center;font-size:12px;margin:8px 0 0">「保存・共有」→「画像を保存」で写真に入ります。画像を長押ししても保存できます。</p>`;
+    // ボタンを上に (画像が長くても、すぐ押せるように)
+    ov.querySelector('.sheet-body').innerHTML = `<div class="cap-acts"><button type="button" class="primary" data-cap="share">保存・共有</button><button type="button" data-cap="close">閉じる</button></div>
+      <p class="muted" style="text-align:center;font-size:12px;margin:6px 0 8px">「保存・共有」→「画像を保存」で写真に入ります。画像を長押ししても保存できます。</p>
+      <div class="cap-prev"><img src="${url}" alt=""></div>`;
     ov.querySelector('[data-cap="close"]').onclick = () => { URL.revokeObjectURL(url); close(); };
     ov.querySelector('[data-cap="share"]').onclick = async () => {
       if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file] }); } catch {} return; }
@@ -209,21 +240,32 @@ async function loadNews() {
 async function homeView() {
   const t = today();
   const ws = weekStart(t);
-  const [plans, acts, races, status, settings, weather, wxWeek] = await Promise.all([
+  // 天気 (外のサービス)・月間目標・週間グラフは、画面を出してから後で入れる (表示を待たせない)
+  const [plans, acts, races, status, settings] = await Promise.all([
     api(`/plans?from=${ws}&to=${addDays(ws, 6)}`),
     api(`/activities?from=${addDays(t, -14)}&to=${t}`),
     api('/races'),
     api('/status'),
     api('/settings'),
-    api('/race-weather').catch(() => null),
-    loadWx(),
   ]);
   dedupeIfNeeded(plans);
   const todays = uniqPlans(plans.filter((p) => p.date === t));
   const next = races.find((r) => r.date >= t && r.status !== 'candidate');
   // 6 週間前から、次のレースの週まで (最大 14 週先)。過去は実績、先は計画
   const endDay = next && next.date <= addDays(ws, 7 * 14) ? next.date : addDays(ws, 6);
-  const summary = await api(`/summary?from=${addDays(ws, -7 * 6)}&to=${endDay}`);
+  setTimeout(() => {
+    const fill = (id, html) => { const el = document.getElementById(id); if (el) el.outerHTML = html; };
+    api('/race-weather').then((w) => fill('hm-rwx', next ? weatherCard(w) : '')).catch(() => fill('hm-rwx', ''));
+    loadWx().then((w) => fill('hm-wxweek', w ? weekWxCard(t, w.place) : '')).catch(() => fill('hm-wxweek', ''));
+    monthGoalCard(t).then((h) => fill('hm-month', h)).catch(() => fill('hm-month', ''));
+    // 週間グラフは開いたときに読む
+    const acc = document.getElementById('hm-weekly');
+    if (acc) acc.addEventListener('toggle', async () => {
+      if (!acc.open || acc.dataset.done) return;
+      acc.dataset.done = '1';
+      try { acc.querySelector('.rv-acc-b').innerHTML = weeklyChart(await api(`/summary?from=${addDays(ws, -7 * 6)}&to=${endDay}`)); bindTrend(acc); } catch { acc.querySelector('.rv-acc-b').innerHTML = '<p class="muted">読み込めませんでした。</p>'; }
+    });
+  });
 
   // 今週の走行距離 / 計画 (計画画面の上と同じ数え方: 週の計画の合計と、週に走った距離)
   const weekActs = acts.filter((x) => x.date >= ws && x.date <= addDays(ws, 6));
@@ -253,10 +295,10 @@ async function homeView() {
       <span class="hm-link">ペース表・持ち物 ›</span>
     </a>
     ${goalCard()}
-    ${weatherCard(weather)}` : ''}
-    ${await monthGoalCard(t)}
-    <details class="card rv-acc hm-acc"><summary>週間距離のグラフ</summary><div class="rv-acc-b">${weeklyChart(summary)}</div></details>
-    ${wxWeek ? weekWxCard(t, wxWeek.place) : ''}
+    <div id="hm-rwx"></div>` : ''}
+    <div id="hm-month"></div>
+    <details class="card rv-acc hm-acc" id="hm-weekly"><summary>週間距離のグラフ</summary><div class="rv-acc-b"><p class="muted">開くと読み込みます</p></div></details>
+    <div id="hm-wxweek"></div>
     <div class="card news"><h2>ランニングニュース</h2><div id="news-list"><p class="muted">読み込み中…</p></div></div>`;
 }
 
@@ -2611,19 +2653,21 @@ function racePlanExtras(r, mode) {
 }
 
 /* ---- 大会のイメージ画像 (自動で作る SVG。都市・海辺の都市・海・山) ---- */
-const ART_THEMES = { city: '都市', coast: '海辺の都市', sea: '海', mountain: '山' };
-/** 大会名・会場から景色を選ぶ (おすすめ)。当てはまらなければ都市 */
+const ART_THEMES = { city: '都市', coast: '海辺の都市', sea: '海', mountain: '山', country: '田園' };
+/** 大会名・会場から景色を選ぶ (おすすめ)。大きな都市の名前が無ければ、田園 (田舎の大会を都市にしない) */
 function artThemeOf(r) {
   const t = `${r.name || ''} ${raceInfoOf(r).venue || ''}`;
-  const sea = /海|湾|浜|ビーチ|島|港|岬|湘南|糸島|沖縄|那覇|宮古|石垣|館山|みなと|マリン|ベイ|オーシャン|シーサイド|海岸/.test(t);
+  const sea = /海|湾|浜|ビーチ|島|港|岬|別府|湘南|糸島|沖縄|那覇|宮古|石垣|館山|みなと|マリン|ベイ|オーシャン|シーサイド|海岸/.test(t);
   const mtn = /山|高原|トレイル|峠|富士|岳|アルプス|渓谷|湖|森/.test(t);
   const coastCity = /福岡|神戸|横浜|那覇|北九州|下関|函館|長崎|千葉|大阪|湘南|静岡|和歌山|松山|高知|鹿児島/.test(t);
-  const city = /東京|大阪|名古屋|福岡|京都|神戸|横浜|札幌|仙台|広島|北九州|さいたま|千葉|金沢|岡山|熊本|新潟|シティ|市/.test(t);
+  // 都市にするのは大きな都市の名前があるときだけ (「○○市民マラソン」の「市」では都市にしない)
+  const city = /東京|大阪|名古屋|福岡|京都|神戸|横浜|札幌|仙台|広島|北九州|さいたま|金沢|岡山|熊本|新潟|シティ|city|City/.test(t);
   if (mtn && !city) return 'mountain';
-  if (coastCity) return 'coast';
+  if (coastCity && city) return 'coast';
   if (sea) return 'sea';
   if (mtn) return 'mountain';
-  return 'city';
+  if (city) return 'city';
+  return 'country';
 }
 /** 大会ごとに少しずつ違う景色にするための乱数 (同じ大会なら毎回同じ) */
 function artRand(seed) {
@@ -2640,8 +2684,9 @@ function raceArtSvg(theme, seed) {
     coast: ['#0a1236', '#24308f', '#6a5cff', '#ffa77a'],
     sea: ['#08163a', '#1d3a9e', '#4f7dff', '#ffc27a'],
     mountain: ['#0c1030', '#2b2a86', '#8a5cff', '#ff9ec7'],
+    country: ['#0b1534', '#2c3d96', '#7b6cff', '#ffc38a'],
   }[theme] || ['#0b0f2e', '#2a2a8a', '#7a4dff', '#ff7aa8'];
-  const horizon = theme === 'mountain' ? 150 : theme === 'city' ? 168 : 132;
+  const horizon = theme === 'mountain' ? 150 : theme === 'city' ? 168 : theme === 'country' ? 140 : 132;
   const sunX = 250 + rnd() * 100, sunY = horizon - 18 - rnd() * 30;
   let g = `<defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${pal[0]}"/><stop offset=".55" stop-color="${pal[1]}"/><stop offset="1" stop-color="${pal[2]}"/></linearGradient>
@@ -2676,6 +2721,22 @@ function raceArtSvg(theme, seed) {
   } else if (theme === 'sea') {
     g += `<rect y="${horizon}" width="${W}" height="${H - horizon}" fill="url(#sea)"/>`;
     g += `<path d="M180 ${horizon} q40 -14 80 -6 t70 2 l70 4 v0 Z" fill="#141a52" opacity=".8"/>`;
+  } else if (theme === 'country') {
+    // 田園: なだらかな丘・田畑のうね・木と小さな家
+    const hill = (base, amp, fill, op, ph) => { let d = `M0 ${H} L0 ${base}`; for (let x = 0; x <= W; x += 10) d += ` L${x} ${(base - Math.sin(x / 70 + ph) * amp - Math.sin(x / 23 + ph * 2) * amp * 0.25).toFixed(1)}`; return `<path d="${d} L${W} ${H}Z" fill="${fill}" opacity="${op}"/>`; };
+    g += hill(horizon - 6, 10, '#3d3a9c', '.55', rnd() * 6) + hill(horizon + 10, 9, '#24256e', '.9', rnd() * 6);
+    // 田畑のうね (手前に向かって広がる線)
+    for (let i = 0; i < 7; i++) { const y = horizon + 22 + i * 7; g += `<path d="M${(150 + i * 4).toFixed(0)} ${y} Q 280 ${y - 4} ${W} ${y + 2}" stroke="#8fa0ff" stroke-width=".8" fill="none" opacity="${(0.12 + i * 0.03).toFixed(2)}"/>`; }
+    g += hill(horizon + 34, 6, '#12133a', '1', rnd() * 6);
+    // 木と家 (右寄り)
+    for (let i = 0; i < 7; i++) {
+      const x = 170 + rnd() * 220, base = horizon + 4 + rnd() * 10, r = 4 + rnd() * 5;
+      g += `<rect x="${(x - 0.8).toFixed(1)}" y="${(base - r).toFixed(1)}" width="1.6" height="${(r + 2).toFixed(1)}" fill="#14153e"/><circle cx="${x.toFixed(1)}" cy="${(base - r * 1.4).toFixed(1)}" r="${r.toFixed(1)}" fill="#1c1d52"/>`;
+    }
+    for (let i = 0; i < 3; i++) {
+      const x = 200 + rnd() * 170, base = horizon + 8 + rnd() * 6, w = 12 + rnd() * 6;
+      g += `<path d="M${x.toFixed(1)} ${base.toFixed(1)} v-7 l${(w / 2).toFixed(1)} -6 l${(w / 2).toFixed(1)} 6 v7 Z" fill="#16173f"/><rect x="${(x + w / 2 - 1.5).toFixed(1)}" y="${(base - 6).toFixed(1)}" width="3" height="3" fill="#ffd98a" opacity=".7"/>`;
+    }
   } else {
     const ridge = (base, amp, fill, op) => { let d = `M0 ${H} L0 ${base}`; for (let x = 0; x <= W; x += 20) d += ` L${x} ${(base - (Math.sin(x / 37 + rnd()) + 1) * amp * (0.4 + 0.6 * x / W) - rnd() * 6).toFixed(1)}`; return `<path d="${d} L${W} ${H}Z" fill="${fill}" opacity="${op}"/>`; };
     g += ridge(horizon - 10, 34, '#3a2f9a', '.55') + ridge(horizon + 8, 30, '#221d6a', '.85') + ridge(horizon + 28, 22, '#0e0e30', '1');
@@ -2726,11 +2787,12 @@ async function loadRaceReady(r) {
 }
 
 async function raceDetailView(id) {
-  const [races, state, weather] = await Promise.all([
+  const [races, state] = await Promise.all([
     api('/races'),
     api(`/checklist/${id}`).catch(() => ({ checked: [], custom: [] })),
-    api('/race-weather').catch(() => null),
   ]);
+  // レース天気は外のサービスなので、画面を出してから入れる
+  setTimeout(() => api('/race-weather').then((w) => { const el = document.getElementById('rd-wx'); const rr = races.find((x) => x.id === Number(id)); if (el) el.outerHTML = w && rr && w.race === rr.name ? weatherCard(w) : ''; }).catch(() => {}));
   // 持ち物のひな形 (全レース共通)。設定に保存してあればそれ、無ければ最初の一覧
   const st0 = await api('/settings').catch(() => ({}));
   let tmpl = Array.isArray(st0.checklist_template) ? st0.checklist_template : CHECK_ITEMS.map(([cat, iid, text]) => ({ cat, id: iid, text }));
@@ -2929,7 +2991,7 @@ async function raceDetailView(id) {
     <div class="rd-tabs" role="tablist" aria-label="レースの項目">${[['about', '概要'], ['plan', '戦略'], ['prep', '準備'], ['result', '実績']].map(([k, l], i) => `<a href="javascript:void 0" data-go="${k}" class="${i === 0 ? 'on' : ''}">${l}</a>`).join('')}</div>
     <div id="rs-about" class="rd-sec">
     ${raceInfoCard(r)}
-    ${weather && weather.race === r.name ? weatherCard(weather) : ''}
+    <div id="rd-wx"></div>
     </div>
     <div id="rs-plan" class="rd-sec">
     <div class="card"><h2>ペース・補給プラン</h2>

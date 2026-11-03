@@ -1352,7 +1352,7 @@ h3.sect { margin: 18px 4px 8px; font-size: 15px; font-weight: 700; }
 .rl-name { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rl-sub { font-size: 12.5px; }
 .rl-row .chev { flex: none; color: var(--muted); }
-.rd-tabs { position: sticky; top: calc(env(safe-area-inset-top) + 6px); z-index: 5; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; margin: 0 0 12px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line); }
+.rd-tabs { position: sticky; top: calc(env(safe-area-inset-top) + 6px); z-index: 5; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; margin: 0 0 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); }
 .rd-tabs a { text-align: center; padding: 8px 0; border-radius: 999px; font-size: 13.5px; font-weight: 700; color: var(--muted); text-decoration: none; }
 .rd-tabs a.on { background: var(--text); color: var(--bg); }
 .rd-sec { scroll-margin-top: 110px; }
