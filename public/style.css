@@ -1125,6 +1125,12 @@ body::after {
 .an-gi b { font-size: 12.5px; }
 .an-gi b.g { color: var(--good); } .an-gi b.b { color: var(--mid); }
 .an-gi p { margin: 3px 0 0; font-size: 14px; }
+.an-top { display: flex; flex-direction: column; gap: 10px; margin: 0 0 6px; }
+.an-top > div { padding: 10px 12px; border-radius: 14px; background: color-mix(in srgb, var(--text) 4%, transparent); }
+.an-top b { font-size: 12px; color: var(--accent); }
+.an-top p { margin: 3px 0 0; font-size: 14px; line-height: 1.55; }
+.an-dh { font-size: 13px; color: var(--muted); margin: 14px 0 2px; }
+.an-def { font-size: 12px; margin: -2px 0 8px; }
 .an h4 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
 .an-items { display: flex; flex-direction: column; gap: 10px; }
 .an-it { display: flex; gap: 10px; align-items: flex-start; }
@@ -1236,3 +1242,5 @@ body::after {
 html { scroll-padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
 dialog { max-height: calc(100dvh - 40px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; }
 .sheet-body { max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain; }
+
+.hd-basis { font-size: 11.5px; margin: 8px 0 0; }

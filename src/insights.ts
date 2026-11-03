@@ -134,7 +134,7 @@ export function buildInsights(i: InsightIn): Insights {
     const d = c - b + Math.max(0, slower) * 0.15;
     const lv: Level = d >= -2 ? 'ok' : d >= -5 ? 'warn' : 'bad';
     items.push({ key: 'cadence', level: lv, label: 'ピッチ (4週平均・自分の前の4週と比較)', value: `${Math.round(c)}spm`, target: `${Math.round(b)}spm` });
-    if (lv !== 'ok') actions.push(`ピッチが前の 4 週 (${Math.round(b)}spm) より下がっている。疲労のサインのことも。Easy の最後に流し 100m×4〜6 本`);
+    if (lv !== 'ok') actions.push(`ピッチが前の 4 週 (${Math.round(b)}spm) より下がっている (同じくらいのペースで比較)。脚の重さや痛みがなければ走り方を変える必要はなく、疲れのサインかどうかを数日見る`);
   }
 
   // 6. 継続 (直近 4 週の走った日数)

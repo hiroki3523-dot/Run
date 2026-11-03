@@ -1762,7 +1762,7 @@ async function activitiesView(params) {
         ${r.grade ? `<span class="grade g${r.grade}">${r.grade}<small>${r.in_progress ? '途中経過' : GRADE_NOTE[r.grade]}${r.grade_calc ? `・${r.grade_calc.pts}点` : ''}</small></span>` : r.runs ? '<span class="grade gH">保留<small>材料が少ない</small></span>' : ''}</div>
       ${r.in_progress || r.phase_note ? `<p class="rv-phase">${r.in_progress ? `<b>途中経過</b> ${md(today())} までの計画と比べています。最終評価は期間が終わってから。` : ''}${r.phase_note ? `${r.in_progress ? '<br>' : ''}${esc(r.phase_note)}` : ''}</p>` : ''}
       ${r.parts?.length ? `<details class="rv-acc rv-parts"><summary>評価の内訳</summary><div class="an-items">${r.parts.map((x) => `<div class="an-it"><span class="an-j j-${x.score == null ? 'hold' : x.score >= 80 ? 'good' : x.score >= 60 ? 'ok' : 'bad'}">${x.score == null ? '保留' : x.score}</span><div><b>${esc(x.label)} <small class="muted">(重み ${x.weight})</small></b><small class="muted">${esc(x.reason)}</small></div></div>`).join('')}</div>
-        <p class="muted an-note">${kind === 'day' ? '日次はその日のメイン練習の達成度。' : kind === 'week' ? '週次は練習の構成・ポイント練・負荷の増え方。' : '月次は練習の質・継続・負荷の変化。'}保留の項目は除いて、重みで平均しています。月の距離目標は評価に入れていません。</p></details>` : ''}
+        <p class="muted an-note">${kind === 'day' ? '日次はその日の練習全体 (アップ・メイン・ダウン) を、練習の目的と大会までの日数もふまえて見たもの。' : kind === 'week' ? '週次は練習の構成・ポイント練・負荷の増え方。' : '月次は練習の質・継続・負荷の変化。'}保留の項目は除いて、重みで平均しています。月の距離目標は評価に入れていません。</p></details>` : ''}
       <div class="grid3">
         ${stat('距離', `${r.km}km`, r.planned_km ? `${r.in_progress ? `今日まで ${r.due_km}km` : `計画 ${r.planned_km}km`}${pct ? `・${pct}` : ''}` : '')}
         ${stat('回数', `${r.runs}回`, `${r.run_days}日`)}
@@ -1940,21 +1940,31 @@ function analysisHtml(an) {
   const tile = (title, x, sub) => `<div class="an-t"><small>${title}</small>${x.score != null ? `<b class="num">${x.score}</b>` : '<b class="an-hold">保留</b>'}<span class="muted">${sub}</span></div>`;
   const items = (arr) => `<div class="an-items">${arr.map((x) => `<div class="an-it"><span class="an-j j-${x.judge}">${J[x.judge]}</span><div><b>${esc(x.label)}</b><span class="num">${esc(x.value)}</span><small class="muted">${esc(x.reason)}</small></div></div>`).join('')}</div>`;
   const acc = (title, body, open = false) => `<details class="rv-acc" ${open ? 'open' : ''}><summary>${title}</summary><div class="rv-acc-b">${body}</div></details>`;
-  const TR = { up: ['改善', 'good'], same: ['維持', 'ok'], down: ['低下', 'bad'], hold: ['保留', 'hold'] };
+  const TR = { up: ['改善', 'good'], same: ['維持', 'ok'], down: ['低下', 'bad'], ref: ['参考', 'hold'], hold: ['保留', 'hold'] };
+  const D = Object.fromEntries((an.defs || []).map((d) => [d.key, d.text]));
+  const top = an.top;
   let h = `<div class="card an"><h2>この走りの評価</h2>
-    <div class="an-tiles">${tile('練習達成度', an.achievement, '計画どおりにできたか')}${tile('走力評価', an.fitness, '余裕・後半の維持・効率')}</div>
-    ${an.summary ? `<p class="an-sum"><b>総評</b>${esc(an.summary)}</p>` : ''}
-    ${an.good.length || an.issues.length ? `<div class="an-gi">${an.good.length ? `<div><b class="g">良かった点</b>${an.good.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}${an.issues.length ? `<div><b class="b">課題</b>${an.issues.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}</div>` : ''}
-    ${an.next?.length ? `<div class="an-next"><b>次に活かすこと</b>${an.next.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}`;
+    <div class="an-tiles">${tile('練習達成度', an.achievement, '予定に対して')}${tile('走力評価', an.fitness, '走りの中身')}</div>
+    ${top ? `<div class="an-top">
+      <div><b>総合評価</b><p>${esc(top.overall)}</p></div>
+      <div><b>最も重要な発見</b><p>${esc(top.finding)}</p></div>
+      ${top.next ? `<div><b>次に活かすこと</b><p>${esc(top.next)}</p></div>` : ''}
+    </div>` : an.summary ? `<p class="an-sum"><b>総評</b>${esc(an.summary)}</p>` : ''}
+    <h3 class="an-dh">詳細分析</h3>`;
+  if (an.ready) h += acc(`大会への準備 (${esc(an.ready.race)}・あと ${an.ready.days} 日)`, items(an.ready.rows) + `<p class="muted an-note">${esc(an.ready.note)}</p>`);
+  if (an.overpace) h += acc('目標ペースより速かった影響', `<p>${esc(an.overpace.fact)}</p>${items(an.overpace.rows)}<p class="an-sum">${esc(an.overpace.verdict)}</p>`);
+  if (an.good.length || an.issues.length || (an.next?.length > 1)) h += acc('良かった点・課題', `${an.good.length || an.issues.length ? `<div class="an-gi">${an.good.length ? `<div><b class="g">良かった点</b>${an.good.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}${an.issues.length ? `<div><b class="b">課題</b>${an.issues.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}</div>` : ''}${an.next?.length > 1 ? `<div class="an-next"><b>ほかに活かすこと</b>${an.next.slice(1).map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}`);
   if (an.subj?.length) h += acc('主観と数値の照らし合わせ', an.subj.map((x) => `<div class="an-it"><span class="an-j j-${x.kind === 'gap' ? 'bad' : x.kind === 'match' ? 'good' : 'ok'}">${x.kind === 'gap' ? 'ずれ' : x.kind === 'match' ? '一致' : '事実'}</span><div><span>${esc(x.text)}</span></div></div>`).join('') + '<p class="muted an-note">主観を点数に足すのではなく、数値と合っているか・ずれているかを見ます。「推測」と書いたものは可能性です。</p>');
-  h += acc('評価の根拠', `<h4>練習達成度${an.achievement.score != null ? ` ${an.achievement.score}点` : ''}</h4>${an.achievement.hold_reason ? `<p class="muted">${esc(an.achievement.hold_reason)}</p>` : ''}${items(an.achievement.items)}
-    <h4>走力評価${an.fitness.score != null ? ` ${an.fitness.score}点` : ''}</h4>${an.fitness.hold_reason ? `<p class="muted">${esc(an.fitness.hold_reason)}</p>` : ''}${items(an.fitness.items)}
-    <p class="muted an-note">練習達成度は計画 (種類・ペース帯・距離) に対しての点数。走力評価は計画とは別に、余裕を持って最後まで走れたかを見ます。データが足りない項目は数値にせず保留にしています。</p>`);
+  h += acc('評価の根拠', `<h4>練習達成度${an.achievement.score != null ? ` ${an.achievement.score}点` : ''}</h4>${D.ach ? `<p class="muted an-def">${esc(D.ach)}</p>` : ''}${an.achievement.hold_reason ? `<p class="muted">${esc(an.achievement.hold_reason)}</p>` : ''}${items(an.achievement.items)}
+    <h4>走力評価${an.fitness.score != null ? ` ${an.fitness.score}点` : ''}</h4>${D.fit ? `<p class="muted an-def">${esc(D.fit)}</p>` : ''}${an.fitness.hold_reason ? `<p class="muted">${esc(an.fitness.hold_reason)}</p>` : ''}${items(an.fitness.items)}
+    ${D.day ? `<h4>日次評価</h4><p class="muted an-def">${esc(D.day)}</p>` : ''}
+    <p class="muted an-note">同じデータなら同じ点数になります。データが足りない項目・未入力のふりかえりは、数値にせず保留にしています (0 点や推測の値では埋めません)。</p>`);
   if (an.compare) h += acc(`過去との比較 (似たラン ${an.compare.n} 本)`, `<table class="an-cmp num"><tr><th></th><th>今回</th><th>過去</th><th>差</th><th></th></tr>${an.compare.metrics.map((m) => `<tr><td>${esc(m.label)}</td><td>${esc(m.now)}</td><td class="muted">${esc(m.past)}</td><td>${esc(m.diff)}</td><td><span class="an-j j-${TR[m.trend][1]}">${TR[m.trend][0]}</span></td></tr>`).join('')}</table>
     <p class="muted an-note">比べたラン: ${an.compare.runs.map((r) => `<a href="#/activities/${r.id}">${md(r.date)} ${r.km}km ${pace(r.pace)}${r.temp != null ? ` ${Math.round(r.temp)}℃` : ''}</a>`).join('・')}</p>${an.compare.notes.map((t) => `<p class="muted an-note">${esc(t)}</p>`).join('')}`);
   else h += acc('過去との比較', '<p class="muted">距離・ペース・種類が近い過去のランがまだ 2 本未満のため比較できません。ランが増えると自動で比べます。</p>');
   if (an.hrpace) h += acc('ペースと心拍', `${hrPaceChart(an.chart, an.hrpace.steady)}${an.hrpace.text.map((t) => `<p>${esc(t)}</p>`).join('')}`);
   if (an.form && an.form.rows.length) h += acc('フォームの前半・後半', `<table class="an-cmp num"><tr><th></th><th>前半</th><th>後半</th><th>差</th></tr>${an.form.rows.map((r) => `<tr class="${r.flag ? 'flag' : ''}"><td>${r.label}</td><td>${r.first}</td><td>${r.second}</td><td>${r.diff}</td></tr>`).join('')}</table>${an.form.text.map((t) => `<p>${esc(t)}</p>`).join('')}`);
+  if (an.basis?.length) h += acc('数値の出どころ', an.basis.map((t) => `<p class="muted an-note">${esc(t)}</p>`).join(''));
   return h + '</div>';
 }
 
@@ -2095,7 +2105,7 @@ async function activityDetailView(id) {
   const HOW = {
     pace: ['ペース', '計画のペース帯に入って走れた距離の割合と、帯からはみ出した秒数。1kmごとの安定、後半の失速も見ます。帯からの平均のはみ出しが0秒で満点、1秒/kmごとに約7点減ります。'],
     hr: ['心拍', '目標の心拍域に収まっていたか。一定ペースの練習では、後半に心拍が上がる「ドリフト」(2%以内なら満点) も見ます。'],
-    cadence: ['ケイデンス', '目標ピッチとの差と、後半の落ち込み。目標より1spm低いごとに約8点減ります。'],
+    cadence: ['ケイデンス', '後半までピッチを保てたか。理想値は人それぞれなので、決まった値 (180 など) との差では減点しません。後半に 2spm を超えて落ちた分だけ、1spm ごとに約8点減ります。'],
     form: ['フォーム', '歩幅とピッチのばらつき、後半に歩幅が縮んでいないか。'],
   };
   const howCard = (ev) => {
@@ -2211,7 +2221,7 @@ async function activityDetailView(id) {
       <div class="row spread"><h2>${esc(a.name)}</h2><span class="ext-links"><button type="button" class="cap-btn no-cap" data-capture="${esc(a.name)}" aria-label="画面を画像で保存"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg>画像</button>${a.coros ? `<a class="muted" href="https://t.coros.com/activity-detail?labelId=${encodeURIComponent(a.coros.label_id)}&sportType=${a.coros.sport_type}" target="_blank" rel="noopener">COROS ↗</a>` : ''}${a.id > 0 ? `<a class="muted" href="https://www.strava.com/activities/${a.id}" target="_blank" rel="noopener">Strava ↗</a>` : ''}</span></div>
       <div class="muted">${a.start_date_local.slice(0, 16).replace('T', ' ')}${ev?.role ? `<span class="role">${{ warmup: 'アップ', work: 'メイン', cooldown: 'ダウン' }[ev.role]}</span>` : ''}</div>
       <div class="row spread hd-main"><div class="num"><span class="hd-km">${km(a.distance_m, 2)}</span><span class="hd-u">km</span></div>
-        <div style="text-align:right"><div class="muted">総合</div><div class="big">${scoreHtml(a.score)}</div></div></div>
+        <div style="text-align:right"><div class="muted">${a.plan_id && ev?.type !== 'free' ? '練習達成度' : '走りの点'}</div><div class="big">${scoreHtml(a.score)}</div></div></div>
       <div class="stats num">
         <div><b>${dur(a.moving_time_s)}</b><span>運動時間</span></div>
         <div><b>${pace(a.moving_time_s / (a.distance_m / 1000))}<small>/km</small></b><span>平均ペース</span></div>
@@ -2225,6 +2235,7 @@ async function activityDetailView(id) {
         ${CX.efficiency != null ? `<div><b>${CX.efficiency}<small>%</small></b><span>効率</span></div>` : ''}
         ${CX.training_load != null ? `<div><b>${CX.training_load}</b><span>トレーニング負荷</span></div>` : ''}
       </div>
+      <p class="muted hd-basis">距離・運動時間・心拍・ピッチは${a.coros ? ' COROS' : a.id > 0 ? ' Strava' : ''}の記録。平均ペース = 運動時間 ÷ 距離${a.elapsed_time_s && a.elapsed_time_s - a.moving_time_s >= 30 ? ` (経過時間 ${dur(a.elapsed_time_s)} は止まった時間を含む)` : ''}。</p>
     </div>
     <div id="analysis"></div>
     <div id="series"><div class="card"><span class="muted">グラフを読み込み中…</span></div></div>
