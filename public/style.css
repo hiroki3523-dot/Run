@@ -958,3 +958,16 @@ body::after {
 .cal-more summary { color: var(--muted); font-size: 13px; cursor: pointer; }
 .cal-more p { font-size: 13px; }
 #cal-card .cal-btn { margin-top: 0; }
+
+/* 計画画面の上: 今週の 実績 / 計画 */
+.wsum { padding: 2px 2px 16px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.wsum-n { display: flex; align-items: flex-end; justify-content: space-between; }
+.wsum-n > div { display: flex; align-items: baseline; gap: 4px; }
+.wsum-n small { font-size: 12px; color: var(--muted); margin-right: 4px; }
+.wsum-n b { font-size: 40px; font-weight: 800; letter-spacing: -.02em; line-height: 1; }
+.wsum-n span { font-size: 14px; color: var(--muted); }
+.wsum-n .wsum-of b { font-size: 22px; font-weight: 700; color: color-mix(in srgb, var(--text) 75%, transparent); }
+.wsum-bar { position: relative; height: 10px; margin: 14px 0 10px; border-radius: 999px; background: color-mix(in srgb, var(--text) 9%, transparent); }
+.wsum-bar i { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: linear-gradient(90deg, #2b3dff, #7a5cff); }
+.wsum-bar em { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 2px; background: var(--text); opacity: .7; }
+.wsum-f { font-size: 13px; color: var(--muted); }
