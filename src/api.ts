@@ -450,7 +450,8 @@ api.get('/activities/:id/review', async (c) => {
     `SELECT distance_m, moving_time_s, avg_hr, json_extract(evaluation, '$.role') AS role FROM activities WHERE date = ? ORDER BY start_date_local`,
   ).bind(row.date).all<{ distance_m: number; moving_time_s: number; avg_hr: number | null; role: string | null }>();
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
-  const race = await c.env.DB.prepare(`SELECT name, date, goal_time_s, distance_m FROM races WHERE date >= ? AND priority IN ('A','B') AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date LIMIT 1`).bind(today).first<any>();
+  // 大会はランの日から見た次の大会 (今日ではなく)。分析と同じ条件
+  const race = await nextRaceFor(c.env, row.date);
   let raw: any = {};
   try { raw = JSON.parse((await kvGet(c.env, `fb:${id}`)) ?? '{}'); } catch { /* 無視 */ }
   if (raw.v !== 2 && !raw.rpe) { const old = await kvGet(c.env, `rpe:${id}`); if (old) raw.rpe = Number(old); }
@@ -474,7 +475,7 @@ api.get('/activities/:id/review', async (c) => {
     splits, series,
     lthr: st.coros.lthr ?? st.lthr, max_hr: st.max_hr,
     band: plan?.pace_min_s && plan?.pace_max_s ? { min: plan.pace_min_s, max: plan.pace_max_s } : null,
-    race: race ?? null, today,
+    race: race ?? null, today: row.date, // 大会までの日数は、ランの日から数える
     fb,
   });
   return c.json({ ...review, fb });
@@ -503,6 +504,14 @@ async function runTemp(place: { lat: number; lon: number }, startLocal: string):
   return typeof v === 'number' ? Math.round(v * 10) / 10 : null;
 }
 
+/**
+ * そのランの日から見た次の大会。ランのレビューと分析で同じ条件を使う:
+ * ランの日以降・エントリー候補は除く・優先度 C は除く (未設定は A とみなす)。日・週・月の評価 (review.ts) も候補と C を除く
+ */
+async function nextRaceFor(env: Env, date: string): Promise<{ name: string; date: string; goal_time_s: number | null; distance_m: number } | null> {
+  return env.DB.prepare("SELECT name, date, goal_time_s, distance_m FROM races WHERE date >= ? AND COALESCE(status, 'confirmed') != 'candidate' AND COALESCE(priority, 'A') != 'C' ORDER BY date LIMIT 1").bind(date).first<any>();
+}
+
 /** 過去 180 日のランの要約 (比較用)。DB の値に、分析したときに保存した詳しい要約 (snap:) を重ねる */
 async function pastSnapshots(env: Env, beforeDate: string, easyMin: number): Promise<Snapshot[]> {
   const from = addDays(beforeDate, -180);
@@ -517,7 +526,7 @@ async function pastSnapshots(env: Env, beforeDate: string, easyMin: number): Pro
   return rows.filter((r) => r.role !== 'warmup' && r.role !== 'cooldown').map((r) => {
     const pace = r.moving_time_s / (r.distance_m / 1000);
     const base: Snapshot = { id: r.id, date: r.date, km: Math.round(r.distance_m / 10) / 100, pace: Math.round(pace), hr: r.avg_hr ? Math.round(r.avg_hr) : null, group: groupOf(r.type, pace, easyMin),
-      rpe: rpeOf.get(r.id) ?? null, half_diff: r.hd ?? null, cad: r.avg_cadence_spm ? Math.round(r.avg_cadence_spm * 2) : null, stride: null, gct: null, vo: null, power: null, elev_per_km: null, drift: null };
+      rpe: rpeOf.get(r.id) ?? null, half_diff: r.hd ?? null, cad: r.avg_cadence_spm ? Math.round(r.avg_cadence_spm) : null /* DB の値はすでに両足の spm */, stride: null, gct: null, vo: null, power: null, elev_per_km: null, drift: null };
     return { ...base, ...(snapOf.get(r.id) ?? {}), id: r.id, date: r.date };
   });
 }
@@ -541,7 +550,7 @@ api.get('/activities/:id/analysis', async (c) => {
   if (temp == null) temp = await runTemp(st.weather_place ?? DEFAULT_PLACE, String(row.start_date_local)).catch(() => null);
   // 次の大会 (このランの日から)・その日と翌朝の体調・記録元 (表示と評価の基準をそろえるため)
   const [nextRace, condRows, extRow] = await Promise.all([
-    c.env.DB.prepare("SELECT name, date, distance_m, goal_time_s FROM races WHERE date > ? AND COALESCE(status, 'confirmed') != 'candidate' AND COALESCE(priority, 'A') != 'C' ORDER BY date LIMIT 1").bind(row.date).first<any>().catch(() => null),
+    nextRaceFor(c.env, row.date).catch(() => null),
     c.env.DB.prepare("SELECT key, value FROM kv WHERE key IN (?, ?)").bind(`cond:${row.date}`, `cond:${addDays(row.date, 1)}`).all<{ key: string; value: string }>().catch(() => ({ results: [] as { key: string; value: string }[] })),
     c.env.DB.prepare("SELECT 1 AS x FROM ext_activities WHERE id = ? AND data NOT LIKE '{\"dup_of\"%'").bind(id).first().catch(() => null),
   ]);
@@ -978,7 +987,7 @@ api.get('/shoes/compare', async (c) => {
     const rowsG = [...by.entries()].filter(([, xs]) => xs.length >= 2).map(([sid, xs]) => ({
       shoe_id: sid, name: shoes.find((x) => x.id === sid)?.name ?? '?', retired: shoes.find((x) => x.id === sid)?.retired ?? 0, n: xs.length,
       km: Math.round(xs.reduce((a, r) => a + r.distance_m, 0) / 1000),
-      pace: avg(xs.map((r) => r.pace)), hr: avg(xs.map((r) => r.avg_hr)), cad: avg(xs.map((r) => r.s?.cad ?? (r.avg_cadence_spm ? r.avg_cadence_spm * 2 : null))),
+      pace: avg(xs.map((r) => r.pace)), hr: avg(xs.map((r) => r.avg_hr)), cad: avg(xs.map((r) => r.s?.cad ?? (r.avg_cadence_spm ? r.avg_cadence_spm : null))),
       stride: avg(xs.map((r) => r.s?.stride)), gct: avg(xs.map((r) => r.s?.gct)),
       form: avg(xs.map((r) => r.f?.form)), breath: avg(xs.map((r) => r.f?.breath)), leg: avg(xs.map((r) => r.f?.leg)),
       pain_n: xs.filter((r) => (r.f?.pain ?? 0) >= 3).length, next_leg: avg(xs.map((r) => r.next?.leg)),

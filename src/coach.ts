@@ -16,8 +16,8 @@ export interface CoachReply { reply: string; changes: CoachChange[]; model?: str
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const dow = (d: string) => DOW[new Date(`${d}T00:00:00Z`).getUTCDay()];
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
-const hms = (s: number) => `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+const mmss = (x: number) => { const s = Math.round(x); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }; // 先に丸める (4:60 にしない)
+const hms = (x: number) => { const s = Math.round(x); return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
 const jstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
 
 /** AI に渡す、いまの状況 (計画・実績・ふりかえり・レース・ペース) */

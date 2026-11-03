@@ -50,7 +50,7 @@ export interface Analysis {
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 const nums = (xs: (number | null | undefined)[]) => xs.filter((x): x is number => x != null && Number.isFinite(x));
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+const mmss = (x: number) => { const s = Math.round(x); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }; // 先に丸める (4:60 にしない)
 const clamp = (x: number) => Math.max(0, Math.min(100, x));
 const judgeOf = (s: number | null): Judge => (s == null ? 'hold' : s >= 80 ? 'good' : s >= 60 ? 'ok' : 'bad');
 
@@ -189,7 +189,7 @@ export function analyzeRun(i: AnalysisIn): Analysis {
   const snapshot: Snapshot = {
     id: i.id, date: i.date, km: Math.round(km * 100) / 100, pace: Math.round(pace), hr: i.avg_hr ? Math.round(i.avg_hr) : null, group,
     rpe: i.fb?.rpe ?? null, half_diff: ev?.pace?.details?.half_diff_s ?? null,
-    cad: sr?.avg.cad ?? (i.avg_cad_spm ? Math.round(i.avg_cad_spm * 2) : null), stride: sr?.avg.stride ?? null,
+    cad: sr?.avg.cad ?? (i.avg_cad_spm ? Math.round(i.avg_cad_spm) : null), stride: sr?.avg.stride ?? null,
     gct: X?.gct?.avg ?? null, vo: X?.vo?.avg ?? null, power: X?.power?.avg ?? null,
     elev_per_km: i.elev_gain != null && km > 0 ? Math.round((i.elev_gain / km) * 10) / 10 : null, drift, temp: i.temp ?? null,
   };

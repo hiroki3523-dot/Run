@@ -82,7 +82,7 @@ export function gradeOf(score: number): string {
 
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
 const sec = (n: number) => `${Math.round(n)}秒`;
-const mmss = (n: number) => `${Math.floor(n / 60)}'${String(Math.round(n % 60)).padStart(2, '0')}"`;
+const mmss = (x: number) => { const n = Math.round(x); return `${Math.floor(n / 60)}'${String(n % 60).padStart(2, '0')}"`; }; // 先に丸める (4'60" にしない)
 
 export function buildRunReview(i: ReviewIn): RunReview {
   const avgPace = i.main.moving_time_s / (i.main.distance_m / 1000);
@@ -206,7 +206,7 @@ export function buildRunReview(i: ReviewIn): RunReview {
   let verdict: RunReview['verdict'] = null;
   if (i.race && daysLeft != null && daysLeft >= 0 && daysLeft <= 60) {
     const text: string[] = [];
-    text.push(daysLeft === 0 ? '今日がレース当日。' : `${i.race.name}まであと ${daysLeft}日。`);
+    text.push(daysLeft === 0 ? 'レース当日のラン。' : `${i.race.name}の ${daysLeft} 日前のラン。`);
     if (goalPace) {
       const gap = goalPace - avgPace; // 正 = 目標より速い
       const speedOk = (diff >= 5 ? mean(laps.slice(-Math.max(2, Math.round(laps.length / 3))).map((s) => s.pace_s!)) : avgPace) <= goalPace + 2;

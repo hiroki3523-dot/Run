@@ -22,7 +22,7 @@ const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.le
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 const lv = (s: number | null): Ability['level'] => (s == null ? 'hold' : s >= 75 ? 'good' : s >= 55 ? 'ok' : 'bad');
 const clamp = (x: number) => Math.round(Math.max(5, Math.min(100, x)));
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+const mmss = (x: number) => { const s = Math.round(x); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }; // 先に丸める (4:60 にしない)
 
 export function buildAptitude(i: {
   today: string; runs: AptRun[]; goal_s: number | null; race_km: number;
