@@ -6,6 +6,8 @@ export interface PlannerRace {
   name: string;
   distance_m: number;
   goal_time_s: number | null;
+  /** A: 本命 / B: 重要 / C: 練習の一部 */
+  priority?: string | null;
 }
 
 export interface PlannerInput {
@@ -79,12 +81,13 @@ export function generatePlan(input: PlannerInput): PlanRow[] {
       });
       continue;
     }
-    // 他レースの前後は軽く
-    const near = others.concat([race]).map((o) => daysBetween(d, o.date));
-    if (near.includes(1)) { rows.push(jog(d, 3, 'ジョグ3km + 補給・ゼッケン確認')); continue; }
-    if (near.includes(2)) { rows.push(rest(d, '休養 (レース2日前)')); continue; }
-    if (near.includes(-1)) { rows.push(rest(d, '休養 (レース翌日。歩く程度)')); continue; }
-    if (near.includes(-2) || near.includes(-3)) { rows.push(jog(d, 5, 'ジョグ5km (疲労抜き。5:45/km 以下)')); continue; }
+    // 他レースの前後: 優先度で調整の長さを変える (A/B は前 2 日・後 3 日、C は前日と翌日だけ軽く)
+    const near = others.concat([race]).map((o) => ({ k: daysBetween(d, o.date), c: (o.priority ?? 'B') === 'C', half: o.distance_m < 30000 }));
+    const hit = (k: number, cOk = true) => near.some((x) => x.k === k && (cOk || !x.c));
+    if (hit(1)) { rows.push(jog(d, 3, 'ジョグ3km + 補給・ゼッケン確認')); continue; }
+    if (hit(2, false)) { rows.push(rest(d, '休養 (レース2日前)')); continue; }
+    if (hit(-1)) { rows.push(near.some((x) => x.k === -1 && x.c && x.half) ? jog(d, 5, 'ジョグ5km (C レース翌日。疲労抜き)') : rest(d, '休養 (レース翌日。歩く程度)')); continue; }
+    if (near.some((x) => (x.k === -2 || x.k === -3) && !(x.c && x.half))) { rows.push(jog(d, 5, 'ジョグ5km (疲労抜き。5:45/km 以下)')); continue; }
     if (input.last_race && d < firstBuildDay) {
       const k = daysBetween(input.last_race, d);
       rows.push(k <= 2 ? rest(d, '休養 (レース後の回復)') : k % 2 === 1 ? jog(d, k <= 4 ? 5 : 8, 'ジョグ (疲労抜き。心拍を上げない)') : rest(d));
