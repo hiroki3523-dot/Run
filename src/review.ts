@@ -78,8 +78,42 @@ export interface Review {
   next: string[];
   list: ReviewRun[];
   tl: number;
-  /** 日ごとの距離 (ストラバ風の丸い表示用) */
-  days: { date: string; km: number; runs: number }[];
+  /** 日ごとの距離 (ストラバ風の丸い表示用)。plan_km: その日の計画・main_type: その日のメインの種類 (2026-11 追加) */
+  days: { date: string; km: number; runs: number; plan_km?: number; main_type?: string | null; score?: number | null }[];
+  /** 練習の内訳 (種類ごとの回数と距離。アップ・ダウンは「つなぎ」) (2026-11 追加) */
+  breakdown?: { key: string; label: string; runs: number; km: number }[];
+  /** 次の期間への提案 (週: 翌週・月: 翌月) (2026-11 追加) */
+  next_period?: string[];
+}
+
+/** 練習の種類のまとまり (内訳用) */
+export function kindGroup(type: string | null | undefined, role: string | null | undefined, km: number): string {
+  if (role === 'warmup' || role === 'cooldown') return 'link';
+  if (type === 'race') return 'race';
+  if (type === 'm' || type === 'lt' || type === 'interval') return 'point';
+  if (type === 'long' || km >= 20) return 'long';
+  if (type === 'easy' || type === 'jog') return 'easy';
+  return 'free';
+}
+export const KIND_LABEL: Record<string, string> = { point: 'ポイント練', long: 'ロング走', easy: 'Easy・Jog', race: 'レース', free: 'フリー', link: 'アップ・ダウン' };
+
+/** 成長の比較: 同じくらいのペースで走ったときの心拍が、前の期間よりどう変わったか (気温差などを含む参考値) */
+export interface Growth { key: string; label: string; now: string; past: string; diff: string; trend: 'up' | 'same' | 'down' | 'hold'; note: string }
+export function growthOf(cur: ReviewRun[], prev: ReviewRun[]): Growth[] {
+  const out: Growth[] = [];
+  const pace = (r: ReviewRun) => r.moving_time_s / (r.distance_m / 1000);
+  const med = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
+  const sel = (rs: ReviewRun[], g: string) => rs.filter((r) => r.avg_hr && r.distance_m >= 3000 && kindGroup(r.type, r.role, r.distance_m / 1000) === g);
+  for (const [g, label] of [['easy', 'Easy・Jog'], ['point', 'ポイント練']] as const) {
+    const a = sel(cur, g), b = sel(prev, g);
+    if (a.length < 2 || b.length < 2) { out.push({ key: `hr_${g}`, label: `${label}: 同じペースでの心拍`, now: '-', past: '-', diff: '-', trend: 'hold', note: `比べるランが足りない (今 ${a.length} 本・前 ${b.length} 本。2 本ずつ必要)` }); continue; }
+    // 両方の期間の中央のペースにそろえる (心拍 ∝ 速さ とみなす)
+    const ref = med([...a, ...b].map(pace));
+    const adj = (rs: ReviewRun[]) => med(rs.map((r) => r.avg_hr! * (pace(r) / ref)));
+    const now = adj(a), past = adj(b), d = now - past;
+    out.push({ key: `hr_${g}`, label: `${label}: ${fmtPace(ref)}/km での心拍`, now: `${Math.round(now)}bpm`, past: `${Math.round(past)}bpm`, diff: `${d >= 0 ? '+' : ''}${Math.round(d)}`, trend: d <= -2 ? 'up' : d >= 3 ? 'down' : 'same', note: `今 ${a.length} 本・前 ${b.length} 本の中央値。気温・疲れの違いも含む参考値` });
+  }
+  return out;
 }
 
 const QUALITY = ['m', 'lt', 'interval', 'race'];
@@ -200,11 +234,32 @@ export function buildReview(
   const days: Review['days'] = [];
   for (let d = from; d <= to; d = new Date(Date.parse(d) + 86400_000).toISOString().slice(0, 10)) {
     const day = runs.filter((r) => r.date === d);
-    days.push({ date: d, km: Math.round(day.reduce((a, r) => a + r.distance_m, 0) / 100) / 10, runs: day.length });
+    const main = day.filter((r) => r.role !== 'warmup' && r.role !== 'cooldown').sort((a, b) => b.distance_m - a.distance_m)[0] ?? null;
+    const pk = plans.filter((p) => p.date === d && p.type !== 'rest').reduce((a, p) => a + (p.distance_m ?? 0), 0) / 1000;
+    days.push({ date: d, km: Math.round(day.reduce((a, r) => a + r.distance_m, 0) / 100) / 10, runs: day.length, plan_km: Math.round(pk * 10) / 10, main_type: main?.type ?? null, score: main?.score ?? null });
+  }
+  // 練習の内訳
+  const bk = new Map<string, { runs: number; km: number }>();
+  for (const r of runs) { const g = kindGroup(r.type, r.role, r.distance_m / 1000); const x = bk.get(g) ?? { runs: 0, km: 0 }; x.runs++; x.km += r.distance_m / 1000; bk.set(g, x); }
+  const breakdown = ['point', 'long', 'easy', 'race', 'free', 'link'].filter((k) => bk.has(k)).map((k) => ({ key: k, label: KIND_LABEL[k], runs: bk.get(k)!.runs, km: Math.round(bk.get(k)!.km * 10) / 10 }));
+  // 次の期間への提案 (週・月)。事実 (距離・ポイント練・レース) から決める
+  const nextPeriod: string[] = [];
+  if (kind !== 'day') {
+    const nextRace = ctx.races.filter((r) => r.priority !== 'C' && r.date > to).sort((a, b) => a.date.localeCompare(b.date))[0];
+    const daysTo = nextRace ? dd(to, nextRace.date) : null;
+    if (nextRace && daysTo != null && daysTo <= 7) nextPeriod.push(`${nextRace.date.slice(5).replace('-', '/')} は${nextRace.name}。距離を減らし、疲れを抜くことと当日の準備を優先する。`);
+    else if (nextRace && daysTo != null && daysTo <= 21) nextPeriod.push(`${nextRace.name}まで ${daysTo} 日。距離は増やさず、目標ペースの練習で感覚を確かめる。`);
+    if (!inProgress && completion != null && completion > 1.15 && !phase) nextPeriod.push(`計画より ${Math.round((completion - 1) * 100)}% 多く走った。次は計画どおりの距離に戻す。`);
+    if (!inProgress && completion != null && completion < 0.8 && !phase) nextPeriod.push('計画より少なかった。取り戻そうとして一度に増やさず、計画どおりに戻す。');
+    if (!inProgress && delta != null && delta > 20 && !phase) nextPeriod.push(`前の${kind === 'week' ? '週' : '月'}より ${Math.round(delta)}% 増えた。次は据え置きか、1〜2 割減らす。`);
+    if (quality.planned > quality.done && !inProgress) nextPeriod.push('できなかったポイント練は、詰め込まずに次の枠で。');
+    if (!nextPeriod.length && runs.length) nextPeriod.push('今の流れを保ち、計画どおりに進める。');
   }
   return {
     tl: runs.reduce((a, r) => a + (r.tl ?? 0), 0),
     days,
+    breakdown,
+    next_period: nextPeriod,
     from,
     to,
     runs: runs.length,

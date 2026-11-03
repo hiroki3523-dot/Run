@@ -6,7 +6,7 @@ import { notify } from './notify';
 import { weatherDays, raceWeather, weatherAdvice } from './weather';
 import { DEFAULT_PLACE, forecast, searchPlaces } from './forecast';
 import { generatePlan, type PlannerRace } from './planner';
-import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
+import { buildReview, growthOf, trainingLoad, type ReviewPlan, type ReviewRun } from './review';
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { analyzeRun, groupOf, type Snapshot } from './analysis';
@@ -386,9 +386,12 @@ api.get('/review', async (c) => {
   const prevFrom = addDays(prevTo, -(span - 1));
   const [cur, prv] = await Promise.all([load(from, to), k === 'day' ? null : load(prevFrom, prevTo)]);
   const prev = prv ? { runs: prv.list.length, km: prv.list.reduce((a, r) => a + r.distance_m, 0) / 1000 } : null;
+  // 前の期間の平均 (先週・先月からの変化の表示用)
+  const avgOf = (rs: ReviewRun[]) => { const d = rs.reduce((a, r) => a + r.distance_m, 0), t = rs.reduce((a, r) => a + r.moving_time_s, 0); const h = rs.filter((r) => r.avg_hr); const hd = h.reduce((a, r) => a + r.distance_m, 0); return { km: Math.round(d / 100) / 10, runs: rs.length, avg_pace_s: d > 0 ? Math.round(t / (d / 1000)) : null, avg_hr: hd > 0 ? Math.round(h.reduce((a, r) => a + r.avg_hr! * r.distance_m, 0) / hd) : null }; };
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
   const { results: races } = await c.env.DB.prepare("SELECT name, date, priority, distance_m FROM races WHERE date BETWEEN ? AND ? AND COALESCE(status, 'confirmed') != 'candidate'").bind(addDays(from, -8), addDays(to, 15)).all<any>();
-  return c.json(buildReview(from, to, cur.list, cur.plans, prev, k, { today, races }));
+  const rv = buildReview(from, to, cur.list, cur.plans, prev, k, { today, races });
+  return c.json({ ...rv, prev_detail: prv ? avgOf(prv.list) : null, growth: k === 'day' ? null : growthOf(cur.list, prv?.list ?? []) });
 });
 
 /** 直近 N 週間 (月曜始まり) の週ごとの距離と負荷。Strava の「過去12週間」グラフ用 */
@@ -1066,7 +1069,8 @@ api.get('/activities', async (c) => {
   const { from, to } = c.req.query();
   const { results } = await c.env.DB.prepare(
     `SELECT a.id, a.date, a.name, a.sport_type, a.distance_m, a.moving_time_s, a.avg_hr, a.avg_cadence_spm,
-       a.score, a.plan_id, a.start_date_local, json_extract(a.evaluation, '$.role') AS role, p.type AS plan_type, s.name AS shoe_name
+       a.score, a.plan_id, a.start_date_local, json_extract(a.evaluation, '$.role') AS role, p.type AS plan_type, s.name AS shoe_name,
+       COALESCE(json_extract(a.evaluation, '$.eff_type'), json_extract(a.evaluation, '$.type')) AS eff_type
      FROM activities a LEFT JOIN plans p ON p.id = a.plan_id LEFT JOIN shoes s ON s.id = a.shoe_id
      WHERE a.date BETWEEN ? AND ? ORDER BY a.start_date_local DESC`,
   )

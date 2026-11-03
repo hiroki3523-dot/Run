@@ -26,8 +26,20 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     blockNetwork();
     // テスト用データ: 計画・実績 (11/1 相当)・レース・シューズ
     const s = await call(env, 'POST', '/shoes', { name: 'テストシューズA', strava_gear_id: 'g-a', initial_km: 50 });
-    await call(env, 'POST', '/plans', { date: NOV1.date, type: 'm', distance_m: 12000, pace_min_s: 265, pace_max_s: 275 });
-    runId = await addRun(env, { ...NOV1, gear_id: 'g-a' });
+    // 11/1: アップ 5.01km → M ペース走 12.01km → ダウン 1.12km (3 つの記録)。計画はステップつき
+    const steps = [{ kind: 'warmup', by: 'dist', value: 5000, zone: 1, ref: 'easy' }, { kind: 'work', by: 'dist', value: 12000, zone: 3, pmin: 265, pmax: 275 }, { kind: 'cooldown', by: 'dist', value: 1100, zone: 1, ref: 'easy' }];
+    await call(env, 'POST', '/plans', { date: NOV1.date, type: 'm', distance_m: 18100, steps });
+    await addRun(env, { date: NOV1.date, time: '06:20', km: 5.01, segs: [{ km: 5.01, pace: 314, hr: 140 }], gear_id: 'g-a' });
+    runId = await addRun(env, { ...NOV1, time: '06:48', gear_id: 'g-a' });
+    await addRun(env, { date: NOV1.date, time: '07:43', km: 1.12, segs: [{ km: 1.12, pace: 356, hr: 138 }], gear_id: 'g-a' });
+    // 10 月・9 月の Easy と LT (一覧・月の成長分析用)
+    for (let i = 0; i < 10; i++) {
+      await addRun(env, { date: `2026-10-${String(2 + i * 3).padStart(2, '0')}`, km: 8, segs: [{ km: 8, pace: 330, hr: 142 + (i % 3) }] });
+      await addRun(env, { date: `2026-09-${String(2 + i * 3).padStart(2, '0')}`, km: 8, segs: [{ km: 8, pace: 335, hr: 147 + (i % 3) }] });
+    }
+    await call(env, 'POST', '/plans', { date: '2026-10-28', type: 'lt', distance_m: 6500, pace_min_s: 250, pace_max_s: 260 });
+    await addRun(env, { date: '2026-10-28', time: '18:30', km: 6.55, segs: [{ km: 6.55, pace: 257, hr: 168 }] });
+    await call(env, 'PUT', '/goals/2026-11', { km: 200 });
     await addRun(env, { date: addDays(TODAY, -1), km: 8, segs: [{ km: 8, pace: 330, hr: 140 }], gear_id: 'g-a' });
     await call(env, 'POST', '/plans', { date: TODAY, type: 'jog', distance_m: 6000 });
     raceId = (await call(env, 'POST', '/races', { name: 'テストマラソン', date: addDays(TODAY, 40), distance_m: 42195, goal_time_s: 11400, priority: 'A', status: 'confirmed', no_auto: true })).json.id;
@@ -56,9 +68,12 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     ['ホーム', '#/', '01-home'],
     ['計画', '#/plans', '02-plans'],
     ['実績 一覧', '#/activities', '03-activities'],
-    ['実績 日', '#/activities?view=day', '04-day'],
-    ['実績 週', '#/activities?view=week', '05-week'],
-    ['実績 月', '#/activities?view=month', '06-month'],
+    ['実績 日 (11/1・アップ+メイン+ダウン)', '#/activities?view=day&date=2026-11-01', '04-day'],
+    ['実績 週 (10/26〜11/1)', '#/activities?view=week&date=2026-10-26', '05-week'],
+    ['実績 月 (2026年11月)', '#/activities?view=month&date=2026-11-01', '06-month'],
+    ['実績 月 (2026年10月)', '#/activities?view=month&date=2026-10-01', '06b-month-oct'],
+    ['実績 日 (記録なし)', '#/activities?view=day&date=2026-10-03', '04b-day-empty'],
+    ['実績 一覧 (ポイントで絞り込み)', '#/activities?f=point', '03b-list-point'],
     ['レース', '#/races', '08-races'],
     ['大会を探す', '#/races/find', '10-race-find'],
     ['シューズ', '#/shoes', '11-shoes'],
@@ -106,6 +121,51 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     await open(`#/races/${raceId}`);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   }, 30000);
+
+  it('実績 一覧: 日ごとにまとまり、11/1 は 3 本・メインが目立つ', async () => {
+    await open('#/activities');
+    const day = page.locator('.hl-day', { hasText: '11/1' });
+    expect(await day.locator('.hl-run').count()).toBe(3);
+    expect(await day.locator('.hl-run.main').count()).toBe(1);
+    expect(await day.locator('.hl-dh').textContent()).toContain('18.14km');
+    await open('#/activities?f=point');
+    const txt = await page.textContent('#view');
+    expect(txt).toContain('11/1');
+    expect(txt).not.toContain('10/2(');
+  }, 30000);
+  it('実績 日: 評価対象のメイン区間と根拠・主観の欄が出る', async () => {
+    await open('#/activities?view=day&date=2026-11-01');
+    await page.waitForSelector('.hl-target', { timeout: 15000 });
+    const t = await page.textContent('#view');
+    expect(t).toContain('18.14');
+    expect(t).toContain('記録全体 12.01km');
+    expect(t).toContain('計画のステップ');
+    expect(t).toContain('主観とデータの照合');
+    expect(t).toContain('未入力');
+    // 日付の移動
+    await page.click('.hl-nav a[aria-label="次へ"]');
+    await page.waitForTimeout(800);
+    expect(await page.textContent('.hl-nav b')).toContain('11/2');
+  }, 40000);
+  it('実績 週: 曜日の棒グラフ・量/強度/回復・先週からの変化', async () => {
+    await open('#/activities?view=week&date=2026-10-26');
+    expect(await page.locator('.wbars .wb-d').count()).toBe(7);
+    const t = await page.textContent('#view');
+    expect(t).toContain('週評価');
+    expect(t).toContain('先週からの変化');
+    expect(t).toContain('翌週への提案');
+  }, 30000);
+  it('実績 月: カレンダー・内訳・成長分析・目標', async () => {
+    await open('#/activities?view=month&date=2026-10-01');
+    expect(await page.locator('.mcal a').count()).toBe(31);
+    expect(await page.locator('.mcal a.run').count()).toBeGreaterThanOrEqual(10);
+    const t = await page.textContent('#view');
+    expect(t).toContain('練習の内訳');
+    expect(t).toContain('月間の成長分析');
+    expect(t).toContain('での心拍');
+    await open('#/activities?view=month&date=2026-11-01');
+    expect(await page.textContent('#view')).toContain('200');
+  }, 40000);
 
   it('ナビゲーション: 下のメニューで各画面に移れる', async () => {
     await open('#/');
