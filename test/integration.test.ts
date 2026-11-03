@@ -221,3 +221,22 @@ describe('COROS のワークアウト区間の調査 (読み取りのみ)', () =
     expect((await call(env, 'GET', '/activities/123/coros-segments')).status).toBe(404);
   });
 });
+
+describe('シューズの詳しく (使用履歴)', () => {
+  it('使ったラン・月ごとの距離・最終使用日が合う', async () => {
+    const sh = (await call(env, 'POST', '/shoes', { name: 'H', strava_gear_id: 'gh', initial_km: 10 })).json;
+    await addRun(env, { date: '2026-09-28', km: 10, segs: [{ km: 10, pace: 320 }], gear_id: 'gh' });
+    await addRun(env, { date: '2026-10-05', km: 5, segs: [{ km: 5, pace: 320 }], gear_id: 'gh' });
+    await addRun(env, { date: '2026-10-07', km: 7, segs: [{ km: 7, pace: 320 }] });
+    const h = (await call(env, 'GET', `/shoes/${sh.id}/history`)).json;
+    expect(h.total_runs).toBe(2);
+    expect(h.first_date).toBe('2026-09-28');
+    expect(h.last_date).toBe('2026-10-05');
+    expect(h.months).toEqual([{ month: '2026-09', km: 10 }, { month: '2026-10', km: 5 }]);
+    expect(Math.round(h.shoe.total_km)).toBe(25);
+    const list = (await call(env, 'GET', '/shoes')).json;
+    expect(list[0].last_date).toBe('2026-10-05');
+    expect(list[0].runs).toBe(2);
+    expect((await call(env, 'GET', '/shoes/999/history')).status).toBe(404);
+  });
+});
