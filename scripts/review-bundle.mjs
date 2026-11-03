@@ -6,7 +6,7 @@
  */
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { baseRef, git, prHistory, readResults, resultsMd, tryGit } from './lib.mjs';
 
 const arg = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };
@@ -87,5 +87,5 @@ Cloudflare Workers + D1 (SQLite) + 1 ページの画面 (public/app.js)。COROS�
 `;
 writeFileSync(join(dir, '00_READ_ME_FIRST.md'), readme);
 rmSync(out, { force: true });
-execFileSync('zip', ['-qr', join('..', out), '.'], { cwd: dir });
+execFileSync('zip', ['-qr', resolve(out), '.'], { cwd: dir });
 console.log(`作成しました: ${out}`);
