@@ -1028,9 +1028,22 @@ function wireCopy(root, ws) {
 }
 
 // ---- 予定の相談 (AI)。会話はこの画面を開いている間だけ残す
+const COACH_BAD = '回答をうまく表示できませんでした。もう一度お試しください。';
+const COACH_NET = 'AIコーチに接続できませんでした。';
+// JSON のように見える文字列 (キー名や波括弧を画面に出さない)
+const coachLooksJson = (s) => /^\s*(```|\{|\[|"\s*\{)|"(conclusion|reasons|reply|changes|keep)"\s*:/.test(String(s || ''));
+/** サーバーの返事・保存していた会話を、画面に出せる形にそろえる (通常の相談と今週の見立てで共通) */
+function coachMsg(r, extra = {}) {
+  const strs = (v, n) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.trim() && !coachLooksJson(x)).slice(0, n) : []);
+  const conclusion = typeof r?.conclusion === 'string' && !coachLooksJson(r.conclusion) ? r.conclusion.trim() : '';
+  const reply = typeof r?.reply === 'string' && !coachLooksJson(r.reply) ? r.reply.trim() : '';
+  const changes = (Array.isArray(r?.changes) ? r.changes : []).filter((c) => c && /^\d{4}-\d{2}-\d{2}$/.test(c.date) && typeof c.type === 'string');
+  const invalid = !!r?.invalid || (!conclusion && !reply && !changes.length);
+  return { role: 'assistant', content: invalid ? '' : reply || conclusion, conclusion, reasons: strs(r?.reasons, 5), keep: strs(r?.keep, 4), changes: invalid ? [] : changes, invalid, model: r?.model, ...extra };
+}
 let COACH_LOG = (() => { try { return JSON.parse(sessionStorage.getItem('coach') || '[]'); } catch { return []; } })();
-// 前に読み取れずに JSON のまま残った「今週の見立て」は捨てて、開き直したときに取り直す
-if (COACH_LOG.some((m) => m.brief && !m.conclusion && /^\s*\{/.test(m.content || ''))) COACH_LOG = [];
+// 前に保存した会話も同じ形にそろえる (JSON のまま残った返事は「読めなかった」扱い)
+COACH_LOG = Array.isArray(COACH_LOG) ? COACH_LOG.filter((m) => m && (m.role === 'user' || m.role === 'assistant')).map((m) => (m.role === 'assistant' && !m.error ? { ...coachMsg({ ...m, reply: m.content }), brief: m.brief, applied: m.applied } : m)) : [];
 const saveCoach = () => { try { sessionStorage.setItem('coach', JSON.stringify(COACH_LOG.slice(-20))); } catch {} };
 function coachPane() {
   return `<div class="coach">
@@ -1047,61 +1060,107 @@ function wireCoach(root) {
   if (!log) return;
   const ta = root.querySelector('#coach-text');
   const fmtChange = (c) => `${PLAN_LABELS[c.type] || c.type}${c.distance_km ? ` ${c.distance_km}km` : ''}${c.pace ? ` ${c.pace.split('-')[0] === c.pace.split('-')[1] ? c.pace.split('-')[0] : c.pace}` : ''}`;
+  let confirmAt = -1; // 「予定に反映」を押して確認中の返事
+  const aiCard = (m, i, before) => {
+    const tag = m.brief ? '今週の見立て' : '相談への回答';
+    if (m.invalid || m.error) {
+      return `<div class="cm ai cm-card cm-err"><div class="cm-hd"><b>AIコーチ</b><span class="cm-tag">${tag}</span></div>
+        <p class="cm-concl">${m.error ? COACH_NET : COACH_BAD}</p>${m.error && m.detail ? `<p class="muted cm-sub">${esc(m.detail)}</p>` : ''}
+        <button type="button" class="ghost cm-retry" data-cretry="${i}">もう一度試す</button></div>`;
+    }
+    const n = m.changes?.length || 0;
+    const head = m.conclusion || m.content;
+    const extra = m.conclusion && m.content && m.content !== m.conclusion ? m.content : '';
+    return `<div class="cm ai cm-card"><div class="cm-hd"><b>AIコーチの見立て</b><span class="cm-tag">${tag}</span><span class="cm-st ${n ? 'chg' : ''}">${n ? `変更案あり：${n}件` : '計画変更なし'}</span></div>
+      <div class="cm-concl clamp" data-cclamp>${esc(head).replace(/\n/g, '<br>')}</div><button type="button" class="linkbtn cm-more hidden" data-cmore>続きを表示</button>
+      ${m.reasons?.length ? `<details class="cm-why"><summary>判断した理由 (${m.reasons.length})</summary><ul>${m.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}
+      ${m.keep?.length ? `<div class="cm-keep"><b>予定どおりにする練習</b>${m.keep.map((x) => `<p>${esc(x)}</p>`).join('')}</div>` : ''}
+      ${extra ? `<details class="cm-why"><summary>コーチのコメント</summary><p class="cm-sub">${esc(extra).replace(/\n/g, '<br>')}</p></details>` : ''}
+      ${n ? `<div class="cchg"><b>変更案</b>${m.changes.map((c) => `<div class="cchg-r"><span class="num">${md(c.date)}(${dow(c.date)})</span><span class="muted">${esc(m.applied ? '' : before(c.date))}</span><span>→ <b>${esc(fmtChange(c))}</b>${c.notes ? `<small class="muted">${esc(c.notes)}</small>` : ''}</span></div>`).join('')}
+        ${m.applied ? '<p class="muted" style="margin:8px 0 0">予定に反映しました</p>'
+          : confirmAt === i ? `<p class="cm-sub">上の ${n} 日の予定を置き換えます (実績の付いた予定は変えません)。</p><div class="row cm-cf"><button type="button" class="ghost" data-cno>やめる</button><button type="button" class="primary" data-capply="${i}">反映する</button></div>`
+          : `<button type="button" class="primary wide" data-cask="${i}">予定に反映する…</button>`}</div>` : ''}</div>`;
+  };
   const draw = async () => {
     const dates = COACH_LOG.flatMap((m) => (m.changes || []).map((c) => c.date)).sort();
     let cur = [];
     if (dates.length) { try { cur = uniqPlans(await api(`/plans?from=${dates[0]}&to=${dates[dates.length - 1]}`)); } catch {} }
     const before = (d) => cur.filter((p) => p.date === d).map((p) => `${PLAN_LABELS[p.type]}${p.distance_m ? ` ${km(p.distance_m)}km` : ''}`).join('・') || 'なし';
-    log.innerHTML = COACH_LOG.length ? COACH_LOG.map((m, i) => m.hidden ? '' : m.role === 'user'
-      ? `<div class="cm me">${esc(m.content)}</div>`
-      : `<div class="cm ai">${m.brief ? '<span class="cm-tag">今週の見立て</span>' : ''}${m.conclusion
-        ? `<p class="cm-concl">${esc(m.conclusion)}</p>${m.reasons?.length ? `<details class="cm-why"><summary>理由 (${m.reasons.length})</summary><ul>${m.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}${m.keep?.length ? `<div class="cm-keep"><b>変えない練習</b>${m.keep.map((x) => `<p>${esc(x)}</p>`).join('')}</div>` : ''}`
-        : esc(m.content).replace(/\n/g, '<br>')}${m.changes?.length ? `<div class="cchg">
-          <b>変更する練習</b>${m.changes.map((c) => `<div class="cchg-r"><span class="num">${md(c.date)}(${dow(c.date)})</span><span class="muted">${esc(m.applied ? '' : before(c.date))}</span><span>→ <b>${esc(fmtChange(c))}</b>${c.notes ? `<small class="muted">${esc(c.notes)}</small>` : ''}</span></div>`).join('')}
-          ${m.applied ? '<p class="muted" style="margin:8px 0 0">反映しました</p>' : `<button type="button" class="primary wide" data-capply="${i}">この内容で予定に反映</button>`}</div>` : ''}</div>`).join('')
-      : '<p class="muted coach-empty">体の状態や都合を書くと、計画の組み直しを提案します。反映するかはあとで選べます。</p>';
+    const shown = COACH_LOG.filter((m) => !m.hidden);
+    log.innerHTML = shown.length ? COACH_LOG.map((m, i) => m.hidden ? '' : m.role === 'user' ? `<div class="cm me">${esc(m.content)}</div>` : aiCard(m, i, before)).join('')
+      : `<div class="coach-empty"><p class="muted">体の状態や都合を書くと、計画の組み直しを提案します。反映するかはあとで選べます。</p><button type="button" class="ghost" id="coach-brief-btn">今週の見立てを出す</button></div>`;
     const lastModel = [...COACH_LOG].reverse().find((m) => m.model)?.model;
-    if (lastModel) root.querySelector('#coach-model').textContent = `AI: ${lastModel.split('/').pop()}`;
+    root.querySelector('#coach-model').textContent = lastModel ? `AI: ${lastModel.split('/').pop()}` : '計画と直近 3 週間の実績・ふりかえりを見て答えます';
+    // 結論が長いときだけ「続きを表示」
+    log.querySelectorAll('[data-cclamp]').forEach((el) => {
+      const more = el.nextElementSibling;
+      if (el.scrollHeight > el.clientHeight + 2) { more.classList.remove('hidden'); more.onclick = () => { el.classList.remove('clamp'); more.remove(); }; }
+    });
+    root.querySelector('#coach-brief-btn')?.addEventListener('click', () => openBrief(false));
+    log.querySelectorAll('[data-cask]').forEach((b) => (b.onclick = () => { confirmAt = Number(b.dataset.cask); draw(); }));
+    log.querySelectorAll('[data-cno]').forEach((b) => (b.onclick = () => { confirmAt = -1; draw(); }));
     log.querySelectorAll('[data-capply]').forEach((b) => (b.onclick = async () => {
       const m = COACH_LOG[Number(b.dataset.capply)];
+      if (!m?.changes?.length) return;
       b.disabled = true;
-      try { await api('/coach/apply', { method: 'POST', body: { changes: m.changes } }); m.applied = true; saveCoach(); route(); }
-      catch (e) { alert(e.message); b.disabled = false; }
+      try { await api('/coach/apply', { method: 'POST', body: { changes: m.changes } }); m.applied = true; confirmAt = -1; saveCoach(); route(); }
+      catch (e) { b.disabled = false; b.insertAdjacentHTML('afterend', `<p class="muted cm-sub">反映できませんでした (${esc(e.message)})</p>`); }
+    }));
+    log.querySelectorAll('[data-cretry]').forEach((b) => (b.onclick = () => {
+      const i = Number(b.dataset.cretry);
+      const m = COACH_LOG[i];
+      if (m.brief) { COACH_LOG = COACH_LOG.filter((x, k) => k !== i && !(x.hidden && k === i - 1)); saveCoach(); openBrief(true); return; }
+      // 通常の相談: 読めなかった返事を消して、直前の相談をもう一度送る
+      COACH_LOG.splice(i, 1);
+      ask();
     }));
   };
-  const send = async (text) => {
-    text = text.trim();
-    if (!text) return;
-    COACH_LOG.push({ role: 'user', content: text });
-    ta.value = '';
+  const errMsg = (e, extra) => ({ role: 'assistant', content: '', error: true, detail: /無料枠/.test(e?.message || '') ? e.message : '', changes: [], ...extra });
+  // 会話を送る (最後がユーザーの相談のとき)
+  const ask = async () => {
     await draw();
     log.insertAdjacentHTML('beforeend', '<div class="cm ai typing"><i></i><i></i><i></i></div>');
     log.lastElementChild.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     const btn = root.querySelector('#coach-send'); btn.disabled = true;
     try {
-      const r = await api('/coach', { method: 'POST', body: { messages: COACH_LOG.map((m) => ({ role: m.role, content: m.content, changes: m.changes })) } });
-      COACH_LOG.push({ role: 'assistant', content: r.reply, conclusion: r.conclusion, reasons: r.reasons, keep: r.keep, changes: r.changes || [], model: r.model });
+      // 読めなかった返事・エラーは AI に送り返さない
+      const hist = COACH_LOG.filter((m) => !m.invalid && !m.error).map((m) => ({ role: m.role, content: m.content, changes: m.changes }));
+      COACH_LOG.push(coachMsg(await api('/coach', { method: 'POST', body: { messages: hist } })));
     } catch (e) {
-      COACH_LOG.push({ role: 'assistant', content: `エラー: ${e.message}` });
+      COACH_LOG.push(errMsg(e));
     }
     saveCoach();
     btn.disabled = false;
     await draw();
     log.lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   };
-  root.querySelector('#coach-form').onsubmit = (e) => { e.preventDefault(); send(ta.value); };
-  root.querySelector('#coach-clear').onclick = () => { COACH_LOG = []; saveCoach(); draw(); root._coachOpen(); };
-  // 開いたとき、会話が空なら「今週の見立て」を出す (同じ状況ならサーバーのキャッシュ)
-  root._coachOpen = async () => {
-    if (COACH_LOG.length) return;
+  const send = async (text) => {
+    text = text.trim();
+    if (!text) return;
+    COACH_LOG.push({ role: 'user', content: text });
+    ta.value = '';
+    await ask();
+  };
+  // 今週の見立て。force なら作り直す (サーバーのキャッシュを使わない)
+  const openBrief = async (force = false) => {
     log.innerHTML = '<div class="cm ai typing"><i></i><i></i><i></i></div>';
-    try {
-      const r = await api('/coach/brief', { method: 'POST', body: {} });
-      if (COACH_LOG.length) return;
-      COACH_LOG.push({ role: 'user', content: r.q || '今週の見立てをください', hidden: true }, { role: 'assistant', content: r.reply, conclusion: r.conclusion, reasons: r.reasons, keep: r.keep, changes: r.changes || [], brief: true, model: r.model });
-      saveCoach();
-    } catch (e) { log.innerHTML = `<p class="muted coach-empty">今週の見立てを出せませんでした (${esc(e.message)})。下に書いて相談できます。</p>`; return; }
+    let m;
+    try { m = coachMsg(await api('/coach/brief', { method: 'POST', body: { force } }), { brief: true }); }
+    catch (e) { m = errMsg(e, { brief: true }); }
+    if (COACH_LOG.some((x) => !x.hidden)) { draw(); return; } // 待っている間に相談を始めていたら出さない
+    COACH_LOG = [{ role: 'user', content: '今週の見立てをください', hidden: true }, m];
+    saveCoach();
     draw();
+  };
+  root.querySelector('#coach-form').onsubmit = (e) => { e.preventDefault(); send(ta.value); };
+  // 会話を消す: 消したあとは自動で見立てを出し直さない (前と同じ見立てが出て、消えていないように見えるため)
+  root.querySelector('#coach-clear').onclick = () => { COACH_LOG = []; confirmAt = -1; saveCoach(); try { sessionStorage.setItem('coach-cleared', '1'); } catch {} draw(); };
+  // 開いたとき、会話が空なら「今週の見立て」を出す (同じ状況ならサーバーのキャッシュ)。会話を消したあとは出さない
+  root._coachOpen = () => {
+    let cleared = false;
+    try { cleared = sessionStorage.getItem('coach-cleared') === '1'; } catch {}
+    if (COACH_LOG.length || cleared) return;
+    openBrief(false);
   };
   draw();
 }

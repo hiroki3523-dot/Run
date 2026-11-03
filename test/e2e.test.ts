@@ -391,4 +391,60 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     const an = (await call(env, 'GET', `/activities/${runId}/analysis`)).json;
     expect(an.fitness.items.find((x: any) => x.key === 'reserve').value).toBe('あと 5〜10km');
   }, 60000);
+  it('AI コーチ: 崩れた JSON を生のまま出さない・会話を消すと消えたままになる・読めないときは再試行', async () => {
+    const realAI = env.AI;
+    // 2026-11-04 に画面に出た形 (」で閉じ、配列の ] も抜けている)
+    const BROKEN = '{"conclusion":"今日は休養を続け、明日の Jog 5km は予定どおり","reasons":["脚の張りは 2","11/3 の M ペース走で刺激は入っている","レース前なのでリカバリーが最重要」,"keep":["11/7 Jog 3km"],"reply":"無理せずいきましょう。","changes":[]}';
+    let next = BROKEN, calls = 0;
+    env.AI = { run: async () => { calls++; return { response: next }; } };
+    try {
+      await page.evaluate(() => { sessionStorage.clear(); sessionStorage.setItem('pm', 'coach'); });
+      await open('#/plans');
+      await page.waitForSelector('#coach-log .cm-card', { timeout: 15000 });
+      if (SHOTS) await (await page.$('#pm-coach')).screenshot({ path: `${SHOTS}/40-coach-brief.png` });
+      const text = await page.$eval('#coach-log', (e: Element) => e.textContent || '');
+      expect(text).toContain('今日は休養を続け');
+      expect(text).toContain('計画変更なし');
+      expect(text).not.toMatch(/"conclusion"|[{}]/);
+      expect(await page.$('#coach-log [data-cask]')).toBeNull(); // 変更が無いので反映ボタンは出さない
+      expect(await page.$$eval('#coach-log .cm-why li', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['脚の張りは 2', '11/3 の M ペース走で刺激は入っている', 'レース前なのでリカバリーが最重要']);
+
+      // 会話を消す → 消えたまま (同じ見立てを自動で出し直さない)
+      const before = calls;
+      await page.click('#coach-clear');
+      await page.waitForTimeout(800);
+      expect(await page.$('#coach-log .cm-card')).toBeNull();
+      expect(await page.$('#coach-brief-btn')).toBeTruthy();
+      await open('#/plans');
+      expect(await page.$('#coach-log .cm-card')).toBeNull();
+      expect(calls).toBe(before);
+
+      // 読めない返事 → 利用者向けの文と「もう一度試す」。キー名や波括弧は出さない
+      next = '{"conclusion": 今週は軽め, "reply": "休養を';
+      await page.fill('#coach-text', '明日は走れる？');
+      await page.click('#coach-send');
+      await page.waitForSelector('#coach-log .cm-err', { timeout: 15000 });
+      if (SHOTS) await (await page.$('#pm-coach')).screenshot({ path: `${SHOTS}/41-coach-invalid.png` });
+      const t2 = await page.$eval('#coach-log', (e: Element) => e.textContent || '');
+      expect(t2).toContain('回答をうまく表示できませんでした');
+      expect(t2).not.toMatch(/"conclusion"|"reply"|[{}]/);
+      // 再試行 → 変更案つきの返事。反映は確認してから
+      const d = addDays(TODAY, 3);
+      next = JSON.stringify({ conclusion: '3 日後は Jog に軽くする', reasons: ['疲れが残っている'], keep: [], reply: '軽めにしましょう', changes: [{ date: d, type: 'jog', distance_km: 5 }] });
+      await page.click('[data-cretry]');
+      await page.waitForSelector('#coach-log [data-cask]', { timeout: 15000 });
+      expect(await page.$eval('#coach-log', (e: Element) => e.textContent || '')).toContain('変更案あり：1件');
+      expect(await page.$('#coach-log .cm-err')).toBeNull();
+      const plansBefore = (await call(env, 'GET', `/plans?from=${d}&to=${d}`)).json;
+      await page.click('#coach-log [data-cask]');
+      await page.waitForSelector('#coach-log [data-capply]');
+      expect((await call(env, 'GET', `/plans?from=${d}&to=${d}`)).json).toEqual(plansBefore); // 確認の前は変えない
+      await page.click('#coach-log [data-cno]');
+      expect(await page.$('#coach-log [data-capply]')).toBeNull();
+      expect((await call(env, 'GET', `/plans?from=${d}&to=${d}`)).json).toEqual(plansBefore);
+    } finally {
+      env.AI = realAI;
+      await page.evaluate(() => sessionStorage.clear());
+    }
+  }, 90000);
 });
