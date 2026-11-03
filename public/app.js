@@ -1763,6 +1763,50 @@ function corosExtraCards(x) {
   return out.join('');
 }
 
+/** ペースと心拍を同じ距離の軸で重ねる (一定ペース区間に色をつける) */
+function hrPaceChart(ch, steady) {
+  if (!ch || !ch.d?.length) return '';
+  const W = 340, H = 150, L = 34, R = 34, T = 10, B = 22;
+  const tot = ch.d[ch.d.length - 1] || 1;
+  const X = (x) => L + (x / tot) * (W - L - R);
+  const ps = ch.pace.filter((v) => v != null).sort((a, b) => a - b), hs = ch.hr.filter((v) => v != null).sort((a, b) => a - b);
+  if (ps.length < 5 || hs.length < 5) return '';
+  const q = (a, f) => a[Math.min(a.length - 1, Math.max(0, Math.floor(a.length * f)))];
+  let pl = q(ps, 0.03) - 5, ph = q(ps, 0.97) + 5, hl = q(hs, 0.03) - 5, hh = q(hs, 0.97) + 5;
+  if (ph - pl < 30) { const m = (ph + pl) / 2; pl = m - 15; ph = m + 15; }
+  const YP = (v) => T + ((Math.min(ph, Math.max(pl, v)) - pl) / (ph - pl)) * (H - T - B); // 速いほど上
+  const YH = (v) => T + (1 - (Math.min(hh, Math.max(hl, v)) - hl) / (hh - hl)) * (H - T - B);
+  const line = (vals, Y) => vals.map((v, k) => (v == null ? null : `${X(ch.d[k]).toFixed(1)},${Y(v).toFixed(1)}`)).filter(Boolean).join(' ');
+  const band = steady ? `<rect x="${X(steady.from_km).toFixed(1)}" y="${T}" width="${(X(steady.to_km) - X(steady.from_km)).toFixed(1)}" height="${H - T - B}" fill="var(--accent)" opacity=".1"/>` : '';
+  const step = tot > 14 ? 5 : tot > 7 ? 2 : 1;
+  let xl = ''; for (let k = step; k < tot; k += step) xl += `<text x="${X(k).toFixed(1)}" y="${H - 6}" text-anchor="middle">${k}km</text>`;
+  const yl = [0.2, 0.8].map((f) => { const pv = pl + (ph - pl) * f, hv = hh - (hh - hl) * f; const y = T + f * (H - T - B); return `<text x="${L - 4}" y="${y + 3}" text-anchor="end" fill="#f4b400">${pace(Math.round(pv))}</text><text x="${W - R + 4}" y="${y + 3}" fill="#ff4f7b">${Math.round(hv)}</text>`; }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" class="achart" role="img" aria-label="ペースと心拍"><g class="ax">${xl}${yl}</g>${band}
+    <polyline points="${line(ch.pace, YP)}" fill="none" stroke="#f4b400" stroke-width="1.6"/><polyline points="${line(ch.hr, YH)}" fill="none" stroke="#ff4f7b" stroke-width="1.6"/></svg>
+    <div class="hp-leg"><span><i style="background:#f4b400"></i>ペース (上ほど速い)</span><span><i style="background:#ff4f7b"></i>心拍</span>${steady ? '<span><i class="hp-band"></i>一定ペース区間</span>' : ''}</div>`;
+}
+
+/** この走りの評価: 練習達成度・走力評価・良かった点と課題・根拠・過去比較・ペースと心拍・フォーム */
+function analysisHtml(an) {
+  const J = { good: '良い', ok: '普通', bad: '課題', hold: '保留' };
+  const tile = (title, x, sub) => `<div class="an-t"><small>${title}</small>${x.score != null ? `<b class="num">${x.score}</b>` : '<b class="an-hold">保留</b>'}<span class="muted">${sub}</span></div>`;
+  const items = (arr) => `<div class="an-items">${arr.map((x) => `<div class="an-it"><span class="an-j j-${x.judge}">${J[x.judge]}</span><div><b>${esc(x.label)}</b><span class="num">${esc(x.value)}</span><small class="muted">${esc(x.reason)}</small></div></div>`).join('')}</div>`;
+  const acc = (title, body, open = false) => `<details class="rv-acc" ${open ? 'open' : ''}><summary>${title}</summary><div class="rv-acc-b">${body}</div></details>`;
+  const TR = { up: ['改善', 'good'], same: ['維持', 'ok'], down: ['低下', 'bad'], hold: ['保留', 'hold'] };
+  let h = `<div class="card an"><h2>この走りの評価</h2>
+    <div class="an-tiles">${tile('練習達成度', an.achievement, '計画どおりにできたか')}${tile('走力評価', an.fitness, '余裕・後半の維持・効率')}</div>
+    ${an.good.length || an.issues.length ? `<div class="an-gi">${an.good.length ? `<div><b class="g">良かった点</b>${an.good.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}${an.issues.length ? `<div><b class="b">課題</b>${an.issues.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}</div>` : ''}`;
+  h += acc('評価の根拠', `<h4>練習達成度${an.achievement.score != null ? ` ${an.achievement.score}点` : ''}</h4>${an.achievement.hold_reason ? `<p class="muted">${esc(an.achievement.hold_reason)}</p>` : ''}${items(an.achievement.items)}
+    <h4>走力評価${an.fitness.score != null ? ` ${an.fitness.score}点` : ''}</h4>${an.fitness.hold_reason ? `<p class="muted">${esc(an.fitness.hold_reason)}</p>` : ''}${items(an.fitness.items)}
+    <p class="muted an-note">練習達成度は計画 (種類・ペース帯・距離) に対しての点数。走力評価は計画とは別に、余裕を持って最後まで走れたかを見ます。データが足りない項目は数値にせず保留にしています。</p>`);
+  if (an.compare) h += acc(`過去との比較 (似たラン ${an.compare.n} 本)`, `<table class="an-cmp num"><tr><th></th><th>今回</th><th>過去</th><th>差</th><th></th></tr>${an.compare.metrics.map((m) => `<tr><td>${esc(m.label)}</td><td>${esc(m.now)}</td><td class="muted">${esc(m.past)}</td><td>${esc(m.diff)}</td><td><span class="an-j j-${TR[m.trend][1]}">${TR[m.trend][0]}</span></td></tr>`).join('')}</table>
+    <p class="muted an-note">比べたラン: ${an.compare.runs.map((r) => `<a href="#/activities/${r.id}">${md(r.date)} ${r.km}km ${pace(r.pace)}</a>`).join('・')}</p>${an.compare.notes.map((t) => `<p class="muted an-note">${esc(t)}</p>`).join('')}`);
+  else h += acc('過去との比較', '<p class="muted">距離・ペース・種類が近い過去のランがまだ 2 本未満のため比較できません。ランが増えると自動で比べます。</p>');
+  if (an.hrpace) h += acc('ペースと心拍', `${hrPaceChart(an.chart, an.hrpace.steady)}${an.hrpace.text.map((t) => `<p>${esc(t)}</p>`).join('')}`);
+  if (an.form && an.form.rows.length) h += acc('フォームの前半・後半', `<table class="an-cmp num"><tr><th></th><th>前半</th><th>後半</th><th>差</th></tr>${an.form.rows.map((r) => `<tr class="${r.flag ? 'flag' : ''}"><td>${r.label}</td><td>${r.first}</td><td>${r.second}</td><td>${r.diff}</td></tr>`).join('')}</table>${an.form.text.map((t) => `<p>${esc(t)}</p>`).join('')}`);
+  return h + '</div>';
+}
+
 /** ラップ詳細 (1km ごと) */
 function lapTable(sp) {
   const ps = sp.filter((x) => x.pace_s).map((x) => x.pace_s);
@@ -1804,6 +1848,8 @@ const FB_SLIDERS = [
   ['form', 'フォームの自然さ', '不自然・力みがある', '自然・理想的'],
   ['pain', '痛みの強さ', 'なし', '最大'],
 ];
+const FB_LATE = [['rpe_late', '後半のきつさ (RPE)', '負担なし', '最大'], ['leg_late', '後半の脚の疲労感', '負担なし', '最大']];
+const PAIN_PARTS = ['足裏', 'かかと', 'アキレス腱', 'ふくらはぎ', 'すね', '足首', '膝', '太もも前', 'ハムストリング', '股関節', 'お尻', '腰', 'その他'];
 const FB_RESERVE = [['limit', 'ほぼ限界'], ['1-3', '1〜3km'], ['3-5', '3〜5km'], ['5-10', '5〜10km'], ['10+', '10km以上']];
 const FB_TAG = [['hot', '暑い'], ['cold', '寒い'], ['wind', '風'], ['sleep', '睡眠不足'], ['hungry', '空腹・補給'], ['tired', '疲れが残っていた']];
 const CLIP_SVG = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 13l2 2 4-4"/></svg>';
@@ -1819,6 +1865,10 @@ function feedbackHtml(fb, notes) {
   return `<div class="card rv fbx"><div class="row spread"><h3>ふりかえり</h3><span class="fbx-ic">${CLIP_SVG}</span></div>
     <p class="muted fbx-sub">練習直後に 30 秒で。答えるとレビューに反映されます。</p>
     ${FB_SLIDERS.map(slider).join('')}
+    <div class="fbx-q fbx-pain ${(fb.pain ?? 0) > 0 || (fb.pain_part || []).length ? '' : 'hidden'}"><b>痛む場所 <span class="muted">(複数可)</span></b>
+      <div class="chips">${PAIN_PARTS.map((v) => `<button type="button" class="chip ${(fb.pain_part || []).includes(v) ? 'on' : ''}" data-pn="${v}">${v}</button>`).join('')}</div></div>
+    <details class="fbx-late" ${fb.rpe_late != null || fb.leg_late != null ? 'open' : ''}><summary>前半と後半で分けて記録する <span class="muted">(任意)</span></summary>
+      <p class="muted" style="font-size:12px;margin:4px 0 8px">上のきつさ・脚を「前半」として、後半だけを入れます。</p>${FB_LATE.map(slider).join('')}</details>
     <div class="fbx-q"><b>同じペースをあと何km続けられそう？</b>
       <div class="fbx-radio">${FB_RESERVE.map(([v, l]) => `<button type="button" class="rd ${fb.reserve === v ? 'on' : ''}" data-rs="${v}"><i></i>${l}</button>`).join('')}</div></div>
     <div class="fbx-q"><b>コンディション <span class="muted">(任意・複数可)</span></b>
@@ -1831,8 +1881,9 @@ function feedbackHtml(fb, notes) {
 
 /** 保存したふりかえりの表示 (スライダーは出さない。「修正」で入力に戻る) */
 function feedbackSummary(fb, notes) {
-  const SHORT = { breath: '呼吸', leg: '脚', rpe: 'きつさ', form: 'フォーム', pain: '痛み' };
-  const items = FB_SLIDERS.filter(([k]) => fb[k] != null).map(([k]) => `<div><span class="muted">${SHORT[k]}</span><b class="num">${fb[k]}<small>/10</small></b></div>`);
+  const SHORT = { breath: '呼吸', leg: '脚', rpe: 'きつさ', form: 'フォーム', pain: '痛み', rpe_late: '後半きつさ', leg_late: '後半の脚' };
+  const items = [...FB_SLIDERS, ...FB_LATE].filter(([k]) => fb[k] != null).map(([k]) => `<div><span class="muted">${SHORT[k]}</span><b class="num">${fb[k]}<small>/10</small></b></div>`);
+  if ((fb.pain_part || []).length) items.push(`<div><span class="muted">痛む場所</span><b class="fbs-rs">${fb.pain_part.map(esc).join('・')}</b></div>`);
   const rs = FB_RESERVE.find(([v]) => v === fb.reserve);
   if (rs) items.push(`<div><span class="muted">余裕</span><b class="num fbs-rs">あと${rs[1]}</b></div>`);
   const tags = FB_TAG.filter(([v]) => (fb.tags || []).includes(v)).map(([, l]) => `<span class="chip on mini">${l}</span>`).join('');
@@ -1842,7 +1893,7 @@ function feedbackSummary(fb, notes) {
     ${fb.memo ? `<p class="fbs-memo">${esc(fb.memo)}</p>` : ''}
     <div id="fb-notes">${(notes || []).map((t) => `<p class="fb-note">${esc(t)}</p>`).join('')}</div></div>`;
 }
-const hasFeedback = (fb) => FB_SLIDERS.some(([k]) => fb[k] != null) || !!fb.reserve || (fb.tags || []).length > 0 || !!fb.memo;
+const hasFeedback = (fb) => [...FB_SLIDERS, ...FB_LATE].some(([k]) => fb[k] != null) || !!fb.reserve || (fb.tags || []).length > 0 || !!fb.memo;
 
 /** ふりかえりの操作 (スライダー・選択・保存) */
 function bindFeedback(fbox, state, onSave) {
@@ -1854,6 +1905,7 @@ function bindFeedback(fbox, state, onSave) {
       if (state[k] === v && !el.classList.contains('unset')) return;
       state[k] = v; el.classList.remove('unset');
       tr.style.setProperty('--v', v); el.querySelector('em').textContent = v; dirty();
+      if (k === 'pain') fbox.querySelector('.fbx-pain')?.classList.toggle('hidden', !(v > 0) && !(state.pain_part || []).length);
     };
     const at = (e) => {
       const r = tr.getBoundingClientRect(), th = 44;
@@ -1867,6 +1919,10 @@ function bindFeedback(fbox, state, onSave) {
   fbox.querySelectorAll('[data-rs]').forEach((b) => (b.onclick = () => {
     state.reserve = state.reserve === b.dataset.rs ? null : b.dataset.rs;
     fbox.querySelectorAll('[data-rs]').forEach((x) => x.classList.toggle('on', x.dataset.rs === state.reserve)); dirty();
+  }));
+  fbox.querySelectorAll('[data-pn]').forEach((b) => (b.onclick = () => {
+    const s = new Set(state.pain_part || []); s.has(b.dataset.pn) ? s.delete(b.dataset.pn) : s.add(b.dataset.pn); state.pain_part = [...s];
+    b.classList.toggle('on', s.has(b.dataset.pn)); dirty();
   }));
   fbox.querySelectorAll('[data-tg]').forEach((b) => (b.onclick = () => {
     const s = new Set(state.tags); s.has(b.dataset.tg) ? s.delete(b.dataset.tg) : s.add(b.dataset.tg); state.tags = [...s];
@@ -1941,7 +1997,7 @@ async function activityDetailView(id) {
       box.innerHTML = reviewHtml(rv);
       moveScore();
       if (rv.main_id !== undefined) { if (fbox) fbox.innerHTML = ''; return; }
-      const st = { breath: null, leg: null, rpe: null, form: null, pain: null, reserve: null, memo: '', tags: [], ...(rv.fb || {}) };
+      const st = { breath: null, leg: null, rpe: null, form: null, pain: null, reserve: null, memo: '', tags: [], pain_part: [], rpe_late: null, leg_late: null, ...(rv.fb || {}) };
       if (fbox) {
         let notes = rv.notes;
         const showSummary = () => {
@@ -1952,6 +2008,7 @@ async function activityDetailView(id) {
           fbox.innerHTML = feedbackHtml(st, notes);
           bindFeedback(fbox, st, async (body) => {
             await api(`/activities/${id}/feedback`, { method: 'PUT', body });
+            api(`/activities/${id}/analysis`).then((an) => { const box = view.querySelector('#analysis'); if (box && an && !an.error) box.innerHTML = analysisHtml(an); }).catch(() => {});
             const r2 = await api(`/activities/${id}/review`).catch(() => null);
             if (r2 && !r2.error && r2.main_id === undefined) {
               view.querySelector('#review').innerHTML = reviewHtml(r2);
@@ -1965,6 +2022,7 @@ async function activityDetailView(id) {
       }
     }).catch(() => { const box = view.querySelector('#review'); if (box) box.innerHTML = ''; });
     loadReview();
+    api(`/activities/${id}/analysis`).then((an) => { const box = view.querySelector('#analysis'); if (box && an && !an.error) box.innerHTML = analysisHtml(an); }).catch(() => {});
     api(`/activities/${id}/series`).then((sr) => {
       const box = view.querySelector('#series');
       if (!box || !sr || sr.error) { if (box) box.innerHTML = ''; return; }
@@ -2010,6 +2068,7 @@ async function activityDetailView(id) {
         ${CX.training_load != null ? `<div><b>${CX.training_load}</b><span>トレーニング負荷</span></div>` : ''}
       </div>
     </div>
+    <div id="analysis"></div>
     <div id="series"><div class="card"><span class="muted">グラフを読み込み中…</span></div></div>
     <div class="card"><h2>ラップ詳細</h2><div id="splits"><span class="muted">読み込み中…</span></div></div>
     ${sib.length > 1 ? `<div class="card"><h2>この日のラン (${sib.length}本)</h2>
