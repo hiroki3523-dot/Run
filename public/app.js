@@ -245,7 +245,7 @@ async function homeView() {
     </a>
     <div class="card cond" id="cond" data-plan="${esc(JSON.stringify(todays.map((p) => ({ type: p.type, km: p.distance_m ? Math.round(p.distance_m / 100) / 10 : null }))))}"></div>
     ${next ? `
-    <a class="card hm-race" href="#/races/${next.id}">
+    <a class="card hm-race ${raceHeroStyle(next).cls}" href="#/races/${next.id}" style="${raceHeroStyle(next).style}">
       <div class="row spread"><small class="muted">次のレース</small>${next.priority === 'A' ? '<span class="rb rb-main">本命</span>' : ''}</div>
       <b class="hm-rname">${esc(next.name)}</b>
       <div class="hm-rrow"><div class="num">${daysBetween(t, next.date) === 0 ? '<b class="hm-days">本日</b>' : `あと <b class="hm-days">${daysBetween(t, next.date)}</b> 日`}</div>
@@ -2610,6 +2610,98 @@ function racePlanExtras(r, mode) {
   return h;
 }
 
+/* ---- 大会のイメージ画像 (自動で作る SVG。都市・海辺の都市・海・山) ---- */
+const ART_THEMES = { city: '都市', coast: '海辺の都市', sea: '海', mountain: '山' };
+/** 大会名・会場から景色を選ぶ (おすすめ)。当てはまらなければ都市 */
+function artThemeOf(r) {
+  const t = `${r.name || ''} ${raceInfoOf(r).venue || ''}`;
+  const sea = /海|湾|浜|ビーチ|島|港|岬|湘南|糸島|沖縄|那覇|宮古|石垣|館山|みなと|マリン|ベイ|オーシャン|シーサイド|海岸/.test(t);
+  const mtn = /山|高原|トレイル|峠|富士|岳|アルプス|渓谷|湖|森/.test(t);
+  const coastCity = /福岡|神戸|横浜|那覇|北九州|下関|函館|長崎|千葉|大阪|湘南|静岡|和歌山|松山|高知|鹿児島/.test(t);
+  const city = /東京|大阪|名古屋|福岡|京都|神戸|横浜|札幌|仙台|広島|北九州|さいたま|千葉|金沢|岡山|熊本|新潟|シティ|市/.test(t);
+  if (mtn && !city) return 'mountain';
+  if (coastCity) return 'coast';
+  if (sea) return 'sea';
+  if (mtn) return 'mountain';
+  return 'city';
+}
+/** 大会ごとに少しずつ違う景色にするための乱数 (同じ大会なら毎回同じ) */
+function artRand(seed) {
+  let h = 2166136261;
+  for (const ch of String(seed)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return () => { h ^= h << 13; h ^= h >>> 17; h ^= h << 5; return ((h >>> 0) % 10000) / 10000; };
+}
+/** 景色の SVG (400×200)。左側は文字が読めるように暗く、景色は右側に寄せる */
+function raceArtSvg(theme, seed) {
+  const rnd = artRand(`${seed}:${theme}`);
+  const W = 400, H = 200;
+  const pal = {
+    city: ['#0b0f2e', '#2a2a8a', '#7a4dff', '#ff7aa8'],
+    coast: ['#0a1236', '#24308f', '#6a5cff', '#ffa77a'],
+    sea: ['#08163a', '#1d3a9e', '#4f7dff', '#ffc27a'],
+    mountain: ['#0c1030', '#2b2a86', '#8a5cff', '#ff9ec7'],
+  }[theme] || ['#0b0f2e', '#2a2a8a', '#7a4dff', '#ff7aa8'];
+  const horizon = theme === 'mountain' ? 150 : theme === 'city' ? 168 : 132;
+  const sunX = 250 + rnd() * 100, sunY = horizon - 18 - rnd() * 30;
+  let g = `<defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${pal[0]}"/><stop offset=".55" stop-color="${pal[1]}"/><stop offset="1" stop-color="${pal[2]}"/></linearGradient>
+    <radialGradient id="sun" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="${pal[3]}" stop-opacity=".95"/><stop offset=".35" stop-color="${pal[3]}" stop-opacity=".45"/><stop offset="1" stop-color="${pal[3]}" stop-opacity="0"/></radialGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${pal[1]}"/><stop offset="1" stop-color="${pal[0]}"/></linearGradient>
+  </defs>
+  <rect width="${W}" height="${H}" fill="url(#sky)"/>`;
+  // 星
+  for (let i = 0; i < 26; i++) g += `<circle cx="${(rnd() * W).toFixed(1)}" cy="${(rnd() * horizon * 0.6).toFixed(1)}" r="${(0.4 + rnd() * 0.9).toFixed(2)}" fill="#fff" opacity="${(0.25 + rnd() * 0.5).toFixed(2)}"/>`;
+  // 太陽 (光の輪)
+  g += `<circle cx="${sunX.toFixed(1)}" cy="${sunY.toFixed(1)}" r="70" fill="url(#sun)"/><circle cx="${sunX.toFixed(1)}" cy="${sunY.toFixed(1)}" r="${(14 + rnd() * 6).toFixed(1)}" fill="${pal[3]}" opacity=".9"/>`;
+  const skyline = (base, x0, x1, hmin, hmax, fill, win) => {
+    let s = '', x = x0;
+    while (x < x1) {
+      const w = 10 + rnd() * 22, h = hmin + rnd() * (hmax - hmin) * (0.35 + 0.65 * ((x - x0) / Math.max(1, x1 - x0)));
+      s += `<rect x="${x.toFixed(1)}" y="${(base - h).toFixed(1)}" width="${w.toFixed(1)}" height="${(h + 1).toFixed(1)}" fill="${fill}"/>`;
+      if (win) for (let k = 0; k < Math.floor(h / 9); k++) for (let j = 0; j < Math.floor(w / 6); j++) if (rnd() < 0.22) s += `<rect x="${(x + 2 + j * 6).toFixed(1)}" y="${(base - h + 4 + k * 9).toFixed(1)}" width="2" height="3" fill="#ffd98a" opacity="${(0.4 + rnd() * 0.5).toFixed(2)}"/>`;
+      x += w + 1 + rnd() * 3;
+    }
+    // 塔 (アンテナ)
+    const tx = x0 + (x1 - x0) * (0.55 + rnd() * 0.3), th = hmax * 1.25;
+    s += `<path d="M${(tx - 5).toFixed(1)} ${base} L${tx.toFixed(1)} ${(base - th).toFixed(1)} L${(tx + 5).toFixed(1)} ${base}Z" fill="${fill}"/><line x1="${tx.toFixed(1)}" y1="${(base - th).toFixed(1)}" x2="${tx.toFixed(1)}" y2="${(base - th - 12).toFixed(1)}" stroke="${fill}" stroke-width="1.5"/><circle cx="${tx.toFixed(1)}" cy="${(base - th - 12).toFixed(1)}" r="1.6" fill="#ff8aa8"/>`;
+    return s;
+  };
+  if (theme === 'city') {
+    g += skyline(horizon, 150, W, 24, 70, '#1a1850', false);
+    g += skyline(horizon + 4, 120, W, 18, 60, '#0d0e2c', true);
+    g += `<rect y="${horizon + 3}" width="${W}" height="${H - horizon}" fill="#0a0b24"/>`;
+  } else if (theme === 'coast') {
+    g += skyline(horizon, 210, W, 14, 46, '#13134a', true);
+    g += `<rect y="${horizon}" width="${W}" height="${H - horizon}" fill="url(#sea)"/>`;
+  } else if (theme === 'sea') {
+    g += `<rect y="${horizon}" width="${W}" height="${H - horizon}" fill="url(#sea)"/>`;
+    g += `<path d="M180 ${horizon} q40 -14 80 -6 t70 2 l70 4 v0 Z" fill="#141a52" opacity=".8"/>`;
+  } else {
+    const ridge = (base, amp, fill, op) => { let d = `M0 ${H} L0 ${base}`; for (let x = 0; x <= W; x += 20) d += ` L${x} ${(base - (Math.sin(x / 37 + rnd()) + 1) * amp * (0.4 + 0.6 * x / W) - rnd() * 6).toFixed(1)}`; return `<path d="${d} L${W} ${H}Z" fill="${fill}" opacity="${op}"/>`; };
+    g += ridge(horizon - 10, 34, '#3a2f9a', '.55') + ridge(horizon + 8, 30, '#221d6a', '.85') + ridge(horizon + 28, 22, '#0e0e30', '1');
+  }
+  if (theme === 'coast' || theme === 'sea') {
+    // 太陽の映り込みと波
+    for (let i = 0; i < 9; i++) { const y = horizon + 6 + i * 7, w = 40 - i * 3; g += `<rect x="${(sunX - w / 2).toFixed(1)}" y="${y}" width="${w}" height="1.6" rx=".8" fill="${pal[3]}" opacity="${(0.55 - i * 0.05).toFixed(2)}"/>`; }
+    for (let i = 0; i < 6; i++) { const y = horizon + 10 + i * 10 + rnd() * 4, x = rnd() * 240; g += `<path d="M${x.toFixed(1)} ${y.toFixed(1)} q12 -3 24 0 t24 0" stroke="#a9b8ff" stroke-width="1" fill="none" opacity=".35"/>`; }
+  }
+  // 走るコース (光る点線)
+  const y0 = H - 22 - rnd() * 10;
+  g += `<path d="M0 ${y0.toFixed(1)} C 120 ${(y0 - 26).toFixed(1)}, 220 ${(y0 + 18).toFixed(1)}, ${W} ${(y0 - 14).toFixed(1)}" stroke="#fff" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" fill="none" opacity=".55"/>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid slice">${g}</svg>`;
+}
+/** 見出しの背景: 選んだ景色か写真。hero = auto (おすすめ) / city / coast / sea / mountain / photo / plain */
+function raceHeroStyle(r) {
+  const inf = raceInfoOf(r);
+  const mode = inf.hero || 'auto';
+  if (mode === 'plain') return { cls: '', style: '' };
+  if (mode === 'photo' && inf.image) return { cls: 'has-img', style: `--img:url('${inf.image}')` };
+  const theme = ART_THEMES[mode] ? mode : artThemeOf(r);
+  const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(raceArtSvg(theme, r.id || r.name))}`;
+  // 属性の中に入れるので外側は ' で囲む (SVG の中には ' を使っていない)
+  return { cls: 'has-art', style: `--art:url('${url}')` };
+}
+
 /** レース詳細 > 実績: 目標への準備状況 (ホームの「目標への現在地」と同じ計算。次の大会だけが対象) */
 async function loadRaceReady(r) {
   const box = document.getElementById('race-ready');
@@ -2737,19 +2829,29 @@ async function raceDetailView(id) {
     };
     window.addEventListener('scroll', onScroll, { passive: true });
     if (r.date > t) loadRaceReady(r);
-    // 大会の写真: 自分で選んだ写真を見出しの背景に (900px 以内に縮小して保存)
+    // 見出しの画像: 自動で作った景色 (おすすめ・都市・海辺の都市・海・山) か、自分の写真
     view.querySelector('#race-photo').onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      try { const url = await resizeImage(file, 900); await saveInfo({ image: url }); route(); } catch (err) { alert(err.message); }
+      try { const url = await resizeImage(file, 900); await saveInfo({ image: url, hero: 'photo' }); route(); } catch (err) { alert(err.message); }
     };
-    // 写真があるときは「変える / 外す」を選ぶ
     view.querySelector('.rd-photo').addEventListener('click', async (e) => {
-      if (e.target.id === 'race-photo' || !raceInfoOf(r).image) return; // 無いときはそのまま写真を選ぶ
+      if (e.target.id === 'race-photo') return;
       e.preventDefault();
-      const k = await actionSheet('大会の写真', [{ key: 'change', label: '写真を変える' }, { key: 'remove', label: '写真を外す', danger: true }]);
-      if (k === 'change') view.querySelector('#race-photo').click();
-      else if (k === 'remove') { await saveInfo({ image: null }); route(); }
+      const inf = raceInfoOf(r), cur = inf.hero || 'auto', rec = artThemeOf(r);
+      const thumb = (th) => `<i class="art-th" style="background-image:url(&quot;data:image/svg+xml;charset=utf-8,${encodeURIComponent(raceArtSvg(th, r.id || r.name))}&quot;)"></i>`;
+      const k = await actionSheet('見出しの画像', [
+        { key: 'auto', label: 'おすすめ', sub: `大会名から: ${ART_THEMES[rec]}`, icon: thumb(rec), on: cur === 'auto' },
+        ...Object.entries(ART_THEMES).map(([key, label]) => ({ key, label, icon: thumb(key), on: cur === key })),
+        ...(inf.image ? [{ key: 'photo', label: '自分の写真', on: cur === 'photo' }] : []),
+        { key: 'pick', label: inf.image ? '別の写真を選ぶ' : '写真を選ぶ' },
+        { key: 'plain', label: '画像なし (色だけ)', on: cur === 'plain' },
+        ...(inf.image ? [{ key: 'remove', label: '写真を削除', danger: true }] : []),
+      ]);
+      if (!k) return;
+      if (k === 'pick') return view.querySelector('#race-photo').click();
+      if (k === 'remove') { await saveInfo({ image: null, hero: cur === 'photo' ? 'auto' : cur }); return route(); }
+      await saveInfo({ hero: k }); route();
     });
     view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
     view.querySelector('#st-race').onclick = () => manageRace(r);
@@ -2811,8 +2913,8 @@ async function raceDetailView(id) {
   const inf0 = raceInfoOf(r), st0r = r.status || 'confirmed';
   const est0 = inf0.date_estimated;
   return `
-    <div class="card hero rd-hero ${inf0.image ? 'has-img' : ''}" ${inf0.image ? `style="--img:url('${inf0.image}')"` : ''}>
-      <label class="rd-photo" aria-label="大会の写真を選ぶ">${SVG('<rect x="3" y="6" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="3.5"/><path d="M8 6l2-2h4l2 2"/>')}<input type="file" id="race-photo" accept="image/*" hidden></label>
+    <div class="card hero rd-hero ${raceHeroStyle(r).cls}" style="${raceHeroStyle(r).style}">
+      <label class="rd-photo" aria-label="見出しの画像を選ぶ">${SVG('<rect x="3" y="6" width="18" height="14" rx="2"/><circle cx="12" cy="13" r="3.5"/><path d="M8 6l2-2h4l2 2"/>')}<input type="file" id="race-photo" accept="image/*" hidden></label>
       <div class="rl-top"><span class="rb rb-${upcoming ? st0r : r.result_time_s ? 'done' : 'past'}">${upcoming ? RACE_STATUS.find(([k]) => k === st0r)[1] : r.result_time_s ? '完走' : '終了'}</span>${r.priority === 'A' && st0r !== 'candidate' ? '<span class="rb rb-main">本命</span>' : `<span class="rb">優先度 ${esc(r.priority || '-')}</span>`}${est0 ? '<span class="rb rb-est">日付は暫定</span>' : ''}</div>
       <h2 class="rl-hname">${esc(r.name)}</h2>
       <div class="muted num">${r.date.slice(0, 4)}年${md(r.date)}(${dow(r.date)})${inf0.venue ? `・${esc(inf0.venue)}` : ''}・${km(r.distance_m, 3)}km</div>
@@ -3338,7 +3440,8 @@ async function racesView() {
     if (!next) return `<div class="card rl-empty"><b>出場予定の大会はありません</b><p class="muted">「大会を探す」か「＋ 追加」から登録すると、ここに次の大会が大きく出ます。${upcoming.length ? '(エントリー候補は、状態を「エントリー済み」「出場決定」にすると出ます)' : ''}</p></div>`;
     const est = raceInfoOf(next).date_estimated, st = next.status || 'confirmed';
     const inf = raceInfoOf(next);
-    return `<a class="card hero rl-hero ${inf.image ? 'has-img' : ''}" href="#/races/${next.id}" ${inf.image ? `style="--img:url('${inf.image}')"` : ''}>
+    const hs = raceHeroStyle(next);
+    return `<a class="card hero rl-hero ${hs.cls}" href="#/races/${next.id}" style="${hs.style}">
       <div class="rl-top"><span class="rb rb-${st}">${ST_LABEL[st]}</span>${next.priority === 'A' ? '<span class="rb rb-main">本命</span>' : `<span class="rb">優先度 ${esc(next.priority || '-')}</span>`}</div>
       <h2 class="rl-hname">${esc(next.name)}</h2>
       <div class="muted num">${next.date.slice(0, 4)}年${md(next.date)}(${dow(next.date)})${est ? '・日付は暫定' : ''}${inf.venue ? `・${esc(inf.venue)}` : ''}</div>

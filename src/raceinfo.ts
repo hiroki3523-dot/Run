@@ -9,7 +9,7 @@ import type { Env } from './types';
 export interface RaceBlock { name: string; start: string | null; close: string | null }
 export interface RaceCutoff { km: number; time: string; place: string | null }
 export interface RaceInfo {
-  image?: string; pace_mode?: string; pace_adj?: number[]; start_loss_s?: number; fuel?: { km: number; item: string }[]; // 本人が決める値 (2026-11)
+  image?: string; hero?: string; pace_mode?: string; pace_adj?: number[]; start_loss_s?: number; fuel?: { km: number; item: string }[]; // 本人が決める値 (2026-11)
   venue?: string | null;          // 会場 (スタート・ゴール)
   start_time?: string | null;     // スタート時刻 (例 8:30)
   line_close?: string | null;     // 整列の締め切り (全体)
@@ -57,6 +57,8 @@ export function cleanRaceInfo(o: any): RaceInfo {
     ...(['even', 'negative', 'active', 'custom'].includes(o.pace_mode) ? { pace_mode: o.pace_mode } : {}),
     ...(Array.isArray(o.pace_adj) ? { pace_adj: o.pace_adj.slice(0, 30).map((x: any) => (Number.isFinite(Number(x)) ? Math.max(-60, Math.min(60, Math.round(Number(x)))) : 0)) } : {}),
     ...(Number.isFinite(Number(o.start_loss_s)) && o.start_loss_s != null ? { start_loss_s: Math.max(0, Math.min(1800, Math.round(Number(o.start_loss_s)))) } : {}),
+    // 見出しの画像の選び方 (自動の景色・写真・なし)
+    ...(['auto', 'city', 'coast', 'sea', 'mountain', 'photo', 'plain'].includes(o.hero) ? { hero: o.hero } : {}),
     // 大会の写真 (自分で選んだもの。画面で縮小した JPEG。大きすぎるものは保存しない)
     ...(typeof o.image === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(o.image) && o.image.length < 400_000 ? { image: o.image } : {}),
     ...(Array.isArray(o.fuel) ? { fuel: o.fuel.slice(0, 30).map((x: any) => ({ km: Math.round(Number(x?.km) * 10) / 10, item: str(x?.item, 30) ?? '' })).filter((x: any) => Number.isFinite(x.km) && x.km >= 0 && x.km <= 100 && x.item).sort((a: any, b: any) => a.km - b.km) } : {}),

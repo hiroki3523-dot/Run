@@ -257,6 +257,17 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect(pos.sec).toBeGreaterThanOrEqual(pos.tabs - 2);
     expect(pos.sec - pos.tabs).toBeLessThan(40);
   }, 40000);
+  it('レース詳細: 見出しに自動で作った景色が出て、景色を選び直せる', async () => {
+    await open(`#/races/${raceId}`, '09c-race-art');
+    expect(await page.$eval('.rd-hero', (e: Element) => e.classList.contains('has-art'))).toBe(true);
+    await page.click('.rd-photo');
+    await page.waitForSelector('.asheet .as-row[data-k="sea"]');
+    await page.click('.asheet .as-row[data-k="sea"]');
+    await page.waitForTimeout(1200);
+    const inf = JSON.parse((await call(env, 'GET', '/races')).json.find((x: any) => x.id === raceId).info);
+    expect(inf.hero).toBe('sea');
+    expect(await page.$eval('.rd-hero', (e: Element) => e.classList.contains('has-art'))).toBe(true);
+  }, 40000);
   it('レース詳細: 大会の写真を選ぶと見出しの背景になる', async () => {
     await open(`#/races/${raceId}`);
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGNk+M/AwMDAwMDAwMDAAAAPkAEBXqP1AQAAAABJRU5ErkJggg==', 'base64');
@@ -265,6 +276,7 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     const inf = JSON.parse((await call(env, 'GET', '/races')).json.find((x: any) => x.id === raceId).info);
     expect(inf.image).toMatch(/^data:image\/jpeg;base64,/);
     expect(await page.$eval('.rd-hero', (e: Element) => e.classList.contains('has-img'))).toBe(true);
+  }, 40000);
   it('シューズの編集: 用途のボタンが小さく、「使用感を入力・編集」で使用感の欄が開く', async () => {
     const sh = (await call(env, 'GET', '/shoes')).json.find((x: any) => x.name === 'テストシューズA');
     await open(`#/shoes/${sh.id}`);
