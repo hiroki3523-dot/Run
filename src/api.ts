@@ -12,6 +12,7 @@ import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
 import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
 import { autoFillRace, cleanRaceInfo, entryHistory, extractRaceInfo } from './raceinfo';
+import { findOfficialSite } from './sitefind';
 import { corosDisconnect, getAuth as getCorosAuth, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns } from './insights';
 import { applyDerived } from './derive-apply';
@@ -102,6 +103,12 @@ api.post('/settings/reset', async (c) => {
 api.get('/races', async (c) => {
   const { results } = await c.env.DB.prepare('SELECT * FROM races ORDER BY date').all();
   return c.json(results);
+});
+/** 大会の公式サイトを探す (Wikipedia の公式サイト欄・検索結果の候補) */
+api.get('/races/find-site', async (c) => {
+  const name = String(c.req.query('name') || '').slice(0, 60);
+  if (!name) return c.json({ error: '大会名が必要です' }, 400);
+  try { return c.json({ list: await findOfficialSite(c.env, name) }); } catch (e) { return c.json({ list: [], error: (e as Error).message }); }
 });
 /** 大会ごとの例年のエントリー時期 (公式サイトを読んだときに覚えたもの) */
 api.get('/races/entry-history', async (c) => c.json(await entryHistory(c.env)));
