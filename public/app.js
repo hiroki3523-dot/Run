@@ -23,14 +23,6 @@ const purposesOf = (v) => [...new Set(String(v || '').split(',').map((x) => x.tr
 const purposeText = (s) => purposesOf(s.purpose).map((x) => PURPOSE_LABELS[x]).join('・') || '用途未設定';
 /** 計画の種類 → 向いている用途 (先頭ほど優先) */
 const SHOE_PREF = { easy: ['easy', 'recovery', 'long'], jog: ['recovery', 'easy'], long: ['long', 'easy'], m: ['pace', 'race', 'speed'], lt: ['pace', 'speed', 'race'], interval: ['speed', 'pace', 'race'], race: ['race'] };
-/** シューズ名からの用途の推定 (一括設定ボタンで使う) */
-const SHOE_GUESS = [
-  [/アルファフライ|alphafly|ヴェイパーフライ|vaporfly|ヴェイパー|vapor|metaspeed|メタスピード|adios pro|アディオス/i, ['race', 'speed']],
-  [/evo\s*sl|エボ|ズームフライ|zoom\s*fly|ペガサスターボ|turbo|rc elite|ライトレーサー|シーラス/i, ['pace', 'speed']],
-  [/インヴィンシブル|invincible|ボメロ|vomero|nimbus|superblast/i, ['recovery', 'long', 'easy']],
-  [/ペガサス|pegasus|ストラクチャー|structure|ghost|kayano/i, ['easy', 'long']],
-];
-const guessPurposes = (name) => (SHOE_GUESS.find(([re]) => re.test(name || '')) || [null, null])[1];
 let SHOES = [];
 /** シューズごとの、種類別の使用実績 (/shoes/compare)。推薦に使う */
 let SHOE_FIT = null;
@@ -3680,7 +3672,6 @@ async function shoesView(params) {
   const nextRace = races.filter((r) => r.date >= today() && ['A', 'B'].includes(r.priority)).sort((a, b) => a.date.localeCompare(b.date))[0];
   const advice = shoeAdvice(shoes, nextRace);
   SHOES = shoes; // 相性の比較で写真を出すため
-  const guesses = shoes.filter((x) => !x.retired && guessPurposes(x.name) && purposesOf(x.purpose).join() !== guessPurposes(x.name).join());
   setTimeout(() => {
     view.querySelector('#add-shoe').onclick = () => editShoe({ purpose: 'easy', limit_km: 700, initial_km: 0 });
     // タップで詳しく (使用履歴・相性・使用感)。編集は詳しくの画面から
@@ -3738,13 +3729,6 @@ async function shoesView(params) {
       await putShoe(s, { retired: Number(b.dataset.st) });
       route();
     }));
-    const g = view.querySelector('#guess');
-    if (g) g.onclick = async () => {
-      if (!confirm(`名前から用途を推定して設定します:\n${guesses.map((x) => `${x.name} → ${guessPurposes(x.name).map((p) => PURPOSE_LABELS[p]).join('・')}`).join('\n')}\n(あとで各シューズから直せます)`)) return;
-      g.disabled = true;
-      for (const x of guesses) await putShoe(x, { purpose: guessPurposes(x.name).join(',') });
-      route();
-    };
   });
   const row = (s) => {
     const rt = (s.retired || 0) === 0 ? '予備にする' : '使用中に戻す';
@@ -3772,7 +3756,6 @@ async function shoesView(params) {
     <div class="sh-top"><h2>シューズ</h2><button class="primary sh-add" id="add-shoe"><span aria-hidden="true">＋</span> 追加</button></div>
     ${chips}
     ${advice.length ? `<div class="sa-list">${advice.map(shoeAlert).join('')}</div>` : ''}
-    ${guesses.length ? `<button id="guess" class="wide sh-guess"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>用途をまとめて設定 (${guesses.length}足)</button>` : ''}
     ${!shoes.length ? '<div class="card"><b>シューズが登録されていません</b><p class="muted">「＋ 追加」から登録すると、走行距離と使用履歴がここに出ます。Strava のシューズを付けたランは自動で登録されます。</p></div>' : `
     <h3 class="sect">使用中 <small class="muted">${active.length}足</small></h3>
     <div class="card"><ul class="list shoes">${active.map(row).join('') || '<li class="muted">この用途の使用中のシューズはありません</li>'}</ul></div>
@@ -3903,7 +3886,7 @@ async function loadShoeCompare() {
     const top = vals.length >= 2 ? [...vals].sort((a, b) => (C[4] ? C[3](a) - C[3](b) : C[3](b) - C[3](a)))[0] : null;
     const tie = top && vals.filter((r) => C[3](r) === C[3](top)).length > 1;
     const rec = top && !tie
-      ? `<div class="sc-rec"><span class="sc-rec-l">結論</span><div><small>おすすめ・${C[1]}</small><b>${esc(top.name)}</b><span class="muted num">${C[5](top)} (${GROUP_LABEL[cur]}・${top.n}本)</span></div></div>`
+      ? `<a class="sc-rec" href="#/shoes/${top.shoe_id}"><span class="sc-rec-l">結論</span><div><small>おすすめ・${C[1]}</small><b>${esc(top.name)}</b><span class="muted num">${C[5](top)} (${GROUP_LABEL[cur]}・${top.n}本)</span></div><span class="pm-chev">›</span></a>`
       : `<div class="sc-rec none"><span class="sc-rec-l">結論</span><div><small>${C[1]}</small><span class="muted">${tie ? '差がありません' : 'この観点の記録がある靴が 2 足未満のため、比べられません'}</span></div></div>`;
     const th = rows.map((r) => `<th><span class="sc-img">${img(r.shoe_id)}</span><span class="sc-nm">${esc(r.name)}</span><small>${r.n}本・${r.km}km</small></th>`).join('');
     const tr = (label, cells) => `<tr><td>${label}</td>${cells}</tr>`;
