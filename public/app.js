@@ -1275,7 +1275,8 @@ async function pickDist(title, m) {
   return r ? Math.max(100, r[0] * 1000 + r[1] * 50) : null;
 }
 /** 時間 (秒) を 分 / 秒 のホイールで選ぶ */
-async function pickTime(title, sec, maxMin = 120) {
+async function pickTime(title, sec0, maxMin = 120) {
+  const sec = Math.round(sec0); // 先に丸める (秒が 60 にならないように)
   const r = await wheelPick(title, [
     { items: range(0, maxMin), value: Math.floor(sec / 60), unit: '分' },
     { items: range(0, 59, (x) => String(x).padStart(2, '0')), value: Math.round(sec % 60), unit: '秒' },
@@ -1283,7 +1284,8 @@ async function pickTime(title, sec, maxMin = 120) {
   return r ? Math.max(10, r[0] * 60 + r[1]) : null;
 }
 /** レースの目標タイムを 時:分:秒 のホイールで選ぶ */
-async function pickGoal(title, sec) {
+async function pickGoal(title, sec0) {
+  const sec = Math.round(sec0);
   const r = await wheelPick(title, [
     { items: range(0, 7), value: Math.floor(sec / 3600), unit: ':' },
     { items: range(0, 59, (x) => String(x).padStart(2, '0')), value: Math.floor((sec % 3600) / 60), unit: ':' },
@@ -1292,7 +1294,8 @@ async function pickGoal(title, sec) {
   return r ? r[0] * 3600 + r[1] * 60 + r[2] : null;
 }
 /** ペース (秒/km) を 分:秒 のホイールで選ぶ */
-async function pickPace(title, sec) {
+async function pickPace(title, sec0) {
+  const sec = Math.round(sec0);
   const r = await wheelPick(title, [
     { items: range(2, 9), value: Math.floor(sec / 60), unit: ':' },
     { items: range(0, 59, (x) => String(x).padStart(2, '0')), value: Math.round(sec % 60), unit: '/km' },
@@ -1826,7 +1829,7 @@ function splitChart(sp) {
 
 
 const PACE_ZONES = [['リカバリー', '#8fa3d9'], ['有酸素持久力', '#2fb7c9'], ['有酸素パワー', '#16b57a'], ['乳酸閾値', '#ffb800'], ['無酸素持久力', '#ff8a1f'], ['無酸素パワー', '#e63946']];
-const mmss = (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+const mmss = (x) => { const sec = Math.round(x); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`; }; // 先に丸める (4:60 にしない)
 
 /** COROS 風の面グラフ。vals と d(km) は同じ長さ。invert=true は小さいほど上 (ペース) */
 function areaChart(vals, d, total, o) {
@@ -1991,7 +1994,7 @@ function reviewHtml(rv) {
   const acc = (title, body, open = false) => `<details class="rv-acc" ${open ? 'open' : ''}><summary>${esc(title)}</summary><div class="rv-acc-b">${body}</div></details>`;
   let h = `<div class="card rv"><h2>評価</h2>
     <div class="rv-top"><div><div class="rv-grade">${esc(rv.grade)}</div><span class="muted">${esc(rv.headline)}</span></div>
-    ${rv.race ? `<div><span class="muted">${esc(rv.race.name)}</span><div class="rv-goal num">${esc(rv.race.goal)}</div><span class="muted">${rv.race.need_pace ? `必要ペース ${esc(rv.race.need_pace)}` : `あと${rv.race.days}日`}</span></div>` : ''}</div>
+    ${rv.race ? `<div><span class="muted">${esc(rv.race.name)}</span><div class="rv-goal num">${esc(rv.race.goal)}</div><span class="muted">${rv.race.need_pace ? `必要ペース ${esc(rv.race.need_pace)}` : `大会${rv.race.days}日前のラン`}</span></div>` : ''}</div>
     <table class="rv-t num">${rv.rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>`;
   if (rv.pace) {
     const n = rv.pace.laps.length;
@@ -2244,12 +2247,13 @@ async function activityDetailView(id) {
         <div><b id="st-fast">-</b><span>最速 (1km)</span></div>
         <div><b>${a.max_hr ? Math.round(a.max_hr) : '-'}<small>bpm</small></b><span>最大心拍</span></div>
         <div><b><span id="st-elev">-</span><small>m</small></b><span>累積上昇</span></div>
-        <div><b id="st-cad">${a.avg_cadence_spm ? Math.round(a.avg_cadence_spm * 2) : '-'}</b><span>ピッチ spm</span></div>
+        <div><b id="st-cad">${a.avg_cadence_spm ? Math.round(a.avg_cadence_spm) : '-'}</b><span>ピッチ spm</span></div>
         <div><b id="st-cal">-</b><span>カロリー kcal</span></div>
         ${CX.effort_pace_s ? `<div><b>${pace(CX.effort_pace_s)}<small>/km</small></b><span>出力ペース</span></div>` : ''}
         ${CX.efficiency != null ? `<div><b>${CX.efficiency}<small>%</small></b><span>効率</span></div>` : ''}
         ${CX.training_load != null ? `<div><b>${CX.training_load}</b><span>トレーニング負荷</span></div>` : ''}
       </div>
+      ${ev && a.score != null && (ev.version ?? 1) < 2 ? '<p class="muted hd-basis hd-old">この点数は 11/3 より前の基準で計算したもの (ピッチ 180 との差の減点などを含む)。下の「再評価」を押すと、今の基準で計算し直します (このランだけ)。</p>' : ''}
       <p class="muted hd-basis">距離・運動時間・心拍・ピッチは${a.coros ? ' COROS' : a.id > 0 ? ' Strava' : ''}の記録。平均ペース = 運動時間 ÷ 距離${a.elapsed_time_s && a.elapsed_time_s - a.moving_time_s >= 30 ? ` (経過時間 ${dur(a.elapsed_time_s)} は止まった時間を含む)` : ''}。</p>
     </div>
     <div id="analysis"></div>
@@ -2763,8 +2767,8 @@ function raceInfoCard(r) {
     ${blocks.length > 1 ? `<details class="ri-more"><summary>ブロックごとのスタート (${blocks.length})</summary><table class="ri-t num"><tr><th>ブロック</th><th>スタート</th><th>整列締切</th></tr>${blocks.map((b) => `<tr class="${blk === b ? 'me' : ''}"><td>${esc(b.name)}</td><td>${esc(b.start || '-')}</td><td>${esc(b.close || '-')}</td></tr>`).join('')}</table></details>` : ''}
     ${cut.length ? `<details class="ri-more" ${r.date >= today() ? 'open' : ''}><summary>関門 (${cut.length})</summary><table class="ri-t num"><tr><th>距離</th><th>閉鎖</th><th>場所</th></tr>${cut.map((x) => `<tr><td>${x.km}km</td><td>${esc(x.time)}</td><td>${esc(x.place || '')}</td></tr>`).join('')}</table></details>` : ''}
     <div class="ri-acts">
-      <button type="button" data-ri="fetch">${r.url ? '公式サイトから取り込む' : '公式サイトを探して取り込む'}</button>
-      <button type="button" data-ri="paste">文章を貼り付けて取り込む</button>
+      <button type="button" data-ri="fetch">${r.url ? '公式サイトから取り込む' : 'サイトを探して取り込む'}</button>
+      <button type="button" data-ri="paste">文章を貼り付ける</button>
     </div>
     ${inf.updated ? `<p class="muted" style="margin:8px 0 0;font-size:12px">${md(inf.updated)} に取り込み。内容は公式サイトで必ず確かめてください。</p>` : ''}
   </div>`;

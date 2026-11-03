@@ -1013,8 +1013,8 @@ body::after {
 .ri-t th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 4px 6px; }
 .ri-t td { padding: 7px 6px; border-top: 1px solid var(--line); }
 .ri-t tr.me td { color: var(--accent); font-weight: 700; }
-.ri-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
-.ri-acts button { font-size: 13px; padding: 10px 6px; white-space: nowrap; }
+.ri-acts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin-top: 14px; }
+.ri-acts button { font-size: 13px; padding: 10px 6px; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; } /* 幅 390 でも横にはみ出さない */
 
 /* 大会を探す */
 .rf-filter .lbl { display: block; margin: 4px 0 6px; }

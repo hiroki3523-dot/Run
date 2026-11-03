@@ -101,11 +101,11 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       expect(sw).toBeLessThanOrEqual(390);
     }, 30000);
   }
-  // [K-03] レース詳細は 7px はみ出す (docs/AUDIT.md)。直したら skip を外す
-  it.skip('横にはみ出さない (幅 390): レース詳細 [K-03 未修正]', async () => {
+  // [K-03] 修正済み: レース詳細の大会情報のボタンがはみ出していた
+  it('横にはみ出さない (幅 390): レース詳細', async () => {
     await open(`#/races/${raceId}`);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  });
+  }, 30000);
 
   it('ナビゲーション: 下のメニューで各画面に移れる', async () => {
     await open('#/');

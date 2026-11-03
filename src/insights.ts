@@ -65,7 +65,7 @@ export interface Insights {
 }
 
 const day = (d: string) => Date.parse(`${d}T00:00:00Z`) / 86400_000;
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+const mmss = (x: number) => { const s = Math.round(x); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }; // 先に丸める (4:60 にしない)
 
 /** 目標タイムに対する週間距離の目安 (km)。フルマラソンの一般的な目安 */
 export function weeklyTarget(goalS: number | null): number {
