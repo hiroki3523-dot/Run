@@ -447,4 +447,67 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       await page.evaluate(() => sessionStorage.clear());
     }
   }, 90000);
+  it('シューズ: 上部 (追加・絞り込み・注意のカード・まとめて設定)・相性は結論と 3 足を横スクロールなしで', async () => {
+    // 交換の目安が近いシューズ (目安 700km の 90%)・名前から用途を推定できるシューズ
+    const near = (await call(env, 'POST', '/shoes', { name: 'Nike Pegasus 41', initial_km: 640, limit_km: 700, purpose: 'race' })).json;
+    const cmp = { easy: [
+      { shoe_id: 1001, name: 'Nike ボメロプラス', n: 59, km: 737, pace: 329, hr: 154.8, cad: 177, stride: null, form: 8, leg: 3, next_leg: null, breath: null, gct: null, pain_n: 0 },
+      { shoe_id: 1002, name: 'Nike ボメロ18', n: 38, km: 482, pace: 334, hr: 151.8, cad: 175.1, stride: 106, form: 7, leg: 4, next_leg: null, breath: 2, gct: null, pain_n: 0 },
+      { shoe_id: 1003, name: 'Nike ズームフライ 6', n: 26, km: 376, pace: 312, hr: 157.1, cad: 177.3, stride: null, form: null, leg: null, next_leg: null, breath: null, gct: null, pain_n: 1 },
+      { shoe_id: 1004, name: 'テストシューズA', n: 4, km: 30, pace: 330, hr: 150, cad: 176, stride: null, form: null, leg: null, next_leg: null, breath: null, gct: null, pain_n: 0 },
+    ] };
+    await page.route('**/api/shoes/compare', (r: any) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(cmp) }));
+    try {
+      await open('#/shoes', '11d-shoes-top');
+      expect(await page.$eval('.sh-top', (e: Element) => e.textContent)).toContain('追加');
+      const alert = await page.$eval('.sa-list', (e: Element) => e.textContent || '');
+      expect(alert).toContain('交換の目安が近いシューズ');
+      expect(alert).toContain('残り60km');
+      expect(await page.$eval('.sa-list a.sa', (a: HTMLAnchorElement) => a.getAttribute('href'))).toBe(`#/shoes/${near.id}`);
+      expect(await page.$eval('#guess', (e: Element) => e.textContent)).toMatch(/用途をまとめて設定 \(\d+足\)/);
+      await page.waitForSelector('#shoe-cmp .sc-rec');
+      await (await page.$('#shoe-cmp')).scrollIntoViewIfNeeded();
+      if (SHOTS) await (await page.$('#shoe-cmp')).screenshot({ path: `${SHOTS}/11e-shoe-compat.png` });
+      expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('Nike ボメロプラス');
+      // 3 足・名前は省略しない・横にはみ出さない
+      expect(await page.$$eval('#shoe-cmp .sc-fix:not(.sc-more *) th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6']);
+      const over = await page.$eval('#shoe-cmp', (e: HTMLElement) => e.scrollWidth - e.clientWidth);
+      expect(over).toBeLessThanOrEqual(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+      // 観点を変える: 疲れにくい → 脚の疲労がいちばん少ないシューズ / スピード寄り → いちばん速い
+      await page.click('[data-crit="easy"]');
+      expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('脚の疲労 3/10');
+      await page.click('[data-crit="speed"]');
+      expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('Nike ズームフライ 6');
+      await page.click('[data-scall]');
+      expect(await page.$$eval('#shoe-cmp > table.sc-fix th .sc-nm', (els: Element[]) => els.length)).toBe(4);
+    } finally {
+      await page.unroute('**/api/shoes/compare');
+      await call(env, 'DELETE', `/shoes/${near.id}`);
+    }
+  }, 60000);
+
+  it('ニュース: もっと見る → 閉じる (同じ記事を二重に出さない)', async () => {
+    const news = Array.from({ length: 8 }, (_, i) => ({ title: `テスト記事 ${i + 1}`, url: `https://example.com/${i}`, source: 'テスト', date: new Date().toISOString(), tag: 'シューズ' }));
+    await page.route('**/api/news', (r: any) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(news) }));
+    try {
+      await open('#/');
+      await page.waitForSelector('#news-list .news-tg', { timeout: 15000 });
+      const visible = () => page.$$eval('#news-list li', (els: HTMLElement[]) => els.filter((e) => e.offsetParent !== null).map((e) => e.querySelector('b')?.textContent));
+      expect(await visible()).toHaveLength(5);
+      expect(await page.textContent('#news-list .news-tg')).toBe('もっと見る (3件)');
+      await page.click('#news-list .news-tg');
+      const all = await visible();
+      expect(all).toHaveLength(8);
+      expect(new Set(all).size).toBe(8);
+      expect((await page.textContent('#news-list .news-tg'))?.trim()).toBe('閉じる');
+      // ボタンは一覧の下
+      expect(await page.$eval('#news-list', (e: Element) => e.lastElementChild?.classList.contains('news-tg'))).toBe(true);
+      if (SHOTS) await (await page.$('#news-list')).screenshot({ path: `${SHOTS}/01b-news-open.png` });
+      await page.click('#news-list .news-tg');
+      expect(await visible()).toHaveLength(5);
+    } finally {
+      await page.unroute('**/api/news');
+    }
+  }, 60000);
 });
