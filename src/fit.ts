@@ -8,6 +8,8 @@ export interface FitLap { start: number; elapsed: number; timer: number; dist: n
 export interface FitSession {
   start: number; elapsed: number; timer: number; dist: number; sport?: number; sub_sport?: number;
   avg_hr?: number; max_hr?: number; avg_cad?: number; ascent?: number; calories?: number;
+  /** 有酸素・無酸素のトレーニング効果 (0〜5) */ te?: number; ate?: number;
+  /** 開発者フィールド (名前|単位 → 値) */ dev?: Record<string, number>;
 }
 export interface FitData { session: FitSession | null; laps: FitLap[]; records: FitRecord[]; tz_offset_s: number | null; /** 1 秒ごとの記録にあった項目 (確認用) */ fields: string[] }
 
@@ -163,6 +165,7 @@ export function parseFit(buf: ArrayBuffer): FitData {
       out.session = {
         start: (f[2] ?? ts ?? 0) + FIT_EPOCH, elapsed: n(7, 1000) ?? 0, timer: n(8, 1000) ?? 0, dist: n(9, 100) ?? 0,
         sport: n(5), sub_sport: n(6), avg_hr: n(16), max_hr: n(17), avg_cad: n(18), ascent: n(22), calories: n(11),
+        te: n(24, 10), ate: n(137, 10), dev: Object.keys(dev).length ? dev : undefined,
       };
     } else if (d.global === 34) {
       // activity: local_timestamp (5) − timestamp (253) が時差

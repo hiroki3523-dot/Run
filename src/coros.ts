@@ -173,7 +173,24 @@ export function extractJson(text: string): any {
 
 const toSec = (s: string) => s.split(':').map(Number).reduce((a, b) => a * 60 + b, 0);
 
-export interface CorosRecord { labelId: string; sportType: number; date: string | null; name: string | null; dist_m?: number | null; dur_s?: number | null; start?: number | null }
+export interface CorosExtra { training_load?: number; aerobic_te?: number; anaerobic_te?: number; efficiency?: number; effort_pace_s?: number; calories?: number; focus?: string; hr_recovery?: [number, number][] }
+export interface CorosRecord { labelId: string; sportType: number; date: string | null; name: string | null; dist_m?: number | null; dur_s?: number | null; start?: number | null; extra?: CorosExtra }
+
+/** ランの一覧の文章から、トレーニング負荷・トレーニング効果・効率・出力ペースを拾う (書いてあれば) */
+export function recordExtra(b: string): CorosExtra | undefined {
+  const num = (re: RegExp) => { const m = b.match(re); return m ? Number(m[1]) : undefined; };
+  const e: CorosExtra = {
+    training_load: num(/training\s*load[^0-9\n]{0,8}(\d+(?:\.\d+)?)/i) ?? num(/トレーニング負荷[^0-9\n]{0,8}(\d+)/),
+    aerobic_te: num(/aerobic\s*(?:training\s*)?(?:effect|te)[^0-9\n]{0,8}(\d(?:\.\d)?)/i) ?? num(/有酸素\s*TE[^0-9\n]{0,6}(\d(?:\.\d)?)/),
+    anaerobic_te: num(/anaerobic\s*(?:training\s*)?(?:effect|te)[^0-9\n]{0,8}(\d(?:\.\d)?)/i) ?? num(/無酸素\s*TE[^0-9\n]{0,6}(\d(?:\.\d)?)/),
+    efficiency: num(/efficiency[^0-9\n]{0,8}(\d+(?:\.\d+)?)\s*%/i) ?? num(/効率[^0-9\n]{0,6}(\d+)\s*%/),
+    calories: num(/calories?[^0-9\n]{0,8}(\d+(?:\.\d+)?)/i),
+  };
+  const ep = b.match(/(?:effort|adjusted|grade[- ]?adjusted)\s*pace[^0-9\n]{0,8}(\d{1,2})[:'](\d{2})/i);
+  if (ep) e.effort_pace_s = Number(ep[1]) * 60 + Number(ep[2]);
+  const clean = Object.fromEntries(Object.entries(e).filter(([, v]) => v != null && Number.isFinite(v as number))) as CorosExtra;
+  return Object.keys(clean).length ? clean : undefined;
+}
 
 /** querySportRecords の結果からランの一覧を取り出す (JSON でも文章でも) */
 export function parseRecords(text: string, structured: any): CorosRecord[] {
@@ -206,7 +223,7 @@ export function parseRecords(text: string, structured: any): CorosRecord[] {
     const du = b.match(/duration[^0-9]{0,6}(\d{1,2}:\d{2}(?::\d{2})?)/i)?.[1];
     const loc = b.match(/Location:\s*([^\n]+)/i)?.[1]?.trim();
     const ts = b.match(/startTimestamp=(\d{9,})/)?.[1];
-    out.push({ labelId: id, sportType: Number(st), date: d ? `${d[1]}-${d[2]}-${d[3]}` : null, name: loc || null, dist_m: km ? Math.round(Number(km) * 1000) : null, dur_s: du ? toSec(du) : null, ...(ts ? { start: Number(ts) } : {}) });
+    out.push({ labelId: id, sportType: Number(st), date: d ? `${d[1]}-${d[2]}-${d[3]}` : null, name: loc || null, dist_m: km ? Math.round(Number(km) * 1000) : null, dur_s: du ? toSec(du) : null, ...(ts ? { start: Number(ts) } : {}), extra: recordExtra(b) });
   }
   return out;
 }
@@ -445,6 +462,21 @@ export function buildExt(rec: CorosRecord, fit: FitData | null, lapsJson: any): 
   const maxHr = s?.max_hr ?? (hrs.length ? Math.max(...hrs) : undefined);
   const avgCad = s?.avg_cad || (cads.length ? cads.reduce((a, b) => a + b, 0) / cads.length : undefined);
   const hour = Number(local.slice(11, 13));
+  // COROS ならではの値: トレーニング負荷・トレーニング効果・効率・出力ペース・回復心拍
+  const extra: CorosExtra = { ...(rec.extra ?? {}) };
+  if (s?.te && s.te > 0 && extra.aerobic_te == null) extra.aerobic_te = Math.round(s.te * 10) / 10;
+  if (s?.ate && s.ate > 0 && extra.anaerobic_te == null) extra.anaerobic_te = Math.round(s.ate * 10) / 10;
+  for (const [k, v] of Object.entries(s?.dev ?? {})) {
+    if (extra.training_load == null && /training.?load|負荷/.test(k)) extra.training_load = Math.round(v);
+    else if (extra.efficiency == null && /efficien|効率/.test(k)) extra.efficiency = Math.round(v);
+    else if (extra.effort_pace_s == null && /effort.?pace|出力ペース/.test(k)) extra.effort_pace_s = /m\/s/.test(k) && v > 0 ? Math.round(1000 / v) : Math.round(v);
+  }
+  // 止めたあとも記録が続いていれば、その心拍を回復心拍に (最大 3 分)
+  if (s && fit?.records) {
+    const end = s.start + (s.elapsed || s.timer);
+    const after = fit.records.filter((r) => r.t > end && r.t <= end + 180 && r.hr);
+    if (after.length >= 10) extra.hr_recovery = after.filter((_, i) => i % 5 === 0).map((r) => [r.t - end, Math.round(r.hr!)]);
+  }
   return {
     act: {
       id, name: rec.name || timeName(hour), sport_type: SPORT_NAME[rec.sportType] ?? 'Run', workout_type: null,
@@ -452,7 +484,8 @@ export function buildExt(rec: CorosRecord, fit: FitData | null, lapsJson: any): 
       distance, moving_time: Math.round(moving), elapsed_time: Math.round(s?.elapsed || moving),
       average_heartrate: avgHr, max_heartrate: maxHr,
       average_cadence: avgCad, gear_id: null, laps, splits_metric: splits,
-      calories: s?.calories ?? undefined, total_elevation_gain: s?.ascent ?? undefined, source: 'coros', ext_id: rec.labelId,
+      calories: s?.calories ?? extra.calories ?? undefined, total_elevation_gain: s?.ascent ?? undefined, source: 'coros', ext_id: rec.labelId,
+      ...(Object.keys(extra).length ? { coros_extra: extra } : {}),
     },
     raw,
   };
@@ -470,7 +503,7 @@ async function importOne(env: Env, rec: CorosRecord, notifyNew: boolean): Promis
     if (res.ok) fit = parseFit(await res.arrayBuffer());
   }
   // 時計の FIT にどんな項目があったか (ランニングダイナミクスが出ないときの確認用)
-  if (fit?.fields?.length) await kvSet(env, 'coros_fit_fields', JSON.stringify({ label: rec.labelId, date: rec.date, fields: fit.fields })).catch(() => null);
+  if (fit?.fields?.length) await kvSet(env, 'coros_fit_fields', JSON.stringify({ label: rec.labelId, date: rec.date, fields: [...fit.fields, ...Object.keys(fit.session?.dev ?? {}).map((k) => `session: ${k}`), ...(fit.session?.te != null ? [`session: te ${fit.session.te}`] : [])], list_text: (rec as any).text ?? null })).catch(() => null);
   if (!fit && !lapsJson) throw new Error(`COROS のラン ${rec.labelId} のデータを取得できませんでした`);
   const ext = buildExt(rec, fit, lapsJson);
   // Strava に同じランがあれば、その行の中身を COROS のデータに置き換える (計画・シューズ・ふりかえりは残る)

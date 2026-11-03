@@ -1697,7 +1697,7 @@ function areaChart(vals, d, total, o) {
   const yl = ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" class="gl"/><text x="${L - 6}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end">${fmt(v)}</text>`).join('');
   const step = total > 14 ? 5 : total > 7 ? 2 : 1;
   let xl = '';
-  for (let k = step; k < total; k += step) xl += `<text x="${X(k).toFixed(1)}" y="${H - 6}" text-anchor="middle">${k}km</text>`;
+  for (let k = step; k < total; k += step) xl += `<text x="${X(k).toFixed(1)}" y="${H - 6}" text-anchor="middle">${k}${o.unit || 'km'}</text>`;
   const avg = o.avg != null ? `<line x1="${L}" x2="${W - R}" y1="${Y(o.avg).toFixed(1)}" y2="${Y(o.avg).toFixed(1)}" class="avgl"/>` : '';
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" class="achart" role="img" aria-label="${o.label || ''}"><g class="ax">${yl}${xl}</g>
     <path d="${area}" fill="${o.color}" fill-opacity=".28"/><polyline points="${line.join(' ')}" fill="none" stroke="${o.color}" stroke-width="1.6" stroke-linejoin="round"/>${avg}</svg>`;
@@ -1735,6 +1735,31 @@ function seriesCards(sr) {
   out.push(exCard('power', 'ランニングパワー (W)', '#e8622c', 40), exCard('gct', '接地時間 (ms)', '#2fd3c9', 30), exCard('vr', '垂直歩幅比 (%)', '#3ccf5a', 3), exCard('vo', '上下動 (cm)', '#f4c430', 3));
   if (sr.alt.some((v) => v != null)) out.push(`<div class="card ch">${head('標高 (m)', sr.alt_max != null ? `最大 <b>${sr.alt_max}</b> ・ 最小 <b>${sr.alt_min}</b>` : '', sr.elev_gain != null ? `上昇 <b>${Math.round(sr.elev_gain)}</b> ・ 下降 <b>${sr.elev_loss ?? '-'}</b>` : '')}
     ${areaChart(sr.alt, sr.d, tk, { color: '#2fb7c9', minSpan: 12, label: '標高' })}</div>`);
+  return out.join('');
+}
+
+/** COROS ならではの カード: トレーニング効果 (有酸素・無酸素)・回復心拍 */
+const TE_LABEL = (v) => (v < 1 ? 'なし' : v < 2 ? '軽い' : v < 3 ? '維持' : v < 4 ? '改善' : v < 5 ? '大きく改善' : '過負荷');
+function teGauge(v, label, color) {
+  const r = 46, c = Math.PI * r * 1.5, f = Math.max(0, Math.min(1, v / 5));
+  return `<div class="te-g"><svg viewBox="0 0 120 108" width="130" height="117" aria-hidden="true"><g transform="rotate(135 60 60)">
+    <circle cx="60" cy="60" r="${r}" fill="none" stroke="var(--line)" stroke-width="9" stroke-linecap="round" stroke-dasharray="${c} ${2 * Math.PI * r}"/>
+    <circle cx="60" cy="60" r="${r}" fill="none" stroke="${color}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${c * f} ${2 * Math.PI * r}"/></g>
+    <text x="60" y="64" text-anchor="middle" class="te-v">${v.toFixed(1)}</text><text x="60" y="84" text-anchor="middle" class="te-s">${TE_LABEL(v)}</text></svg><b>${label}</b></div>`;
+}
+function corosExtraCards(x) {
+  if (!x) return '';
+  const out = [];
+  if (x.aerobic_te != null || x.anaerobic_te != null) {
+    out.push(`<div class="card ch"><div class="row spread ch-h"><h2>トレーニング効果</h2>${x.training_load != null ? `<div class="ch-s num">負荷 <b>${x.training_load}</b></div>` : ''}</div>
+      <div class="te-row">${x.aerobic_te != null ? teGauge(x.aerobic_te, '有酸素', '#16b57a') : ''}${x.anaerobic_te != null ? teGauge(x.anaerobic_te, '無酸素', '#4b6bff') : ''}</div></div>`);
+  }
+  if (Array.isArray(x.hr_recovery) && x.hr_recovery.length > 2) {
+    const h = x.hr_recovery, first = h[0][1], at2 = (h.find((p) => p[0] >= 120) || h[h.length - 1])[1];
+    const vals = h.map((p) => p[1]), ds = h.map((p) => Math.round((p[0] / 60) * 100) / 100);
+    out.push(`<div class="card ch"><div class="row spread ch-h"><h2>回復心拍 (bpm)</h2><div class="ch-s num">止めた直後 <b>${first}</b><br>2 分で <b>−${first - at2}</b></div></div>
+      ${areaChart(vals, ds, ds[ds.length - 1], { color: '#d63d9a', minSpan: 20, label: '回復心拍', unit: '分' })}</div>`);
+  }
   return out.join('');
 }
 
@@ -1943,7 +1968,7 @@ async function activityDetailView(id) {
     api(`/activities/${id}/series`).then((sr) => {
       const box = view.querySelector('#series');
       if (!box || !sr || sr.error) { if (box) box.innerHTML = ''; return; }
-      box.innerHTML = seriesCards(sr);
+      box.innerHTML = seriesCards(sr) + corosExtraCards(a.coros?.extra);
       const set = (k, v) => { const el = view.querySelector(`#${k}`); if (el && v != null) el.textContent = v; };
       set('st-fast', sr.fast_km_s ? pace(sr.fast_km_s) : null);
       set('st-elev', sr.elev_gain != null ? `${Math.round(sr.elev_gain)}` : null);
@@ -1958,6 +1983,7 @@ async function activityDetailView(id) {
   });
 
   const hrd = ev?.hr?.details || {};
+  const CX = a.coros?.extra || {};
   const zones = [1, 2, 3, 4, 5].map((z) => hrd[`z${z}_pct`]);
   const sib = a.siblings || [];
   const sumD = sib.reduce((x, r) => x + r.distance_m, 0), sumT = sib.reduce((x, r) => x + r.moving_time_s, 0);
@@ -1979,6 +2005,9 @@ async function activityDetailView(id) {
         <div><b><span id="st-elev">-</span><small>m</small></b><span>累積上昇</span></div>
         <div><b id="st-cad">${a.avg_cadence_spm ? Math.round(a.avg_cadence_spm * 2) : '-'}</b><span>ピッチ spm</span></div>
         <div><b id="st-cal">-</b><span>カロリー kcal</span></div>
+        ${CX.effort_pace_s ? `<div><b>${pace(CX.effort_pace_s)}<small>/km</small></b><span>出力ペース</span></div>` : ''}
+        ${CX.efficiency != null ? `<div><b>${CX.efficiency}<small>%</small></b><span>効率</span></div>` : ''}
+        ${CX.training_load != null ? `<div><b>${CX.training_load}</b><span>トレーニング負荷</span></div>` : ''}
       </div>
     </div>
     <div id="series"><div class="card"><span class="muted">グラフを読み込み中…</span></div></div>
