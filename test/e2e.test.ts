@@ -28,7 +28,8 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     const s = await call(env, 'POST', '/shoes', { name: 'テストシューズA', strava_gear_id: 'g-a', initial_km: 50 });
     // 11/1: アップ 5.01km → M ペース走 12.01km → ダウン 1.12km (3 つの記録)。計画はステップつき
     const steps = [{ kind: 'warmup', by: 'dist', value: 5000, zone: 1, ref: 'easy' }, { kind: 'work', by: 'dist', value: 12000, zone: 3, pmin: 265, pmax: 275 }, { kind: 'cooldown', by: 'dist', value: 1100, zone: 1, ref: 'easy' }];
-    await call(env, 'POST', '/plans', { date: NOV1.date, type: 'm', distance_m: 18100, steps });
+    // 計画はロング走 (アップ + M ペース 12km + ダウン)。ユーザーの 11/1 と同じ組み方
+    await call(env, 'POST', '/plans', { date: NOV1.date, type: 'long', distance_m: 18100, steps });
     await addRun(env, { date: NOV1.date, time: '06:20', km: 5.01, segs: [{ km: 5.01, pace: 314, hr: 140 }], gear_id: 'g-a' });
     runId = await addRun(env, { ...NOV1, time: '06:48', gear_id: 'g-a' });
     await addRun(env, { date: NOV1.date, time: '07:43', km: 1.12, segs: [{ km: 1.12, pace: 356, hr: 138 }], gear_id: 'g-a' });
@@ -60,7 +61,7 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     await page.waitForFunction(() => !document.querySelector('#view')?.textContent?.includes('読み込み中…'), null, { timeout: 15000 });
     await page.waitForTimeout(600);
     if (SHOTS && shot) await page.screenshot({ path: `${SHOTS}/${shot}.png`, fullPage: true });
-    const errCard = await page.$$eval('#view > .card.error', (els: Element[]) => els.map((e) => e.textContent || ''));
+    const errCard = await page.$$eval('#view > .card.error', (els: Element[]) => els.map((e) => (e.textContent || '').replace(/\s+/g, ' ').trim()));
     return { errCard, errors: [...errors] };
   };
 
@@ -171,6 +172,59 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect(await page.textContent('#view')).toContain('200');
   }, 40000);
 
+  it('実績 一覧: ロング走の M ペース区間は「ロング走 (Mペース)」', async () => {
+    await open('#/activities');
+    expect(await page.locator('.hl-day', { hasText: '11/1' }).textContent()).toContain('ロング走 (Mペース)');
+  }, 30000);
+  it('レース一覧: 次の大会が大きく出て、今後・過去が分かれる', async () => {
+    await open('#/races');
+    const hero = await page.textContent('.rl-hero');
+    expect(hero).toContain('テストマラソン');
+    expect(hero).toContain('本命');
+    expect(hero).toContain('3:10:00');
+    expect(hero).toContain('4:30/km');
+    expect(await page.locator('.rl-past summary').textContent()).toContain('過去の大会');
+  }, 30000);
+  it('レース詳細: 項目のタブ・ペース表に補給の列 (5km ごとの通過と検算)', async () => {
+    await call(env, 'PUT', `/races/${raceId}`, { ...(await call(env, 'GET', '/races')).json.find((x: any) => x.id === raceId), info: { fuel: [{ km: 10, item: 'ジェル' }, { km: 25, item: '塩タブレット' }] }, no_auto: true });
+    await open(`#/races/${raceId}`, '09b-race-detail-fuel');
+    expect(await page.locator('.rd-tabs a').count()).toBe(4);
+    const rows = await page.$$eval('#pace-out .pr', (els: Element[]) => els.map((e) => (e.textContent || '').replace(/\s+/g, ' ').trim()));
+    const r10 = rows.find((t) => t.startsWith('10km'))!;
+    expect(r10).toContain('ジェル');
+    // 目標 3:10:00 のイーブン: 10km 通過は 45:02 前後 (11400 × 10 / 42.195 = 2701.7 秒)
+    expect(r10).toMatch(/45:0[12]/);
+    expect(rows.find((t) => t.startsWith('25km'))).toContain('塩タブレット');
+    expect(rows.find((t) => t.startsWith('5km'))).not.toContain('ジェル');
+    await page.click('.rd-tabs [data-go="prep"]');
+    await page.waitForTimeout(800);
+    expect(await page.$eval('.rd-tabs a.on', (a: HTMLElement) => a.dataset.go)).not.toBe('about');
+  }, 40000);
+  it('シューズ: 一覧の絞り込み・詳しく (使用履歴・相性・使用感)', async () => {
+    await open('#/shoes');
+    const card = await page.textContent('[data-shoe] .shoe-body');
+    expect(card).toContain('最終使用');
+    await open('#/shoes?f=race');
+    expect(await page.textContent('#view')).toContain('この用途の使用中のシューズはありません');
+    const s = (await call(env, 'GET', '/shoes')).json.find((x: any) => x.name === 'テストシューズA');
+    await open(`#/shoes/${s.id}`, '11b-shoe-detail');
+    expect(await page.textContent('.sh-hero')).toContain('使った回数');
+    await page.click('[data-shtab="hist"]');
+    expect(await page.locator('.sh-pane[data-pane="hist"] .hl-run').count()).toBeGreaterThanOrEqual(4);
+    await page.click('[data-shtab="feel"]');
+    expect(await page.textContent('.sh-pane[data-pane="feel"]')).toContain('未入力');
+  }, 40000);
+
+  it('計画: アップ・インターバル・ダウンのステップが 1 行ずつ縦に並ぶ (横に重ならない)', async () => {
+    const steps = [{ kind: 'warmup', by: 'dist', value: 2000, zone: 1, ref: 'easy' }, { kind: 'interval', reps: 3, work: { by: 'dist', value: 1000, pmin: 245, pmax: 255 }, rest: { by: 'dist', value: 200 } }, { kind: 'cooldown', by: 'dist', value: 2000, zone: 1, ref: 'easy' }];
+    await call(env, 'POST', '/plans', { date: TODAY, type: 'interval', distance_m: 7600, steps });
+    await open('#/plans', '02b-plans-steps');
+    const rows = await page.$$eval('.stl .stp-r', (els: Element[]) => els.map((e) => { const r = e.getBoundingClientRect(); return { top: r.top, left: r.left, right: r.right }; }));
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < 3; i++) expect(rows[i].top).toBeGreaterThan(rows[i - 1].top + 5);
+    for (const r of rows) expect(r.right).toBeLessThanOrEqual(390);
+  }, 30000);
+
   it('ナビゲーション: 下のメニューで各画面に移れる', async () => {
     await open('#/');
     for (const tab of ['plans', 'activities', 'races', 'shoes', 'settings', 'home']) {
@@ -197,8 +251,11 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     let list = (await call(env, 'GET', '/shoes')).json;
     const s = list.find((x: any) => x.name === 'E2Eシューズ');
     expect(s).toBeTruthy();
-    // 開いたときに名称欄へ自動でフォーカスしない
+    // 一覧をタップすると詳しくの画面。そこから編集を開く。開いたときに名称欄へ自動でフォーカスしない
     await page.click(`[data-shoe="${s.id}"] .shoe-fg, [data-shoe="${s.id}"]`);
+    await page.waitForSelector('#shoe-edit');
+    expect(await page.evaluate(() => location.hash)).toBe(`#/shoes/${s.id}`);
+    await page.click('#shoe-edit');
     await page.waitForSelector('dialog[open]');
     expect(await page.evaluate(() => document.activeElement?.getAttribute('name'))).not.toBe('name');
     await page.fill('dialog [name=name]', 'E2Eシューズ改');
@@ -206,12 +263,14 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     await page.waitForTimeout(800);
     list = (await call(env, 'GET', '/shoes')).json;
     expect(list.some((x: any) => x.name === 'E2Eシューズ改')).toBe(true);
-    await page.click(`[data-shoe="${s.id}"] .shoe-fg, [data-shoe="${s.id}"]`);
+    await page.waitForSelector('#shoe-edit');
+    await page.click('#shoe-edit');
     await page.waitForSelector('dialog[open]');
     await page.click('dialog button[value=delete]');
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(1000);
     list = (await call(env, 'GET', '/shoes')).json;
     expect(list.some((x: any) => x.id === s.id)).toBe(false);
+    expect(await page.evaluate(() => location.hash)).toBe('#/shoes');
   }, 60000);
 
   it('レース: 追加 (画面から) で目標タイムが保存される', async () => {

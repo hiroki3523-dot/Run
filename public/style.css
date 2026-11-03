@@ -580,8 +580,8 @@ table.lap .sbar { height: 8px; }
 /* 計画のステップ表示 */
 .pl-main { min-width: 0; flex: 1; }
 .pl-t { font-weight: 600; }
-.stp { display: grid; gap: 2px; margin: 8px 0 2px; }
-.stp-r { display: grid; grid-template-columns: 10px 5.6em 3.9em 1fr; white-space: nowrap; align-items: center; gap: 6px; font-size: 13px; padding: 3px 0; }
+.stl { display: grid; gap: 2px; margin: 8px 0 2px; min-width: 0; }
+.stp-r { display: grid; grid-template-columns: 10px 6.6em auto minmax(0, 1fr); white-space: nowrap; align-items: center; gap: 6px; font-size: 13px; padding: 3px 0; }
 .stp-r i { width: 4px; height: 18px; border-radius: 2px; background: var(--kc); }
 .stp-n { font-weight: 600; }
 .stp-n small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
@@ -1321,3 +1321,54 @@ h3.sect { margin: 18px 4px 8px; font-size: 15px; font-weight: 700; }
 .hl-day.one { padding: 4px 12px 2px; }
 .hl-date { display: block; font-size: 11.5px; font-weight: 700; color: var(--muted); padding: 6px 2px 0; }
 .hl-day.one .hl-run { padding-top: 4px; }
+/* ---- レース一覧・詳細 (2026-11) ---- */
+.rl-top { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.rb { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); white-space: nowrap; }
+.rb.rb-confirmed { background: color-mix(in srgb, var(--good) 22%, transparent); color: var(--good); }
+.rb.rb-entered { background: var(--accent-soft); color: var(--accent); }
+.rb.rb-candidate { background: color-mix(in srgb, var(--mid) 18%, transparent); color: var(--mid); }
+.rb.rb-main { background: linear-gradient(135deg, #2b3dff, #7a5cff); color: #fff; }
+.rb.rb-est { background: color-mix(in srgb, var(--mid) 12%, transparent); color: var(--mid); }
+.rb.rb-done { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
+.rb.rb-past { color: var(--muted); }
+.hero .rb { background: rgb(255 255 255 / .2); color: #fff; }
+.hero .rb.rb-main { background: #fff; color: #3a2bd9; }
+.rl-hero { display: block; text-decoration: none; color: inherit; }
+.rl-hname { margin: 2px 0 4px; font-size: 22px; }
+.rl-hrow { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-top: 12px; }
+.rl-hrow .big { font-size: 44px; line-height: 1; }
+.rl-hgoal { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.rl-hgoal b { font-size: 22px; }
+.rl-hgoal small { font-size: 11.5px; opacity: .85; }
+.hero .muted { color: rgb(255 255 255 / .82); }
+.rl-empty b { display: block; margin-bottom: 4px; }
+.rl-row { display: flex; align-items: center; gap: 12px; }
+.rl-date { flex: none; width: 46px; display: flex; flex-direction: column; align-items: center; padding: 6px 0; border-radius: 12px; background: color-mix(in srgb, var(--text) 6%, transparent); }
+.rl-date b { font-size: 20px; line-height: 1.1; }
+.rl-date small { font-size: 10.5px; color: var(--muted); }
+.rl-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rl-body .rl-top { margin-bottom: 2px; }
+.rl-bits { font-size: 12px; }
+.rl-name { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rl-sub { font-size: 12.5px; }
+.rl-row .chev { flex: none; color: var(--muted); }
+.rd-tabs { position: sticky; top: calc(env(safe-area-inset-top) + 6px); z-index: 5; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; margin: 0 0 12px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line); }
+.rd-tabs a { text-align: center; padding: 8px 0; border-radius: 999px; font-size: 13.5px; font-weight: 700; color: var(--muted); text-decoration: none; }
+.rd-tabs a.on { background: var(--text); color: var(--bg); }
+.rd-sec { scroll-margin-top: 110px; }
+.ptable.with-fuel .ph, .ptable.with-fuel .pr { grid-template-columns: 52px 70px minmax(0, 1fr) 74px; gap: 8px; }
+.pfuel { font-size: 11.5px; line-height: 1.35; color: var(--text); overflow: hidden; }
+.pfuel small { color: var(--muted); margin-left: 3px; font-size: 10px; }
+/* ---- シューズ一覧・詳しく (2026-11) ---- */
+.sh-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; }
+.sh-tag { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.sh-tag.none { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--muted); }
+.sh-tag.st { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
+.sh-wear { display: flex; justify-content: space-between; font-size: 11.5px; margin-top: 3px; }
+.sh-hero { text-align: center; }
+.sh-hero .shoe-img.big { margin: 0 auto; width: 160px; height: 120px; }
+.sh-hero .hl-tile { text-align: left; }
+.sh-tabs { margin: 0 0 12px; }
+.sh-fit { padding: 10px 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.sh-fit:first-of-type { border-top: 0; }
+.sh-fitg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 8px; font-size: 12.5px; }

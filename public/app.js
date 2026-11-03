@@ -307,13 +307,19 @@ function splitTable(race, mode = 'even') {
   const paces = rows.map((r) => r.lap);
   const fast = Math.min(...paces), slow = Math.max(...paces);
   const w = (p) => (slow - fast < 1 ? 78 : 62 + ((slow - p) / (slow - fast)) * 38);
-  return `<div class="ptable">
-    <div class="ph"><span>地点</span><span>通過${loss ? ' (ネット)' : ''}</span><span>この区間のペース</span></div>
-    ${rows.map((r) => `<div class="pr ${r.half ? 'half' : ''} ${r.fin ? 'fin' : ''}">
+  // 補給: 前の地点からこの地点までの補給をこの行に出す (登録したものだけ。無ければ空欄)
+  const fuel = (raceInfoOf(race).fuel || []).slice().sort((a, b) => a.km - b.km);
+  let prevK = 0;
+  const fuelAt = rows.map((r) => { const xs = r.half ? [] : fuel.filter((f) => f.km > prevK && f.km <= r.k + 1e-6); if (!r.half) prevK = r.k; return xs; });
+  return `<div class="ptable ${fuel.length ? 'with-fuel' : ''}">
+    <div class="ph"><span>地点</span><span>通過${loss ? ' (ネット)' : ''}</span><span>この区間のペース</span>${fuel.length ? '<span>補給</span>' : ''}</div>
+    ${rows.map((r, ri) => `<div class="pr ${r.half ? 'half' : ''} ${r.fin ? 'fin' : ''}">
       <span class="pk">${r.fin ? 'ゴール' : r.half ? 'ハーフ' : `${Math.round(r.k)}km`}</span>
       <b class="num">${dur(r.t)}${sc != null ? `<small class="pclock">${clockTxt(sc + r.t)}</small>` : ''}</b>
       ${mode === 'custom' && !r.half ? `<button type="button" class="pbar pbtn" data-seg="${r.seg}"><i style="width:${w(r.lap)}%"></i><em class="num">${pace(r.lap)}</em></button>` : `<span class="pbar"><i style="width:${w(r.lap)}%"></i><em class="num">${pace(r.lap)}</em></span>`}
+      ${fuel.length ? `<span class="pfuel">${fuelAt[ri].map((f) => `${esc(f.item)}<small class="num">${f.km}km</small>`).join('<br>') || '<span class="muted">—</span>'}</span>` : ''}
     </div>`).join('')}
+  ${fuel.length ? '' : '<p class="muted an-note">補給は登録されていません。下の「補給計画」で登録すると、この表の同じ地点に出ます。</p>'}
   </div>
   ${loss ? `<p class="muted an-note">スタートロス ${mmss(loss)} を見込んだグロス (号砲から) のゴールは ${dur(race.goal_time_s + loss)}。</p>` : ''}
   ${sc != null ? '<p class="muted an-note">時刻は、自分のブロックのスタート時刻 + スタートロスからの見込み。</p>' : ''}`;
@@ -672,7 +678,8 @@ const parseSteps = (p) => {
 const paceRange = (t) => { const b = bandOf(t); return `${pace(Math.round(b[0]))}–${pace(Math.round(b[1]))}`; };
 /** ステップ付きの計画を、色つきの行で見せる (長い文章にしない) */
 function stepRows(steps) {
-  return `<div class="stp">${steps.map((sp) => {
+  // 「stp」は −/＋ の入力 (stepper) と名前が重なって横並びになっていたので「stl」に (2026-11 修正)
+  return `<div class="stl">${steps.map((sp) => {
     const kc = KIND_COLOR[sp.kind] || '#8a8f9c';
     if (sp.kind === 'interval') {
       return `<div class="stp-r" style="--kc:${kc}"><i></i><span class="stp-n">インターバル<small>レスト ${fmtTarget(sp.rest)}</small></span><span class="num stp-d">${fmtTarget(sp.work)}×${sp.reps}</span><span class="num stp-p">${paceRange(sp.work)}</span></div>`;
@@ -1751,6 +1758,14 @@ const GRADE_NOTE = { A: '狙いどおり', B: '概ね良好', C: '要調整', D:
 const ROLE_LABEL = { warmup: 'アップ', cooldown: 'ダウン', work: 'メイン' };
 const typeOf = (a) => a.eff_type || a.type || a.plan_type || null;
 const typeLabel = (t) => (t && PLAN_LABELS[t]) || 'フリー';
+/** Easy の遅い側のペース (秒/km)。ロング走の中の M ペース区間を見分けるため (実績の画面を開いたときに設定から読む) */
+let EASY_MIN = null;
+/** 表示用の種類: ロング走の計画の M ペース区間は「ロング走 (Mペース)」 */
+const runTypeLabel = (a) => {
+  const t = typeOf(a), p = a.distance_m ? a.moving_time_s / (a.distance_m / 1000) : null;
+  if (a.plan_type === 'long' && (t === 'm' || (a.role === 'work' && EASY_MIN && p && p < EASY_MIN - 10))) return 'ロング走 (Mペース)';
+  return typeLabel(t);
+};
 /** 種類のまとまり (src/review.ts kindGroup と同じ) */
 const kindOf = (t, role, kmv) => (role === 'warmup' || role === 'cooldown' ? 'link' : t === 'race' ? 'race' : ['m', 'lt', 'interval'].includes(t) ? 'point' : t === 'long' || kmv >= 20 ? 'long' : ['easy', 'jog'].includes(t) ? 'easy' : 'free');
 const KIND_FILTER = [['all', 'すべて'], ['point', 'ポイント'], ['long', 'ロング'], ['easy', 'Easy/Jog'], ['race', 'レース']];
@@ -1771,7 +1786,7 @@ const signed = (v, unit = '', dig = 0) => (v == null || !isFinite(v) ? '-' : `${
 /** 1 本のランの行 (一覧・日で共通) */
 function runRow(a, main) {
   const t = typeOf(a), kmv = a.distance_m / 1000;
-  const name = a.role ? `${ROLE_LABEL[a.role] ?? ''}${a.role === 'work' ? ` (${typeLabel(t)})` : ''}` : t ? typeLabel(t) : esc(a.name);
+  const name = a.role ? `${ROLE_LABEL[a.role] ?? ''}${a.role === 'work' ? ` (${runTypeLabel(a)})` : ''}` : t ? runTypeLabel(a) : esc(a.name);
   return `<a class="hl-run ${main ? 'main' : ''}" href="#/activities/${a.id}">${runIcon(t, a.role, kmv)}
     <div class="hl-tx"><b>${name}${main && !a.role ? ' <small class="hl-main">メイン</small>' : ''}</b><small class="num">${km(a.distance_m, 2)}km・${pace(a.moving_time_s / kmv)}/km${a.avg_hr ? `・${Math.round(a.avg_hr)}bpm` : ''}</small></div>${scoreTag(a.score)}</a>`;
 }
@@ -1780,6 +1795,7 @@ const mainOf = (runs) => [...runs].filter((r) => r.role !== 'warmup' && r.role !
 
 async function activitiesView(params) {
   const kind = params?.get('view') || 'list';
+  if (EASY_MIN == null) EASY_MIN = (await api('/settings').catch(() => null))?.paces?.easy?.min ?? 0;
   const tabs = `<div class="seg">${REVIEW_TABS.map(([k, l]) => `<a href="#/activities${k === 'list' ? '' : `?view=${k}`}" class="${k === kind ? 'on' : ''}">${l}</a>`).join('')}</div>`;
   if (kind === 'list') return tabs + await histList(params);
   const anchor = params.get('date') || today();
@@ -2584,6 +2600,29 @@ function racePlanExtras(r, mode) {
   return h;
 }
 
+/** レース詳細 > 実績: 目標への準備状況 (ホームの「目標への現在地」と同じ計算。次の大会だけが対象) */
+async function loadRaceReady(r) {
+  const box = document.getElementById('race-ready');
+  if (!box) return;
+  let ins = null;
+  try { ins = await api('/insights'); } catch { box.innerHTML = '<h2>目標への準備状況</h2><p class="muted">読み込めませんでした。</p>'; return; }
+  if (!document.body.contains(box)) return;
+  const LVc = { ok: 'good', warn: 'ok', bad: 'bad' };
+  if (!ins?.race || ins.race.name !== r.name) {
+    box.innerHTML = `<h2>目標への準備状況</h2><p class="muted">準備状況は「次の大会」${ins?.race ? ` (${esc(ins.race.name)})` : ''}だけを計算しています。この大会が次の大会になると、ここに出ます。</p>`;
+    return;
+  }
+  const full = Math.abs(r.distance_m - 42195) < 50;
+  const pr = ins.predicted_s;
+  box.innerHTML = `<h2>目標への準備状況</h2>
+    <div class="hl-tiles"><div class="hl-tile"><small>目標</small><b class="num">${r.goal_time_s ? dur(r.goal_time_s) : '-'}</b></div>
+      <div class="hl-tile"><small>${esc(ins.predicted_label || '予測')}</small><b class="num">${full && pr ? dur(pr) : '-'}</b><span>${full && pr ? `${md(today())} 時点` : 'データ不足・フル以外'}</span></div>
+      <div class="hl-tile"><small>目標との差</small><b class="num">${ins.gap_s != null ? `${ins.gap_s <= 0 ? '−' : '+'}${dur(Math.abs(ins.gap_s))}` : '-'}</b><span>${ins.gap_s != null ? (ins.gap_s <= 0 ? '予測が目標より速い' : '予測が目標より遅い') : ''}</span></div></div>
+    <div class="an-items" style="margin-top:12px">${(ins.items || []).map((x) => `<div class="an-it"><span class="an-j j-${LVc[x.level] || 'hold'}">${x.level === 'ok' ? '良い' : x.level === 'warn' ? '注意' : '課題'}</span><div><b>${esc(x.label)}</b><span class="num">${esc(x.value)} / 目安 ${esc(x.target)}</span></div></div>`).join('')}</div>
+    ${ins.aptitude?.prediction?.confidence && ins.aptitude.prediction.confidence !== '-' ? `<p class="muted an-note">予測の信頼度: ${esc(ins.aptitude.prediction.confidence)} (根拠はホームの「マラソン適性」)。</p>` : ''}
+    <p class="muted an-note">予測は今の練習の記録からの目安で、達成を約束するものではありません。気温・風・コース・当日の体調で結果は変わります。</p>`;
+}
+
 async function raceDetailView(id) {
   const [races, state, weather] = await Promise.all([
     api('/races'),
@@ -2676,6 +2715,17 @@ async function raceDetailView(id) {
       await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, goal_time_s: goal } });
       route();
     }));
+    // 項目のタブ: 押すとその場所へ。スクロールに合わせて選択を変える
+    const tabs = [...view.querySelectorAll('.rd-tabs [data-go]')];
+    tabs.forEach((a) => (a.onclick = () => { const el = view.querySelector(`#rs-${a.dataset.go}`); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 110, behavior: 'smooth' }); }));
+    const onScroll = () => {
+      if (!document.body.contains(tabs[0])) { window.removeEventListener('scroll', onScroll); return; }
+      let cur = 'about';
+      for (const k of ['about', 'plan', 'prep', 'result']) { const el = view.querySelector(`#rs-${k}`); if (el && el.getBoundingClientRect().top < 140) cur = k; }
+      tabs.forEach((a) => a.classList.toggle('on', a.dataset.go === cur));
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    if (r.date > t) loadRaceReady(r);
     view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
     view.querySelector('#st-race').onclick = () => manageRace(r);
     if (r.date <= t) loadRaceResult(r);
@@ -2733,18 +2783,23 @@ async function raceDetailView(id) {
   };
   const dleft = r.date >= t ? daysBetween(t, r.date) : null;
   const upcoming = dleft != null;
+  const inf0 = raceInfoOf(r), st0r = r.status || 'confirmed';
+  const est0 = inf0.date_estimated;
   return `
-    <div class="card hero">
-      <div class="row spread"><h2>${esc(r.name)}</h2><span class="badge">${esc(r.priority)}</span></div>
-      <div class="row spread">
-        <div>${dleft != null ? `<span class="big">${dleft}</span> 日` : '<span class="muted">終了</span>'}</div>
-        <div class="muted num">${md(r.date)}・${km(r.distance_m)}km${r.goal_time_s ? `<br>目標 ${dur(r.goal_time_s)} (${pace(r.goal_time_s / (r.distance_m / 1000))}/km)` : ''}</div>
-      </div>
+    <div class="card hero rd-hero">
+      <div class="rl-top"><span class="rb rb-${upcoming ? st0r : r.result_time_s ? 'done' : 'past'}">${upcoming ? RACE_STATUS.find(([k]) => k === st0r)[1] : r.result_time_s ? '完走' : '終了'}</span>${r.priority === 'A' && st0r !== 'candidate' ? '<span class="rb rb-main">本命</span>' : `<span class="rb">優先度 ${esc(r.priority || '-')}</span>`}${est0 ? '<span class="rb rb-est">日付は暫定</span>' : ''}</div>
+      <h2 class="rl-hname">${esc(r.name)}</h2>
+      <div class="muted num">${r.date.slice(0, 4)}年${md(r.date)}(${dow(r.date)})${inf0.venue ? `・${esc(inf0.venue)}` : ''}・${km(r.distance_m, 3)}km</div>
+      <div class="rl-hrow"><div>${!upcoming ? '<span class="muted">終了</span>' : est0 ? '<span class="muted">開催日が決まったら残り日数を出します</span>' : `あと <b class="big num">${dleft}</b> 日`}</div>
+        <div class="rl-hgoal num"><small>目標</small><b>${r.goal_time_s ? dur(r.goal_time_s) : '未設定'}</b>${r.goal_time_s ? `<small>平均 ${pace(r.goal_time_s / (r.distance_m / 1000))}/km</small>` : ''}</div></div>
     </div>
-    ${r.date <= t ? '<div id="race-result"></div>' : ''}
+    <div class="rd-tabs" role="tablist" aria-label="レースの項目">${[['about', '概要'], ['plan', '戦略'], ['prep', '準備'], ['result', '実績']].map(([k, l], i) => `<a href="javascript:void 0" data-go="${k}" class="${i === 0 ? 'on' : ''}">${l}</a>`).join('')}</div>
+    <div id="rs-about" class="rd-sec">
     ${raceInfoCard(r)}
     ${weather && weather.race === r.name ? weatherCard(weather) : ''}
-    <div class="card"><h2>ペース表</h2>
+    </div>
+    <div id="rs-plan" class="rd-sec">
+    <div class="card"><h2>ペース・補給プラン</h2>
       <div class="gp2">
         <button type="button" class="gp-t" data-gp="time"><small>目標タイム</small><b class="num">${r.goal_time_s ? dur(r.goal_time_s) : '未設定'}</b></button>
         <button type="button" class="gp-t" data-gp="pace"><small>平均ペース</small><b class="num">${r.goal_time_s ? `${pace(r.goal_time_s / (r.distance_m / 1000))}<span>/km</span>` : '-'}</b></button>
@@ -2756,6 +2811,8 @@ async function raceDetailView(id) {
       <div id="pace-out">${splitTable(r, mode)}</div>
     </div>
     <div id="rp-extra">${racePlanExtras(r, mode)}</div>
+    </div>
+    <div id="rs-prep" class="rd-sec">
     ${upcoming ? `<div class="card"><div class="row spread"><h2>持ち物</h2><div class="row" style="gap:8px;align-items:center"><b class="num" id="ck-prog"></b><button type="button" class="chip" id="ck-edit">編集</button></div></div>
       <div class="bar" style="margin:6px 0 10px"><div id="ck-bar" style="width:0"></div></div>
       <div id="checks"></div>
@@ -2765,7 +2822,11 @@ async function raceDetailView(id) {
         <input id="ck-new" placeholder="追加 (例: 梅干し)" style="flex:1;min-width:0" maxlength="60"><button class="primary">追加</button></div>
         <button type="button" class="linkbtn" id="ck-reset" style="margin-top:10px">最初の一覧に戻す</button>
       </form>
-    </div>` : ''}
+    </div>` : '<div class="card"><h2>持ち物</h2><p class="muted">大会は終了しました。</p></div>'}
+    </div>
+    <div id="rs-result" class="rd-sec">
+    ${r.date <= t ? '<div id="race-result"></div>' : `<div class="card" id="race-ready"><h2>目標への準備状況</h2><p class="muted">読み込み中…</p></div>`}
+    </div>
     <div class="rd-acts">
       <button type="button" id="st-race">${ST_ICON[r.status || 'confirmed']}<span><small>状態</small>${RACE_STATUS.find(([k]) => k === (r.status || 'confirmed'))[1]}</span></button>
       <button type="button" id="edit-race">${SVG('<path d="M4 20h4L19 9l-4-4L4 16z"/>')}<span><small>大会名・日付・目標</small>編集</span></button>
@@ -2883,7 +2944,7 @@ const fmtD = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? `${md(d)}(${dow(d)})`
 const seasonOf = (d) => { const dd = Number(d.slice(8, 10)); return `${Number(d.slice(5, 7))}月${dd <= 10 ? '上旬' : dd <= 20 ? '中旬' : '下旬'}`; };
 const histKey = (n) => String(n).replace(/\s*\(.*?\)\s*/g, '').replace(/20\d\d|第\d+回|[\s・]/g, '');
 const histOf = (name) => { const h = ENTRY_HIST[histKey(name)]; return h && h.length ? h[h.length - 1] : null; };
-function entryLine(r, t) {
+function entryLine(r, t, noStatus = false) {
   const inf = raceInfoOf(r);
   const st = r.status || 'confirmed';
   if (r.date < t) return '';
@@ -2910,6 +2971,8 @@ function entryLine(r, t) {
       entry = `<div class="entry-l">${entryHint(x, null, t, true)}</div>`;
     }
   }
+  // noStatus: 状態はバッジで出しているので、ブロック・抽選発表・エントリー期間だけ (レース一覧)
+  if (noStatus) return `${bits.length ? `<div class="muted num rl-bits">${bits.join('・')}</div>` : ''}${entry}`;
   return `<div class="rl-st st-${st}">${icon}<b>${label}</b>${bits.length ? `<span>${bits.join('・')}</span>` : ''}</div>${entry}`;
 }
 /** レース詳細の「大会情報」カード */
@@ -3215,30 +3278,49 @@ async function racesView() {
       else if (act === 'del' && (await deleteRace(r))) route();
     });
   });
+  const ST_LABEL = Object.fromEntries(RACE_STATUS);
+  const distName = (m) => (Math.abs(m - 42195) < 50 ? 'フル' : Math.abs(m - 21097.5) < 50 ? 'ハーフ' : `${km(m, 1)}km`);
+  const goalTxt = (r) => (r.goal_time_s ? `目標 ${dur(r.goal_time_s)} (${pace(r.goal_time_s / (r.distance_m / 1000))}/km)` : '目標未設定');
   const row = (r) => {
-    const goalPace = r.goal_time_s ? pace(r.goal_time_s / (r.distance_m / 1000)) : null;
     const diff = r.goal_time_s && r.result_time_s ? r.result_time_s - r.goal_time_s : null;
+    const st = r.status || 'confirmed';
+    const est = raceInfoOf(r).date_estimated;
     return `<li class="sw" data-id="${r.id}">
-      <div class="sw-acts">${r.date >= t ? `<button type="button" class="sw-act st" data-act="status">${ST_ICON[r.status || 'confirmed']}<span>状態</span></button>` : ''}<button type="button" class="sw-act del" data-act="del">${SVG('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>')}<span>削除</span></button></div>
-      <div class="sw-front">
-      <div class="row spread"><span><span class="badge">${esc(r.priority)}</span> ${esc(r.name)}</span><span class="muted num">${r.date} ›</span></div>
-      <div class="muted num">${km(r.distance_m, 3)}km・目標 ${dur(r.goal_time_s)}${goalPace ? ` (${goalPace}/km)` : ''}${r.date >= t ? `・あと${daysBetween(t, r.date)}日` : ''}</div>
-      ${entryLine(r, t)}
-      ${r.result_time_s ? `<div class="num">結果 <strong>${dur(r.result_time_s)}</strong>${diff != null ? ` <span class="score ${diff <= 0 ? 'good' : 'bad'}">${diff <= 0 ? '-' : '+'}${dur(Math.abs(diff))}</span>` : ''}${r.activity_id ? ` <a href="#/activities/${r.activity_id}">記録</a>` : ''}</div>` : ''}
-      </div>
+      <div class="sw-acts">${r.date >= t ? `<button type="button" class="sw-act st" data-act="status">${ST_ICON[st]}<span>状態</span></button>` : ''}<button type="button" class="sw-act del" data-act="del">${SVG('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>')}<span>削除</span></button></div>
+      <div class="sw-front"><div class="rl-row">
+        <div class="rl-date num"><small>${Number(r.date.slice(5, 7))}月</small><b>${Number(r.date.slice(8, 10))}</b><small>${dow(r.date)}</small></div>
+        <div class="rl-body">
+          <div class="rl-top">${r.date >= t ? `<span class="rb rb-${st}">${ST_LABEL[st]}</span>` : r.result_time_s ? '<span class="rb rb-done">完走</span>' : '<span class="rb rb-past">終了</span>'}${r.priority === 'A' && st !== 'candidate' ? '<span class="rb rb-main">本命</span>' : ''}${est ? '<span class="rb rb-est">日付は暫定</span>' : ''}</div>
+          <b class="rl-name">${esc(r.name)}</b>
+          <span class="muted num rl-sub">${distName(r.distance_m)}・${r.result_time_s ? `結果 ${dur(r.result_time_s)}${diff != null ? ` (${diff <= 0 ? '−' : '+'}${dur(Math.abs(diff))})` : ''}` : goalTxt(r)}${r.date >= t && !est ? `・あと${daysBetween(t, r.date)}日` : ''}</span>
+          ${entryLine(r, t, true)}
+        </div>
+        <svg class="chev" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
+      </div></div>
     </li>`;
   };
-  const upcoming = races.filter((r) => r.date >= t);
-  const past = races.filter((r) => r.date < t && r.status !== 'candidate').reverse();
-  const group = (k) => upcoming.filter((r) => (r.status || 'confirmed') === k);
-  const sect = (k, label, hint) => { const g = group(k); return g.length ? `<div class="card"><div class="row spread"><h2>${label}</h2><span class="muted">${g.length}件</span></div>${hint ? `<p class="muted" style="margin:-4px 0 6px;font-size:12.5px">${hint}</p>` : ''}<ul class="list">${g.map(row).join('')}</ul></div>` : ''; };
+  const upcoming = races.filter((r) => r.date >= t).sort((a, b) => a.date.localeCompare(b.date));
+  const past = races.filter((r) => r.date < t && r.status !== 'candidate').sort((a, b) => b.date.localeCompare(a.date));
+  // いちばん近い出場予定 (候補は除く)。優先度 A のときだけ「本命」と書く
+  const next = upcoming.filter((r) => (r.status || 'confirmed') !== 'candidate')[0] ?? null;
+  const hero = (() => {
+    if (!next) return `<div class="card rl-empty"><b>出場予定の大会はありません</b><p class="muted">「大会を探す」か「＋ 追加」から登録すると、ここに次の大会が大きく出ます。${upcoming.length ? '(エントリー候補は、状態を「エントリー済み」「出場決定」にすると出ます)' : ''}</p></div>`;
+    const est = raceInfoOf(next).date_estimated, st = next.status || 'confirmed';
+    const inf = raceInfoOf(next);
+    return `<a class="card hero rl-hero" href="#/races/${next.id}">
+      <div class="rl-top"><span class="rb rb-${st}">${ST_LABEL[st]}</span>${next.priority === 'A' ? '<span class="rb rb-main">本命</span>' : `<span class="rb">優先度 ${esc(next.priority || '-')}</span>`}</div>
+      <h2 class="rl-hname">${esc(next.name)}</h2>
+      <div class="muted num">${next.date.slice(0, 4)}年${md(next.date)}(${dow(next.date)})${est ? '・日付は暫定' : ''}${inf.venue ? `・${esc(inf.venue)}` : ''}</div>
+      <div class="rl-hrow"><div>${est ? '<span class="muted">開催日が決まったら残り日数を出します</span>' : `あと <b class="big num">${daysBetween(t, next.date)}</b> 日`}</div>
+        <div class="rl-hgoal num"><small>${distName(next.distance_m)} (${km(next.distance_m, 3)}km)</small><b>${next.goal_time_s ? dur(next.goal_time_s) : '目標未設定'}</b>${next.goal_time_s ? `<small>${pace(next.goal_time_s / (next.distance_m / 1000))}/km</small>` : ''}</div></div>
+    </a>`;
+  })();
   return `
     <div class="row spread" style="margin-bottom:8px"><h2>レース</h2><div class="row" style="gap:8px"><a class="btn" href="#/races/find">大会を探す</a><button class="primary" id="add-race">＋ 追加</button></div></div>
-    ${sect('confirmed', '出場決定')}
-    ${sect('entered', 'エントリー済み', '抽選や入金の結果待ち。計画はこの大会も目標に入れます')}
-    ${sect('candidate', 'エントリー候補', '出るか検討中。計画やホームの目標には入れません')}
-    ${upcoming.length ? '<p class="muted sw-hint">左にスライドすると、状態の変更と削除ができます</p>' : '<div class="card"><p class="muted">予定のレースはありません</p></div>'}
-    <div class="card"><h2>過去</h2>${past.length ? `<ul class="list">${past.map(row).join('')}</ul>` : '<p class="muted">なし</p>'}</div>`;
+    ${hero}
+    <h3 class="sect">今後の大会 <small class="muted">${upcoming.length}件</small></h3>
+    ${upcoming.length ? `<div class="card"><ul class="list rl-list">${upcoming.map(row).join('')}</ul></div><p class="muted sw-hint">左にスライドすると、状態の変更と削除ができます。エントリー候補は、計画やホームの目標には入れません</p>` : '<div class="card"><p class="muted">予定の大会はありません</p></div>'}
+    <details class="card rv-acc rl-past" ${upcoming.length ? '' : 'open'}><summary>過去の大会 (${past.length})</summary><div class="rv-acc-b">${past.length ? `<ul class="list rl-list">${past.map(row).join('')}</ul>` : '<p class="muted">なし</p>'}</div></details>`;
 }
 
 async function editRace(r) {
@@ -3308,16 +3390,24 @@ async function putShoe(s, patch) {
   await api(`/shoes/${s.id}`, { method: 'PUT', body: { ...s, ...patch } });
 }
 
-async function shoesView() {
+const PURPOSE_SHORT = { easy: 'イージー', recovery: 'リカバリー', long: 'ロング', pace: 'ペース走', speed: 'スピード', race: 'レース' };
+/** シューズ一覧の絞り込み: 用途 (保存値) との対応 */
+const SHOE_FILTER = [['all', 'すべて', null], ['jog', 'ジョグ', ['easy', 'recovery']], ['point', 'ポイント', ['pace', 'speed']], ['long', 'ロング', ['long']], ['race', 'レース', ['race']]];
+const shoeImg = (s, big) => `<div class="shoe-img ${big ? 'big' : ''}">${s.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div>`;
+const wearBar = (s) => { const r = s.limit_km ? s.total_km / s.limit_km : 0; return `<div class="bar ${r >= 1 ? 'over' : r >= 0.9 ? 'warn' : ''}"><div style="width:${Math.min(100, r * 100)}%"></div></div><div class="sh-wear muted num"><span>${s.total_km.toFixed(1)} / 目安 ${s.limit_km}km</span><span>${s.limit_km ? `${Math.round(r * 100)}%` : ''}</span></div>`; };
+
+async function shoesView(params) {
+  const sf = params?.get('f') || 'all';
   const [shoes, races] = await Promise.all([api('/shoes'), api('/races').catch(() => [])]);
   const nextRace = races.filter((r) => r.date >= today() && ['A', 'B'].includes(r.priority)).sort((a, b) => a.date.localeCompare(b.date))[0];
   const advice = shoeAdvice(shoes, nextRace);
   const guesses = shoes.filter((x) => !x.retired && guessPurposes(x.name) && purposesOf(x.purpose).join() !== guessPurposes(x.name).join());
   setTimeout(() => {
     view.querySelector('#add-shoe').onclick = () => editShoe({ purpose: 'easy', limit_km: 700, initial_km: 0 });
+    // タップで詳しく (使用履歴・相性・使用感)。編集は詳しくの画面から
     view.querySelectorAll('[data-shoe]').forEach((el) => (el.onclick = (e) => {
       if (e.target.closest('[data-st],[data-pq]') || el._swiped) return;
-      editShoe(shoes.find((s) => s.id === Number(el.dataset.shoe)));
+      location.hash = `#/shoes/${el.dataset.shoe}`;
     }));
     // 左右にスライドして状態を変える (右: 予備/使用中へ、左: 引退)
     view.querySelectorAll('.shoe-item').forEach((li) => {
@@ -3378,32 +3468,100 @@ async function shoesView() {
     };
   });
   const row = (s) => {
-    const ratio = s.total_km / s.limit_km;
     const rt = (s.retired || 0) === 0 ? '予備にする' : '使用中に戻す';
+    const pu = purposesOf(s.purpose);
     return `<li data-shoe="${s.id}" class="shoe-item ${s.retired ? 'off' : ''}">
       <div class="shoe-bg"><span class="bg-r">${rt}</span><span class="bg-l">${(s.retired || 0) === 1 ? '' : '役目を終える'}</span></div>
       <div class="shoe-fg">
       <div class="shoe-row">
-        <div class="shoe-img">${s.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div>
+        ${shoeImg(s)}
         <div class="shoe-body"><b class="shoe-name">${esc(shoeName(s))}</b>
-        <div class="shoe-km num">${s.total_km.toFixed(1)}<small> / ${s.limit_km}KM</small></div>
-        <div class="bar ${ratio >= 1 ? 'over' : ratio >= 0.9 ? 'warn' : ''}"><div style="width:${Math.min(100, ratio * 100)}%"></div></div>
-        <div class="muted tiny">${purposeText(s)}</div>
+        <div class="sh-tags">${pu.length ? pu.map((p) => `<span class="sh-tag">${PURPOSE_SHORT[p]}</span>`).join('') : '<span class="sh-tag none">用途未設定</span>'}${(s.retired || 0) === 2 ? '<span class="sh-tag st">予備</span>' : s.retired === 1 ? '<span class="sh-tag st">引退</span>' : ''}</div>
+        ${wearBar(s)}
+        <div class="muted tiny num">${s.last_date ? `最終使用 ${md(s.last_date)}・${s.runs}回` : '使用記録なし'}</div>
         ${s.retired === 1 ? `<button type="button" class="chip" data-st="0" data-sid="${s.id}" style="margin-top:6px">使用中に戻す</button>` : ''}</div>
         <svg class="chev" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>
       </div>
       </div>
     </li>`;
   };
-  const active = shoes.filter((s) => !s.retired), rest = shoes.filter((s) => s.retired);
+  const F = SHOE_FILTER.find(([k]) => k === sf) || SHOE_FILTER[0];
+  const pick = (xs) => (F[2] ? xs.filter((x) => purposesOf(x.purpose).some((p) => F[2].includes(p))) : xs);
+  const active = pick(shoes.filter((s) => !s.retired)), spare = pick(shoes.filter((s) => s.retired === 2)), retired = pick(shoes.filter((s) => s.retired === 1));
+  const chips = `<div class="hl-chips">${SHOE_FILTER.map(([k, l]) => `<a class="chip ${k === sf ? 'on' : ''}" href="#/shoes${k === 'all' ? '' : `?f=${k}`}">${l}</a>`).join('')}</div>`;
   return `
     <div class="row spread" style="margin-bottom:8px"><h2>シューズ</h2><button class="primary" id="add-shoe">＋ 追加</button></div>
+    ${chips}
     ${advice.length ? `<div class="card"><ul class="advice">${advice.map((a) => `<li class="${a.tone}">${a.text}</li>`).join('')}</ul></div>` : ''}
     ${guesses.length ? `<div class="card"><p class="muted" style="margin-top:0">名前から、用途を自動で設定できます (${guesses.length}足)。</p><button id="guess" class="primary wide">用途をまとめて設定</button></div>` : ''}
-    <div class="card"><ul class="list shoes">${active.map(row).join('') || '<li class="muted">使用中のシューズはありません</li>'}</ul></div>
-    ${rest.length ? `<h3 class="sub" style="margin:18px 4px 6px">予備・引退 (${rest.length}足)</h3><div class="card"><ul class="list shoes">${rest.map(row).join('')}</ul></div>` : ''}
-    <p class="muted hint">右へスライドで「予備/使用中」、左へスライドで「引退」。タップすると写真・用途・走行距離を直せます。</p>
+    ${!shoes.length ? '<div class="card"><b>シューズが登録されていません</b><p class="muted">「＋ 追加」から登録すると、走行距離と使用履歴がここに出ます。Strava のシューズを付けたランは自動で登録されます。</p></div>' : `
+    <h3 class="sect">使用中 <small class="muted">${active.length}足</small></h3>
+    <div class="card"><ul class="list shoes">${active.map(row).join('') || '<li class="muted">この用途の使用中のシューズはありません</li>'}</ul></div>
+    ${spare.length ? `<h3 class="sect">予備 <small class="muted">${spare.length}足</small></h3><div class="card"><ul class="list shoes">${spare.map(row).join('')}</ul></div>` : ''}
+    ${retired.length ? `<details class="card rv-acc"><summary>引退 (${retired.length}足)</summary><div class="rv-acc-b"><ul class="list shoes">${retired.map(row).join('')}</ul></div></details>` : ''}
+    <p class="muted hint">右へスライドで「予備/使用中」、左へスライドで「引退」。タップすると使用履歴・相性・使用感と編集。距離のバーは、登録した目安に対する割合です (靴の傷み具合を測ったものではありません)。</p>`}
     <h2 class="sect">シューズの相性</h2><div class="card" id="shoe-cmp"><p class="muted">読み込み中…</p></div>`;
+}
+
+/** シューズの詳しく: 使用状況・使用履歴・使用感・相性・履き分け */
+async function shoeDetailView(id) {
+  const [h, shoes, plans, cmp] = await Promise.all([
+    api(`/shoes/${id}/history`), api('/shoes'), api(`/plans?from=${today()}&to=${addDays(today(), 7)}`).catch(() => []), api('/shoes/compare').catch(() => ({})),
+  ]);
+  const s = shoes.find((x) => x.id === Number(id)) || h.shoe;
+  SHOES = shoes; SHOE_FIT = cmp;
+  setTimeout(() => {
+    view.querySelector('#shoe-edit').onclick = () => editShoe(s);
+    view.querySelectorAll('[data-shtab]').forEach((a) => (a.onclick = () => {
+      view.querySelectorAll('[data-shtab]').forEach((x) => x.classList.toggle('on', x === a));
+      view.querySelectorAll('.sh-pane').forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== a.dataset.shtab));
+    }));
+  });
+  const pu = purposesOf(s.purpose);
+  const f = s.feel || {};
+  const st = (s.retired || 0) === 2 ? '予備' : s.retired === 1 ? '引退' : '使用中';
+  const mmax = Math.max(1, ...h.months.map((m) => m.km));
+  // 相性: このシューズの、種類ごとの使用実績と、同じ種類のほかのシューズとの差 (2 本以上あるとき)
+  const fitRows = Object.entries(GROUP_LABEL).map(([g, label]) => {
+    const rows = cmp[g] || [];
+    const me = rows.find((r) => r.shoe_id === s.id);
+    if (!me) return '';
+    const others = rows.filter((r) => r.shoe_id !== s.id);
+    const avg = (k) => { const v = others.map((r) => r[k]).filter((x) => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+    const d = (k, unit, low) => { const o = avg(k); if (me[k] == null || o == null) return ''; const x = me[k] - o; return `<span class="num">${k === 'pace' ? `${x >= 0 ? '+' : '−'}${Math.abs(Math.round(x))}秒/km` : `${x >= 0 ? '+' : '−'}${Math.abs(Math.round(x * 10) / 10)}${unit}`}</span>`; };
+    return `<div class="sh-fit"><b>${label} <small class="muted">${me.n}本・${me.km}km</small></b>
+      <div class="sh-fitg num"><span>ペース ${me.pace ? pace(me.pace) : '-'}</span><span>心拍 ${me.hr ?? '-'}</span><span>ピッチ ${me.cad ?? '-'}</span><span>ストライド ${me.stride != null ? `${me.stride}cm` : '-'}</span><span>脚の疲労 ${me.leg != null ? `${me.leg}/10` : '-'}</span><span>走りやすさ ${me.form != null ? `${me.form}/10` : '-'}</span></div>
+      ${others.length ? `<small class="muted">ほかのシューズ (${others.length}足) の平均との差: ペース ${d('pace', '', true) || '-'}・心拍 ${d('hr', 'bpm') || '-'}・脚の疲労 ${d('leg', '') || '-'}</small>` : '<small class="muted">同じ種類でほかのシューズの記録が無いので、比べられません。</small>'}</div>`;
+  }).join('');
+  // 履き分け: これから 7 日の計画のうち、このシューズがおすすめになる日
+  const recs = plans.filter((p) => p.type !== 'rest').map((p) => ({ p, r: recommendShoe(p.type) })).filter((x) => x.r && x.r.shoe.id === s.id);
+  return `
+    <div class="card sh-hero">
+      ${shoeImg(s, true)}
+      <h2 style="margin:10px 0 4px">${esc(shoeName(s))}</h2>
+      <div class="sh-tags" style="justify-content:center">${pu.map((p) => `<span class="sh-tag">${PURPOSE_SHORT[p]}</span>`).join('') || '<span class="sh-tag none">用途未設定</span>'}<span class="sh-tag st">${st}</span></div>
+      <div class="hl-tiles" style="margin-top:12px"><div class="hl-tile"><small>累計</small><b class="num">${s.total_km.toFixed(1)}<small>km</small></b><span>${s.initial_km ? `登録前 ${s.initial_km}km を含む` : ''}</span></div>
+        <div class="hl-tile"><small>目安</small><b class="num">${s.limit_km}<small>km</small></b><span>${s.limit_km ? `${Math.round((s.total_km / s.limit_km) * 100)}%` : ''}</span></div>
+        <div class="hl-tile"><small>使った回数</small><b class="num">${h.total_runs}<small>回</small></b><span>${h.first_date ? `${md(h.first_date)}〜${md(h.last_date)}` : '記録なし'}</span></div></div>
+      ${wearBar(s)}
+      <p class="muted an-note" style="text-align:left">目安は登録した値で、靴の傷み具合を測ったものではありません。</p>
+      <button type="button" class="wide" id="shoe-edit" style="margin-top:8px">写真・用途・距離・使用感を編集</button>
+    </div>
+    <div class="seg sh-tabs"><a href="javascript:void 0" data-shtab="fit" class="on">相性</a><a href="javascript:void 0" data-shtab="hist">使用履歴</a><a href="javascript:void 0" data-shtab="feel">使用感</a></div>
+    <div class="sh-pane" data-pane="fit">
+      <div class="card"><h2>このシューズの傾向</h2>${fitRows || '<p class="muted">このシューズで、同じ種類のランが 2 本以上あると出ます。</p>'}
+        <p class="muted an-note">気温・コース・疲れ・練習の目的の違いも数字に入っています。シューズのせいだと決めつけず、傾向として見てください。</p></div>
+      <div class="card"><h2>履き分けの提案</h2>${recs.length ? recs.map(({ p, r }) => `<p class="hl-p"><b class="num">${md(p.date)}(${dow(p.date)})</b><span>${esc(PLAN_LABELS[p.type] || p.type)}${p.distance_m ? ` ${km(p.distance_m)}km` : ''} — ${esc(r.why)}</span></p>`).join('') : '<p class="muted">これから 7 日の計画で、このシューズがおすすめになる日はありません (用途・使用感・使用実績から選んでいます)。</p>'}</div>
+    </div>
+    <div class="sh-pane hidden" data-pane="hist">
+      <div class="card"><h2>月ごとの距離</h2>${h.months.length ? h.months.map((m) => `<div class="mbk"><span>${Number(m.month.slice(5))}月 <small class="muted">${m.month.slice(0, 4)}</small></span><i style="width:${(m.km / mmax) * 100}%"></i><b class="num">${m.km}km</b></div>`).join('') : '<p class="muted">記録なし</p>'}</div>
+      ${h.races.length ? `<div class="card"><h2>レースでの使用</h2>${h.races.map((r) => `<a class="hl-run" href="#/activities/${r.id}"><div class="hl-tx"><b>${esc(r.name)}</b><small class="num">${md(r.date)}・${r.km}km・${dur(r.time_s)}</small></div></a>`).join('')}</div>` : ''}
+      <div class="card hl-day"><h2 style="margin:8px 2px">使ったラン <small class="muted">${h.total_runs}本${h.total_runs > h.runs.length ? ` (新しい ${h.runs.length} 本)` : ''}</small></h2>${h.runs.map((a) => runRow({ ...a }, false)).join('') || '<p class="muted">このシューズを付けたランはありません。ランの詳細でシューズを選べます。</p>'}</div>
+    </div>
+    <div class="sh-pane hidden" data-pane="feel">
+      <div class="card"><h2>走った感覚</h2><div class="an-items">${SHOE_FEEL.map(([k, l]) => `<div class="an-it"><span class="an-j j-${f[k] == null ? 'hold' : 'ok'} num">${f[k] == null ? '未入力' : `${f[k]}/10`}</span><div><b>${l}</b></div></div>`).join('')}</div>
+        ${f.memo ? `<p class="hl-p"><span>${esc(f.memo)}</span></p>` : ''}<p class="muted an-note">「編集」から入れられます。未入力は未入力のまま (推測で埋めません)。</p></div>
+    </div>`;
 }
 
 /** シューズの相性: 同じ種類のランで、シューズごとに比べる (2 本以上走ったシューズだけ) */
@@ -3507,7 +3665,7 @@ async function editShoe(s) {
       <div class="chips" id="st-chips">${STATUS.map(([v, l]) => `<button type="button" class="chip ${(s.retired || 0) === v ? 'on' : ''}" data-stv="${v}">${l}</button>`).join('')}</div>
       <input type="hidden" name="retired" value="${s.retired || 0}">
     </div>`,
-    s.id ? { onDelete: async () => { await api(`/shoes/${s.id}`, { method: 'DELETE' }); route(); } } : {},
+    s.id ? { onDelete: async () => { await api(`/shoes/${s.id}`, { method: 'DELETE' }); if (location.hash.startsWith('#/shoes/')) location.hash = '#/shoes'; else route(); } } : {},
   );
   wireShoePhoto();
   const hint = () => {
@@ -3875,7 +4033,7 @@ async function route() {
       : tab === 'activities' ? (parts[1] ? await activityDetailView(parts[1]) : await activitiesView(params))
       : tab === 'weather' ? await weatherView()
       : tab === 'races' ? (parts[1] === 'find' ? await raceFindView() : parts[1] ? await raceDetailView(parts[1]) : await racesView())
-      : tab === 'shoes' ? await shoesView()
+      : tab === 'shoes' ? (parts[1] ? await shoeDetailView(parts[1]) : await shoesView(params))
       : tab === 'settings' ? await settingsView()
       : await homeView();
     view.innerHTML = html;

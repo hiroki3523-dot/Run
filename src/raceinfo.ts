@@ -9,6 +9,7 @@ import type { Env } from './types';
 export interface RaceBlock { name: string; start: string | null; close: string | null }
 export interface RaceCutoff { km: number; time: string; place: string | null }
 export interface RaceInfo {
+  pace_mode?: string; pace_adj?: number[]; start_loss_s?: number; fuel?: { km: number; item: string }[]; // 本人が決める値 (2026-11)
   venue?: string | null;          // 会場 (スタート・ゴール)
   start_time?: string | null;     // スタート時刻 (例 8:30)
   line_close?: string | null;     // 整列の締め切り (全体)
@@ -51,6 +52,12 @@ export function cleanRaceInfo(o: any): RaceInfo {
     race_date: typeof o.race_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.race_date.trim()) ? o.race_date.trim() : null,
     date_estimated: o.date_estimated === true ? true : undefined,
     my_block: str(o.my_block, 20), bib: str(o.bib, 20), source: str(o.source, 500), updated: str(o.updated, 20),
+    // レース詳細で本人が決める値 (ペース表の型・区間ごとの調整・スタートロス・補給)。
+    // 以前はここで落としていたため、保存しても残らなかった (2026-11 修正・監査 K-09)
+    ...(['even', 'negative', 'active', 'custom'].includes(o.pace_mode) ? { pace_mode: o.pace_mode } : {}),
+    ...(Array.isArray(o.pace_adj) ? { pace_adj: o.pace_adj.slice(0, 30).map((x: any) => (Number.isFinite(Number(x)) ? Math.max(-60, Math.min(60, Math.round(Number(x)))) : 0)) } : {}),
+    ...(Number.isFinite(Number(o.start_loss_s)) && o.start_loss_s != null ? { start_loss_s: Math.max(0, Math.min(1800, Math.round(Number(o.start_loss_s)))) } : {}),
+    ...(Array.isArray(o.fuel) ? { fuel: o.fuel.slice(0, 30).map((x: any) => ({ km: Math.round(Number(x?.km) * 10) / 10, item: str(x?.item, 30) ?? '' })).filter((x: any) => Number.isFinite(x.km) && x.km >= 0 && x.km <= 100 && x.item).sort((a: any, b: any) => a.km - b.km) } : {}),
   };
 }
 

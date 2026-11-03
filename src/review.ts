@@ -9,6 +9,8 @@ export interface ReviewRun {
   avg_hr: number | null;
   score: number | null;
   plan_id: number | null;
+  /** 紐づいた計画の種類 (表示用。2026-11 追加) */
+  plan_type?: string | null;
   /** evaluation.comments の先頭数件 */
   comments: string[];
   /** トレーニング負荷 (COROS の TL に近づけた簡易計算) */

@@ -369,7 +369,8 @@ api.get('/review', async (c) => {
   const load = async (a: string, b: string) => {
     const [runs, plans] = await Promise.all([
       c.env.DB.prepare(
-        `SELECT id, date, name, distance_m, moving_time_s, avg_hr, score, plan_id, evaluation, json_extract(evaluation, '$.role') AS role, COALESCE(json_extract(evaluation, '$.eff_type'), json_extract(evaluation, '$.type')) AS type
+        `SELECT id, date, name, distance_m, moving_time_s, avg_hr, score, plan_id, evaluation, json_extract(evaluation, '$.role') AS role, COALESCE(json_extract(evaluation, '$.eff_type'), json_extract(evaluation, '$.type')) AS type,
+           (SELECT p.type FROM plans p WHERE p.id = activities.plan_id) AS plan_type
          FROM activities WHERE date BETWEEN ? AND ? ORDER BY start_date_local`,
       ).bind(a, b).all<Omit<ReviewRun, 'comments'> & { evaluation: string | null }>(),
       c.env.DB.prepare('SELECT id, date, type, distance_m FROM plans WHERE date BETWEEN ? AND ?').bind(a, b).all<ReviewPlan>(),
@@ -1178,7 +1179,33 @@ api.get('/shoes', async (c) => {
   // 走った感覚の評価 (クッション・軽さ・反発・安定・自然さ・脚への負担・走りやすさ) と呼び名
   const { results: feels } = await c.env.DB.prepare("SELECT key, value FROM kv WHERE key LIKE 'shoefeel:%'").all<{ key: string; value: string }>();
   const fm = new Map(feels.map((f) => { try { return [Number(f.key.slice(9)), JSON.parse(f.value)] as const; } catch { return [0, null] as const; } }));
-  return c.json(results.map((r) => ({ ...r, feel: fm.get(r.id) ?? null })));
+  // 最後に使った日・使った回数 (一覧の表示用。2026-11 追加)
+  const { results: use } = await c.env.DB.prepare('SELECT shoe_id, MAX(date) AS last_date, MIN(date) AS first_date, COUNT(*) AS runs FROM activities WHERE shoe_id IS NOT NULL GROUP BY shoe_id').all<{ shoe_id: number; last_date: string; first_date: string; runs: number }>();
+  const um = new Map(use.map((u) => [u.shoe_id, u]));
+  return c.json(results.map((r) => ({ ...r, feel: fm.get(r.id) ?? null, last_date: um.get(r.id)?.last_date ?? null, first_date: um.get(r.id)?.first_date ?? null, runs: um.get(r.id)?.runs ?? 0 })));
+});
+
+/** シューズの詳細: 使ったラン・月ごとの距離・レースでの使用 (読み取りのみ。2026-11 追加) */
+api.get('/shoes/:id/history', async (c) => {
+  const id = Number(c.req.param('id'));
+  const shoe = await c.env.DB.prepare(`${SHOE_TOTAL_SQL} WHERE s.id = ?`).bind(id).first<any>();
+  if (!shoe) return c.notFound();
+  const { results: runs } = await c.env.DB.prepare(
+    `SELECT a.id, a.date, a.name, a.distance_m, a.moving_time_s, a.avg_hr, a.score, json_extract(a.evaluation, '$.role') AS role,
+       COALESCE(json_extract(a.evaluation, '$.eff_type'), json_extract(a.evaluation, '$.type')) AS type, p.type AS plan_type,
+       (SELECT r.name FROM races r WHERE r.activity_id = a.id LIMIT 1) AS race_name
+     FROM activities a LEFT JOIN plans p ON p.id = a.plan_id WHERE a.shoe_id = ? ORDER BY a.start_date_local DESC`,
+  ).bind(id).all<any>();
+  const feel = await kvGet(c.env, `shoefeel:${id}`);
+  const months = new Map<string, number>();
+  for (const r of runs) months.set(r.date.slice(0, 7), (months.get(r.date.slice(0, 7)) ?? 0) + r.distance_m / 1000);
+  return c.json({
+    shoe: { ...shoe, feel: feel ? JSON.parse(feel) : null },
+    runs: runs.slice(0, 60), total_runs: runs.length,
+    first_date: runs.length ? runs[runs.length - 1].date : null, last_date: runs[0]?.date ?? null,
+    months: [...months].sort((a, b) => a[0].localeCompare(b[0])).slice(-12).map(([month, km]) => ({ month, km: Math.round(km * 10) / 10 })),
+    races: runs.filter((r) => r.race_name || r.type === 'race').map((r) => ({ id: r.id, date: r.date, name: r.race_name || r.name, km: Math.round(r.distance_m / 10) / 100, time_s: r.moving_time_s })),
+  });
 });
 api.put('/shoes/:id/feel', async (c) => {
   const b = await c.req.json<Record<string, unknown>>();

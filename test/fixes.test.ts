@@ -52,3 +52,17 @@ describe('K-04 ランのレビューの大会は、ランの日から見た次�
     expect(an.ready.days).toBe(10);
   });
 });
+
+describe('K-09 レース詳細の補給・ペースの型・スタートロスが保存される', () => {
+  it('PUT /races の info の fuel・pace_mode・pace_adj・start_loss_s が残る (大会情報も消えない)', async () => {
+    const r = (await call(env, 'POST', '/races', { name: 'x', date: '2026-12-13', distance_m: 42195, goal_time_s: 11400, no_auto: true, info: { venue: '福岡市', start_time: '8:20' } })).json;
+    await call(env, 'PUT', `/races/${r.id}`, { ...r, info: { ...JSON.parse(r.info), fuel: [{ km: 25, item: '塩タブレット' }, { km: 10, item: 'ジェル' }, { km: 'x', item: 'だめ' }], pace_mode: 'negative', pace_adj: [0, -3, 99], start_loss_s: 75 }, no_auto: true });
+    const inf = JSON.parse((await call(env, 'GET', '/races')).json[0].info);
+    expect(inf.fuel).toEqual([{ km: 10, item: 'ジェル' }, { km: 25, item: '塩タブレット' }]);
+    expect(inf.pace_mode).toBe('negative');
+    expect(inf.pace_adj).toEqual([0, -3, 60]);
+    expect(inf.start_loss_s).toBe(75);
+    expect(inf.venue).toBe('福岡市');
+    expect(inf.start_time).toBe('8:20');
+  });
+});
