@@ -2070,6 +2070,12 @@ async function raceDetailView(id) {
       route();
     }));
     view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
+    view.querySelector('[data-rmng]')?.addEventListener('click', () => manageRace(r));
+    view.querySelector('#del-race').onclick = async () => {
+      if (!confirm(`「${r.name}」を削除しますか？ (持ち物のチェックなども消えます)`)) return;
+      await api(`/races/${r.id}`, { method: 'DELETE' });
+      location.hash = '#/races';
+    };
     wireRaceInfo(view, r);
   });
   const wireChecks = () => {
@@ -2125,7 +2131,7 @@ async function raceDetailView(id) {
   const upcoming = dleft != null;
   return `
     <div class="card hero">
-      <div class="row spread"><h2>${esc(r.name)}</h2><span><span class="rst rst-${r.status || 'confirmed'}">${RACE_STATUS.find(([k]) => k === (r.status || 'confirmed'))[1]}</span> <span class="badge">${esc(r.priority)}</span></span></div>
+      <div class="row spread"><h2>${esc(r.name)}</h2><span>${rstBtn(r)} <span class="badge">${esc(r.priority)}</span></span></div>
       <div class="row spread">
         <div>${dleft != null ? `<span class="big">${dleft}</span> 日` : '<span class="muted">終了</span>'}</div>
         <div class="muted num">${md(r.date)}・${km(r.distance_m)}km${r.goal_time_s ? `<br>目標 ${dur(r.goal_time_s)} (${pace(r.goal_time_s / (r.distance_m / 1000))}/km)` : ''}</div>
@@ -2153,7 +2159,8 @@ async function raceDetailView(id) {
         <button type="button" class="linkbtn" id="ck-reset" style="margin-top:10px">最初の一覧に戻す</button>
       </form>
     </div>` : ''}
-    <button id="edit-race" class="wide">レースの情報を編集</button>`;
+    <button id="edit-race" class="wide">レースの情報を編集</button>
+    <button id="del-race" class="danger wide" style="margin-top:10px">このレースを削除</button>`;
 }
 
 // ---- レースの状態と大会情報
@@ -2168,6 +2175,19 @@ function normUrl(v) {
   u = u.replace(/^(https?:\/\/)+/i, '').replace(/^\/+/, '');
   if (!/^[^\s/]+\.[^\s/]+/.test(u)) return null;
   return `${http ? 'http' : 'https'}://${u}`;
+}
+/** 状態のボタン (押すと 状態の変更・削除) */
+const rstBtn = (r) => { const k = r.status || 'confirmed'; return `<button type="button" class="rst rst-${k} rst-btn" data-rmng="${r.id}">${RACE_STATUS.find(([x]) => x === k)[1]}<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>`; };
+async function manageRace(r) {
+  if (!r) return;
+  const cur = r.status || 'confirmed';
+  const v = await openDialog(`<h2>${esc(r.name)}</h2>
+    <div class="field"><span class="lbl">状態</span><div class="race-st race-st-v">${RACE_STATUS.map(([k, l], i) => `<label class="seg-r"><input type="radio" name="status" value="${k}" ${cur === k ? 'checked' : ''}><span><b>${i + 1}</b>${l}</span></label>`).join('')}</div></div>
+    <p class="muted" style="font-size:12.5px;margin:4px 0 0">エントリー候補は計画やホームの目標に入りません。エントリー済み・出場決定は入ります。</p>`,
+    { onDelete: async () => { await api(`/races/${r.id}`, { method: 'DELETE' }); location.hash = '#/races'; route(); } });
+  if (!v || v.status === cur) return;
+  await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, status: v.status } });
+  route();
 }
 const RACE_STATUS = [['candidate', 'エントリー候補'], ['entered', 'エントリー済み'], ['confirmed', '出場決定']];
 const raceInfoOf = (r) => { try { return typeof r.info === 'string' ? JSON.parse(r.info) : r.info || {}; } catch { return {}; } };
@@ -2442,7 +2462,11 @@ async function racesView() {
   const t = today();
   setTimeout(() => {
     view.querySelector('#add-race').onclick = () => editRace({ priority: 'A', distance_m: 42195 });
-    view.querySelectorAll('[data-race]').forEach((el) => (el.onclick = () => (location.hash = `#/races/${el.dataset.race}`)));
+    view.querySelectorAll('[data-race]').forEach((el) => (el.onclick = (e) => {
+      const m = e.target.closest('[data-rmng]');
+      if (m) return manageRace(races.find((x) => x.id === Number(m.dataset.rmng)));
+      location.hash = `#/races/${el.dataset.race}`;
+    }));
   });
   const row = (r) => {
     const goalPace = r.goal_time_s ? pace(r.goal_time_s / (r.distance_m / 1000)) : null;
@@ -2450,7 +2474,7 @@ async function racesView() {
     return `<li data-race="${r.id}" style="cursor:pointer">
       <div class="row spread"><span><span class="badge">${esc(r.priority)}</span> ${esc(r.name)}</span><span class="muted num">${r.date} ›</span></div>
       <div class="muted num">${km(r.distance_m, 3)}km・目標 ${dur(r.goal_time_s)}${goalPace ? ` (${goalPace}/km)` : ''}${r.date >= t ? `・あと${daysBetween(t, r.date)}日` : ''}</div>
-      ${entryLine(r, t)}
+      <div class="row spread rl-foot">${entryLine(r, t) || '<span></span>'}${r.date >= t ? rstBtn(r) : ''}</div>
       ${r.result_time_s ? `<div class="num">結果 <strong>${dur(r.result_time_s)}</strong>${diff != null ? ` <span class="score ${diff <= 0 ? 'good' : 'bad'}">${diff <= 0 ? '-' : '+'}${dur(Math.abs(diff))}</span>` : ''}${r.activity_id ? ` <a href="#/activities/${r.activity_id}">記録</a>` : ''}</div>` : ''}
     </li>`;
   };
