@@ -75,5 +75,10 @@ describe('大会の写真 (自分で選んだもの)', () => {
     expect(await put('https://example.com/a.jpg')).toBeUndefined();
     expect(await put('data:image/jpeg;base64,' + 'A'.repeat(400_000))).toBeUndefined();
     expect(await put(null)).toBeUndefined();
+    // 見出しの画像の選び方は決まった値だけ
+    await call(env, 'PUT', `/races/${r.id}`, { ...r, info: { hero: 'coast' }, no_auto: true });
+    expect(JSON.parse((await call(env, 'GET', '/races')).json[0].info).hero).toBe('coast');
+    await call(env, 'PUT', `/races/${r.id}`, { ...r, info: { hero: '<script>' }, no_auto: true });
+    expect(JSON.parse((await call(env, 'GET', '/races')).json[0].info).hero).toBeUndefined();
   });
 });

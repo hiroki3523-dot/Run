@@ -1426,3 +1426,21 @@ body { padding-bottom: calc(120px + env(safe-area-inset-bottom)); } /* 下の固
 .rd-hero { position: relative; }
 .rd-photo { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: rgb(255 255 255 / .2); color: #fff; cursor: pointer; }
 .rd-photo svg { width: 18px; height: 18px; }
+/* ---- シューズの編集: ボタンを小さく、使用感を見つけやすく (2026-11) ---- */
+.sm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sm-chips .chip.mini { min-height: 34px; padding: 5px 12px; font-size: 13px; }
+.shoe-photo .shoe-img.big { height: 120px; }
+.shoe-photo .row .btn, .shoe-photo .row button { min-height: 38px; padding: 6px 12px; font-size: 13px; }
+.shoe-feel { border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 14px; padding: 10px 12px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.sf-sum { display: flex; justify-content: space-between; align-items: center; gap: 8px; list-style: none; }
+.sf-sum::-webkit-details-marker { display: none; }
+.sf-sum b { font-size: 14px; color: var(--accent); }
+.sf-sum b::before { content: "▸ "; } .shoe-feel[open] .sf-sum b::before { content: "▾ "; }
+.sf-sum .muted { font-size: 12px; }
+/* 大会の見出しの景色 (自動で作った SVG)。左は暗くして文字を読みやすく */
+.hero.has-art { background-image: linear-gradient(90deg, rgb(10 12 38 / .88), rgb(10 12 38 / .55) 45%, rgb(10 12 38 / .05) 80%), var(--art); background-size: cover; background-position: right center; }
+.hero.has-art .rb { background: rgb(255 255 255 / .16); }
+.hero.has-art .rb.rb-main { background: #fff; color: #3a2bd9; }
+.hero.has-img { background-image: linear-gradient(90deg, rgb(10 12 38 / .85), rgb(10 12 38 / .45) 55%, rgb(10 12 38 / .15)), var(--img); }
+.art-th { display: block; width: 44px; height: 28px; border-radius: 6px; background-size: cover; background-position: right center; }
+.hm-race.has-art, .hm-race.has-img { background-image: linear-gradient(90deg, rgb(10 12 38 / .92), rgb(10 12 38 / .6) 50%, rgb(10 12 38 / .15)), var(--art, var(--img)); background-size: cover; background-position: right center; }
