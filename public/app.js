@@ -2158,6 +2158,17 @@ async function raceDetailView(id) {
 
 // ---- レースの状態と大会情報
 const searchUrl = (name) => `https://www.google.com/search?q=${encodeURIComponent(`${String(name).replace(/\s*\(.*?\)\s*/g, '').replace(/20\d\d$/, '')} 公式サイト`)}`;
+/** 入力された URL を整える (https:// が無ければ付ける・二重になっていれば 1 つに・貼り付けた文章から URL だけ取り出す) */
+function normUrl(v) {
+  let u = String(v || '').trim();
+  if (!u) return null;
+  const m = u.match(/https?:\/\/[^\s"'<>、。）)]+/g);
+  if (m) u = m[m.length - 1];
+  const http = /^(https?:\/\/)*http:\/\//i.test(u) && !/^https:/i.test(u);
+  u = u.replace(/^(https?:\/\/)+/i, '').replace(/^\/+/, '');
+  if (!/^[^\s/]+\.[^\s/]+/.test(u)) return null;
+  return `${http ? 'http' : 'https'}://${u}`;
+}
 const RACE_STATUS = [['candidate', 'エントリー候補'], ['entered', 'エントリー済み'], ['confirmed', '出場決定']];
 const raceInfoOf = (r) => { try { return typeof r.info === 'string' ? JSON.parse(r.info) : r.info || {}; } catch { return {}; } };
 const fmtD = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? `${md(d)}(${dow(d)})` : esc(d || ''));
@@ -2241,7 +2252,7 @@ function wireRaceInfo(root, r) {
     const k = b.dataset.ri, inf = raceInfoOf(r);
     if (k === 'fetch') {
       let url = r.url;
-      if (!url) { url = prompt('公式サイトの URL (大会要項のページがおすすめ)', 'https://'); if (!url || !/^https?:\/\/.+\..+/.test(url)) return; }
+      if (!url) { url = normUrl(prompt('公式サイトの URL (大会要項のページがおすすめ。https:// は無くても大丈夫)', '')); if (!url) return; }
       return run({ url }, b);
     }
     if (k === 'paste') {
@@ -2374,7 +2385,7 @@ async function editRace(r) {
     <h2>${r.id ? 'レースを編集' : 'レースを追加'}</h2>
     <label>大会名<input name="name" value="${esc(r.name)}" required></label>
     <div class="field"><span class="lbl">状態</span><div class="pf-seg race-st" style="--n:3">${RACE_STATUS.map(([k, l]) => `<label class="seg-r"><input type="radio" name="status" value="${k}" ${(r.status || 'confirmed') === k ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
-    <label>公式サイト (任意)<input name="url" type="url" inputmode="url" placeholder="https://..." value="${esc(r.url || '')}"></label>
+    <label>公式サイト (任意)<input name="url" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="例: fukuoka-marathon.com" value="${esc(r.url || '')}"></label>
     <div class="grid2">
       <label>日付<input type="date" name="date" value="${r.date || ''}" required></label>
       <label>優先度<select name="priority">${['A', 'B', 'C'].map((p) => `<option ${r.priority === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
@@ -2400,7 +2411,7 @@ async function editRace(r) {
     result_time_s: parseDur(values.result),
     notes: values.notes,
     status: values.status || 'confirmed',
-    url: values.url || null,
+    url: normUrl(values.url),
     info: raceInfoOf(r),
   };
   await api(r.id ? `/races/${r.id}` : '/races', { method: r.id ? 'PUT' : 'POST', body });
