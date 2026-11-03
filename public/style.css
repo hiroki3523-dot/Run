@@ -1505,3 +1505,4 @@ a.sc-rec { color: var(--text); text-decoration: none; } a.sc-rec:active { opacit
 .sc-scroll .sc-fix tr > :not(:first-child) { width: 86px; min-width: 86px; max-width: 86px; }
 .sc-scroll .sc-fix tr > :first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); width: 4.8em; min-width: 4.8em; }
 .sc-scroll .sc-nm { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.sc-off { display: inline-block; margin-top: 3px; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 600; line-height: 1.5; color: var(--muted); border: 1px solid var(--line); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }

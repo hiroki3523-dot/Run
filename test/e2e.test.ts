@@ -455,6 +455,8 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       { shoe_id: 1002, name: 'Nike ボメロ18', n: 38, km: 482, pace: 334, hr: 151.8, cad: 175.1, stride: 106, form: 7, leg: 4, next_leg: null, breath: 2, gct: null, pain_n: 0 },
       { shoe_id: 1003, name: 'Nike ズームフライ 6', n: 26, km: 376, pace: 312, hr: 157.1, cad: 177.3, stride: null, form: null, leg: null, next_leg: null, breath: null, gct: null, pain_n: 1 },
       { shoe_id: 1004, name: 'テストシューズA', n: 4, km: 30, pace: 330, hr: 150, cad: 176, stride: null, form: null, leg: null, next_leg: null, breath: null, gct: null, pain_n: 0 },
+      // レース用に設定した靴をジョグで使った記録 (いちばん速い) → おすすめにしない・後ろに並べる
+      { shoe_id: near.id, name: 'Nike Pegasus 41', n: 3, km: 20, pace: 300, hr: 140, cad: 180, stride: null, form: 9, leg: 2, next_leg: null, breath: null, gct: null, pain_n: 0 },
     ] };
     await page.route('**/api/shoes/compare', (r: any) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(cmp) }));
     try {
@@ -483,15 +485,18 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('Nike ズームフライ 6');
       await page.click('[data-scall]');
       // 4 足以上は横にスライド: 列の幅は固定で、セルが重ならない・ページは横にはみ出さない
-      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.length)).toBe(4);
+      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.length)).toBe(5);
       const cells = await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix tr:nth-child(2) td', (els: HTMLElement[]) => els.map((e) => e.getBoundingClientRect().width));
       expect(Math.min(...cells.slice(1))).toBeGreaterThanOrEqual(80);
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
       if (SHOTS) await (await page.$('#shoe-cmp')).screenshot({ path: `${SHOTS}/11f-shoe-compat-all.png` });
       // 並び: 使用回数の順 / 観点の順 (スピード寄り → 速い順)
-      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ズームフライ 6', 'Nike ボメロプラス', 'テストシューズA', 'Nike ボメロ18']);
+      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ズームフライ 6', 'Nike ボメロプラス', 'テストシューズA', 'Nike ボメロ18', 'Nike Pegasus 41']);
+      expect(await page.$eval('#shoe-cmp > .sc-scroll > table.sc-fix th:last-child .sc-off', (e: Element) => e.textContent)).toBe('レース本番用');
+      // 用途外の靴には緑の印を付けない (ペース 5:00 がいちばん速いが、緑はズームフライの 5:12)
+      expect(await page.$eval('#shoe-cmp > .sc-scroll > table.sc-fix tr:nth-child(2) .sc-best', (e: Element) => e.textContent)).toBe('5:12');
       await page.click('[data-ord="n"]');
-      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6', 'テストシューズA']);
+      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6', 'テストシューズA', 'Nike Pegasus 41']);
     } finally {
       await page.unroute('**/api/shoes/compare');
       await call(env, 'DELETE', `/shoes/${near.id}`);

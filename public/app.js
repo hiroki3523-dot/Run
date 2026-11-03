@@ -3864,6 +3864,8 @@ const FIT_CRIT = [
   ['easy', '疲れにくい', '<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6z"/>', (r) => r.leg ?? r.next_leg, true, (r) => (r.leg != null ? `脚の疲労 ${r.leg}/10` : `翌朝の脚 ${r.next_leg}/10`)],
   ['speed', 'スピード寄り', '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>', (r) => r.pace, true, (r) => `平均 ${pace(r.pace)}/km`],
 ];
+/** 練習の種類ごとに、おすすめの対象にする用途 (シューズの編集で設定した用途)。用途が未設定の靴は対象にする */
+const GROUP_PURPOSE = { easy: ['easy', 'recovery', 'long'], tempo: ['pace', 'speed', 'race'], long: ['long', 'easy', 'pace'], interval: ['speed', 'pace', 'race'], race: ['race', 'speed', 'pace'] };
 async function loadShoeCompare() {
   const box = document.getElementById('shoe-cmp');
   if (!box) return;
@@ -3879,19 +3881,25 @@ async function loadShoeCompare() {
     const C = FIT_CRIT.find((c) => c[0] === crit);
     // 並び: 観点の良い順 (値の無い靴は後ろに、使用回数順) / 使用回数順
     const byCrit = (a, b) => { const x = C[3](a), y = C[3](b); if (x == null || y == null) return x == null && y == null ? b.n - a.n : x == null ? 1 : -1; return (C[4] ? x - y : y - x) || b.n - a.n; };
-    const rowsAll = [...data[cur]].sort(order === 'crit' ? byCrit : (a, b) => b.n - a.n);
+    // 用途がこの練習に合わない靴 (例: レース用をジョグで使った記録) は、表には出すが、おすすめ・緑の印の対象から外して後ろに並べる
+    const purp = (r) => purposesOf(SHOES.find((x) => x.id === r.shoe_id)?.purpose);
+    const fits = (r) => { const p = purp(r); return !p.length || p.some((x) => GROUP_PURPOSE[cur].includes(x)); };
+    const offTag = (r) => (fits(r) ? '' : `<span class="sc-off">${esc(purp(r).map((x) => PURPOSE_LABELS[x]).join('・'))}用</span>`);
+    const sorter = order === 'crit' ? byCrit : (a, b) => b.n - a.n;
+    const rowsAll = [...data[cur]].sort((a, b) => (fits(b) - fits(a)) || sorter(a, b));
+    const fitRows = rowsAll.filter(fits);
     const rows = all ? rowsAll : rowsAll.slice(0, 3);
-    const best = (k, low) => { const v = rowsAll.map((r) => r[k]).filter((x) => x != null); return v.length >= 2 ? (low ? Math.min(...v) : Math.max(...v)) : null; };
-    const mark = (r, k, low) => (r[k] != null && r[k] === best(k, low) ? ' class="sc-best"' : '');
+    const best = (k, low) => { const v = fitRows.map((r) => r[k]).filter((x) => x != null); return v.length >= 2 ? (low ? Math.min(...v) : Math.max(...v)) : null; };
+    const mark = (r, k, low) => (fits(r) && r[k] != null && r[k] === best(k, low) ? ' class="sc-best"' : '');
     // おすすめ: 選んだ観点でいちばん良いシューズ (2 足以上に値があるときだけ)
-    const vals = rowsAll.filter((r) => C[3](r) != null);
+    const vals = fitRows.filter((r) => C[3](r) != null);
     const top = vals.length >= 2 ? [...vals].sort((a, b) => (C[4] ? C[3](a) - C[3](b) : C[3](b) - C[3](a)))[0] : null;
     const tie = top && vals.filter((r) => C[3](r) === C[3](top)).length > 1;
     const rec = top && !tie
       ? `<a class="sc-rec" href="#/shoes/${top.shoe_id}"><span class="sc-rec-l">結論</span><div><small>おすすめ・${C[1]}</small><b>${esc(top.name)}</b><span class="muted num">${C[5](top)} (${GROUP_LABEL[cur]}・${top.n}本)</span></div><span class="pm-chev">›</span></a>`
-      : `<div class="sc-rec none"><span class="sc-rec-l">結論</span><div><small>${C[1]}</small><span class="muted">${tie ? '差がありません' : 'この観点の記録がある靴が 2 足未満のため、比べられません'}</span></div></div>`;
+      : `<div class="sc-rec none"><span class="sc-rec-l">結論</span><div><small>${C[1]}</small><span class="muted">${tie ? '差がありません' : `この練習に合う用途の靴で、この観点の記録があるものが 2 足未満のため、比べられません`}</span></div></div>`;
     const wide = rows.length > 3; // 4 足以上は横にスライド (列の幅を固定して、名前・数字が重ならないように)
-    const th = rows.map((r) => `<th><span class="sc-img">${img(r.shoe_id)}</span><span class="sc-nm">${esc(r.name)}</span><small>${r.n}本・${r.km}km</small></th>`).join('');
+    const th = rows.map((r) => `<th><span class="sc-img">${img(r.shoe_id)}</span><span class="sc-nm">${esc(r.name)}</span><small>${r.n}本・${r.km}km</small>${offTag(r)}</th>`).join('');
     const tr = (label, cells) => `<tr><td>${label}</td>${cells}</tr>`;
     box.innerHTML = `<div class="seg sc-tabs">${keys.map((k) => `<a href="javascript:void 0" data-sg="${k}" class="${k === cur ? 'on' : ''}">${GROUP_LABEL[k]}</a>`).join('')}</div>
       ${rec}
@@ -3912,7 +3920,7 @@ async function loadShoeCompare() {
       ${tr('翌朝の脚', rows.map((r) => `<td${mark(r, 'next_leg', true)}>${f(r.next_leg, '/10')}</td>`).join(''))}
       ${tr('痛み (3以上)', rows.map((r) => `<td>${r.pain_n}回</td>`).join(''))}</table></div></details>
       ${rowsAll.length > 3 ? `<button type="button" class="linkbtn sc-all" data-scall>${all ? '上の 3 足だけにする' : `ほかの ${rowsAll.length - 3} 足も表示`}</button>` : ''}
-      <p class="muted an-note">同じ種類のランだけで比べています。速さより「自然に走れるか (走りやすさ)」「疲れが少ないか (脚・翌朝の脚)」を重く見てください。緑はその項目でいちばん良いシューズ。主観は、ふりかえりと毎朝の体調から。</p>`;
+      <p class="muted an-note">同じ種類のランだけで比べています。速さより「自然に走れるか (走りやすさ)」「疲れが少ないか (脚・翌朝の脚)」を重く見てください。緑はその項目でいちばん良いシューズ。主観は、ふりかえりと毎朝の体調から。用途がこの練習に合わない靴 (「〜用」の印) は、おすすめと緑の印の対象から外しています。用途はシューズの編集で変えられます。</p>`;
     box.querySelectorAll('[data-sg]').forEach((a) => (a.onclick = () => { cur = a.dataset.sg; draw(); }));
     box.querySelectorAll('[data-crit]').forEach((b) => (b.onclick = () => { crit = b.dataset.crit; draw(); }));
     box.querySelectorAll('[data-ord]').forEach((b) => (b.onclick = () => { order = b.dataset.ord; draw(); }));
