@@ -208,7 +208,8 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect(await page.textContent('#view')).toContain('この用途の使用中のシューズはありません');
     const s = (await call(env, 'GET', '/shoes')).json.find((x: any) => x.name === 'テストシューズA');
     await open(`#/shoes/${s.id}`, '11b-shoe-detail');
-    expect(await page.textContent('.sh-hero')).toContain('使った回数');
+    expect(await page.textContent('.sh-head')).toContain('使用回数');
+    expect(await page.textContent('.sh-head')).toContain('補正を含む');
     await page.click('[data-shtab="hist"]');
     expect(await page.locator('.sh-pane[data-pane="hist"] .hl-run').count()).toBeGreaterThanOrEqual(4);
     await page.click('[data-shtab="feel"]');
@@ -223,6 +224,19 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect(rows.length).toBeGreaterThanOrEqual(3);
     for (let i = 1; i < 3; i++) expect(rows[i].top).toBeGreaterThan(rows[i - 1].top + 5);
     for (const r of rows) expect(r.right).toBeLessThanOrEqual(390);
+  }, 30000);
+
+  it('ホーム: 今日のトレーニングが一番上、今週の距離・次のレースが続く', async () => {
+    await open('#/');
+    const order = await page.$$eval('#view > .card:not(.error)', (els: Element[]) => els.map((e) => e.className));
+    expect(order[0]).toContain('hm-today');
+    expect(order[1]).toContain('hm-week');
+    expect(await page.textContent('.hm-race')).toContain('テストマラソン');
+    // 最後の行が下の固定メニューに隠れない (いちばん下までスクロールしたとき)
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(300);
+    const gap = await page.evaluate(() => { const last = [...document.querySelectorAll('#view > *')].pop()!.getBoundingClientRect(); const nav = document.querySelector('nav')!.getBoundingClientRect(); return nav.top - last.bottom; });
+    expect(gap).toBeGreaterThanOrEqual(0);
   }, 30000);
 
   it('ナビゲーション: 下のメニューで各画面に移れる', async () => {

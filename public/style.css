@@ -1372,3 +1372,50 @@ h3.sect { margin: 18px 4px 8px; font-size: 15px; font-weight: 700; }
 .sh-fit { padding: 10px 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
 .sh-fit:first-of-type { border-top: 0; }
 .sh-fitg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 8px; font-size: 12.5px; }
+/* ---- 画面の仕上げ (2026-11 UI 改善指示書 v2) ---- */
+body { padding-bottom: calc(120px + env(safe-area-inset-bottom)); } /* 下の固定メニューに最後の行が隠れないように */
+.rd-tabs { top: calc(env(safe-area-inset-top) + 66px); }
+.hm-today { border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 16%, var(--surface)), var(--surface) 70%); }
+.hm-today h2 small { font-size: 13px; font-weight: 600; margin-left: 4px; }
+.hm-link { display: inline-block; margin-top: 10px; font-size: 13px; font-weight: 700; color: var(--accent); text-decoration: none; }
+.hm-week { display: block; text-decoration: none; color: var(--text); }
+.hm-week b { font-size: 14px; }
+.hm-week-n { display: flex; align-items: baseline; gap: 6px; margin: 6px 0 8px; }
+.hm-week-n b { font-size: 28px; font-weight: 800; }
+.hm-week-n small { color: var(--muted); }
+.hm-week-n .muted { font-size: 13px; margin-left: 4px; }
+.hm-race { display: block; text-decoration: none; color: var(--text); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.hm-rname { display: block; font-size: 18px; margin: 4px 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hm-rrow { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; }
+.hm-days { font-size: 38px; font-weight: 800; line-height: 1; }
+.hm-rgoal { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-align: right; }
+.hm-rgoal b { font-size: 16px; }
+.hm-rgoal small { font-size: 11.5px; }
+.hm-acc summary { font-weight: 700; }
+.news-more summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--accent); padding: 10px 0 4px; list-style: none; }
+.news-more summary::-webkit-details-marker { display: none; }
+.rd-hero { padding: 16px 18px; }
+.rd-hero .rl-hname { font-size: 19px; }
+.rd-hero .rl-hrow { margin-top: 6px; }
+.rd-hero .rl-hrow .big { font-size: 36px; }
+.rd-hero .rl-hgoal b { font-size: 18px; }
+.rd-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 12px; }
+.rd-tiles .hl-tile { background: var(--surface); border: 1px solid var(--line); }
+.sh-head-top { display: flex; gap: 14px; align-items: center; }
+.sh-head-top .shoe-img { width: 96px; height: 72px; flex: none; background: #fff; }
+.sh-head-top .shoe-img img { object-fit: contain; }
+.sh-head-tx { min-width: 0; }
+.sh-title { display: block; margin: 0 0 4px; font-size: 18px; font-weight: 800; color: var(--text); overflow-wrap: anywhere; }
+.sh-concl { border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.sh-concl small { color: var(--accent); font-weight: 700; font-size: 12px; }
+.sh-concl p { margin: 4px 0 0; font-size: 14.5px; line-height: 1.55; }
+.sh-recs-lead { margin: 0 0 4px; font-weight: 700; font-size: 14px; }
+.sh-feel { display: grid; grid-template-columns: 9.5em minmax(0, 1fr) 3.2em; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); font-size: 13.5px; }
+.sh-feel:first-of-type { border-top: 0; }
+.sh-feel > .muted:last-child { grid-column: 2 / 4; }
+.sh-fbar { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--text) 8%, transparent); overflow: hidden; }
+.sh-fbar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.sh-feel b { text-align: right; } .sh-feel b small { color: var(--muted); font-size: 11px; }
+.sh-hd { flex: none; width: 3.4em; font-size: 12.5px; font-weight: 700; display: flex; flex-direction: column; }
+.sh-hd small { color: var(--muted); font-weight: 500; }
+.shoe-img { background: #f2f3f7; } .shoe-img svg { color: #8a8f9c; }
