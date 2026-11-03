@@ -464,11 +464,13 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       expect(alert).toContain('交換の目安が近いシューズ');
       expect(alert).toContain('残り60km');
       expect(await page.$eval('.sa-list a.sa', (a: HTMLAnchorElement) => a.getAttribute('href'))).toBe(`#/shoes/${near.id}`);
-      expect(await page.$eval('#guess', (e: Element) => e.textContent)).toMatch(/用途をまとめて設定 \(\d+足\)/);
+      // 「用途をまとめて設定」は出さない (自分で設定した用途を名前からの推定で上書きしないため)
+      expect(await page.$('#guess')).toBeNull();
       await page.waitForSelector('#shoe-cmp .sc-rec');
       await (await page.$('#shoe-cmp')).scrollIntoViewIfNeeded();
       if (SHOTS) await (await page.$('#shoe-cmp')).screenshot({ path: `${SHOTS}/11e-shoe-compat.png` });
       expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('Nike ボメロプラス');
+      expect(await page.$eval('#shoe-cmp a.sc-rec', (a: HTMLAnchorElement) => a.getAttribute('href'))).toBe('#/shoes/1001');
       // 3 足・名前は省略しない・横にはみ出さない
       expect(await page.$$eval('#shoe-cmp .sc-fix:not(.sc-more *) th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6']);
       const over = await page.$eval('#shoe-cmp', (e: HTMLElement) => e.scrollWidth - e.clientWidth);
