@@ -205,3 +205,19 @@ describe('シューズ', () => {
     noSyncCalls();
   });
 });
+
+describe('COROS のワークアウト区間の調査 (読み取りのみ)', () => {
+  it('COROS 以外のランは 404、COROS のランは外に出られなくてもエラーを返すだけで記録は変わらない', async () => {
+    const id = await addRun(env, { date: '2026-10-26', km: 5, segs: [{ km: 5, pace: 330 }] });
+    const before = sqlite.prepare('SELECT data FROM ext_activities WHERE id = ?').get(id).data;
+    const evBefore = sqlite.prepare('SELECT evaluation FROM activities WHERE id = ?').get(id).evaluation;
+    const r = await call(env, 'GET', `/activities/${id}/coros-segments`);
+    expect(r.status).toBe(200);
+    expect(r.json.saved_laps).toEqual([]);
+    expect(typeof (r.json.lap_api_error ?? r.json.fit_error)).toBe('string');
+    expect(sqlite.prepare('SELECT data FROM ext_activities WHERE id = ?').get(id).data).toBe(before);
+    expect(sqlite.prepare('SELECT evaluation FROM activities WHERE id = ?').get(id).evaluation).toBe(evBefore);
+    sqlite.exec(`INSERT INTO activities (id, date, start_date_local, name, sport_type, distance_m, moving_time_s, elapsed_time_s) VALUES (123, '2026-10-26', '2026-10-26T07:00:00Z', 's', 'Run', 5000, 1500, 1500)`);
+    expect((await call(env, 'GET', '/activities/123/coros-segments')).status).toBe(404);
+  });
+});

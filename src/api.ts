@@ -11,11 +11,12 @@ import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { analyzeRun, groupOf, type Snapshot } from './analysis';
 import { cleanText, legacyText } from './evaluate';
+import { probeFit, probeLapJson } from './fitprobe';
 import { runningNews } from './news';
 import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
 import { autoFillRace, cleanRaceInfo, entryHistory, extractRaceInfo } from './raceinfo';
 import { findOfficialSite } from './sitefind';
-import { corosDisconnect, getAuth as getCorosAuth, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
+import { corosDisconnect, getAuth as getCorosAuth, corosStatus, corosTool, extractJson, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns, timeForVdot } from './insights';
 import { buildAptitude } from './aptitude';
 import { applyDerived } from './derive-apply';
@@ -858,6 +859,30 @@ api.get('/coros/debug', async (c) => {
   const args = JSON.parse(c.req.query('args') ?? '{}');
   const r = await corosTool(c.env, tool, args);
   return c.json({ text: r.text.slice(0, 6000), structured: r.structured });
+});
+
+/**
+ * 【調査用・読み取りのみ】このランの COROS のデータに、ワークアウトの区間 (アップ・メイン・ダウン・レスト) の情報があるかを調べる。
+ * ラップの API と FIT ファイルを読み直して形をまとめるだけで、保存・取り込み・評価は何も変えない。
+ * COROS の FIT のダウンロードは 1 日の回数に上限があるので、ボタンを押したときだけ動く。
+ */
+api.get('/activities/:id/coros-segments', async (c) => {
+  const id = Number(c.req.param('id'));
+  const ext = await c.env.DB.prepare('SELECT ext_id, json_extract(data, \'$.act.sport_type\') AS st, json_extract(data, \'$.act.laps\') AS laps FROM ext_activities WHERE id = ?').bind(id).first<{ ext_id: string; st: string; laps: string | null }>();
+  if (!ext) return c.json({ error: 'COROS から取り込んだランではありません' }, 404);
+  const sportType = ext.st === 'TrailRun' ? 102 : ext.st === 'VirtualRun' ? 101 : 100;
+  const out: Record<string, unknown> = { labelId_suffix: ext.ext_id.slice(-4), saved_laps: (() => { try { return (JSON.parse(ext.laps || '[]') as any[]).map((l) => ({ dist_m: Math.round(l.distance), time_s: l.moving_time })); } catch { return null; } })() };
+  try {
+    const r = await corosTool(c.env, 'queryActivityLapData', { labelId: ext.ext_id, sportType });
+    out.lap_api = probeLapJson(extractJson(r.text) ?? r.structured);
+  } catch (e) { out.lap_api_error = (e as Error).message.slice(0, 200); }
+  try {
+    const urls = await corosTool(c.env, 'queryActivityFitFileDownloadUrls', { labelId: ext.ext_id, sportType });
+    const link = (urls.text.match(/https?:\/\/[^\s)"'\]<>]+/g) ?? [])[0] ?? JSON.stringify(urls.structured ?? '').match(/https?:\/\/[^\s)"'\]<>\\]+/)?.[0];
+    if (!link) out.fit_error = 'FIT のダウンロード先が見つかりません';
+    else { const res = await fetch(link); out.fit = res.ok ? probeFit(await res.arrayBuffer()) : { error: `FIT の取得に失敗 (${res.status})` }; }
+  } catch (e) { out.fit_error = (e as Error).message.slice(0, 200); }
+  return c.json(out);
 });
 
 /** 評価の基準をデータから決めて保存 (自動のとき) */

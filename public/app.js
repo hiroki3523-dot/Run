@@ -2205,6 +2205,17 @@ async function activityDetailView(id) {
       set('st-cad', sr.avg.cad ? `${sr.avg.cad}` : null);
       set('st-cal', sr.calories ? `${Math.round(sr.calories)}` : null);
     }).catch(() => { const box = view.querySelector('#series'); if (box) box.innerHTML = ''; });
+    const sp = view.querySelector('#seg-probe');
+    if (sp) sp.onclick = async () => {
+      const box = view.querySelector('#seg-out');
+      sp.disabled = true; box.innerHTML = '<p class="muted">調べています (20 秒ほど)…</p>';
+      try {
+        const txt = segProbeText(a, await api(`/activities/${id}/coros-segments`));
+        box.innerHTML = `<pre class="seg-pre">${esc(txt)}</pre><button type="button" id="seg-copy">結果をコピー</button>`;
+        box.querySelector('#seg-copy').onclick = async (e) => { try { await navigator.clipboard.writeText(txt); e.target.textContent = 'コピーしました'; } catch { e.target.textContent = 'コピーできませんでした (長押しで選択してください)'; } };
+      } catch (err) { box.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+      sp.disabled = false;
+    };
     view.querySelector('#reeval').onclick = async (e) => {
       e.target.disabled = true;
       await api(`/activities/${id}/reevaluate`, { method: 'POST' });
@@ -2285,7 +2296,39 @@ async function activityDetailView(id) {
         <button type="button" class="choice ${a.plan_id == null ? 'on' : ''}" data-pc=""><b>メニューなし (フリーラン)</b><small>計画とは比べず、単独で評価します</small></button>
       </div>
       <button id="reeval">再評価</button>
-    </div>`;
+    </div>
+    ${a.coros ? `<details class="card rv-acc seg-probe"><summary>COROS のワークアウト区間を調べる (調査用)</summary><div class="rv-acc-b">
+      <p class="muted" style="font-size:12.5px;margin-top:0">このランの COROS のデータに、アップ・メイン・ダウン・レストの区間の情報が入っているかを調べます。読み取るだけで、記録・評価は変わりません。FIT のダウンロードを 1 回使います。</p>
+      <button type="button" id="seg-probe">調べる</button><div id="seg-out"></div></div></details>` : ''}`;
+}
+
+/** 区間の調査結果を、読める文章にする (コピーして送ってもらう用) */
+function segProbeText(a, r) {
+  const L = [`【STRIDE 区間調査】${a.date} ${km(a.distance_m, 2)}km ${dur(a.moving_time_s)}`];
+  if (r.error) return L.concat(`エラー: ${r.error}`).join('\n');
+  const sl = r.saved_laps || [];
+  L.push(`保存済みのラップ: ${sl.length} 本 (${sl.slice(0, 12).map((l) => `${(l.dist_m / 1000).toFixed(2)}km/${dur(l.time_s)}`).join(', ')}${sl.length > 12 ? ' …' : ''})`);
+  const la = r.lap_api;
+  if (r.lap_api_error) L.push(`ラップ API: エラー ${r.lap_api_error}`);
+  else if (la) {
+    L.push(`ラップ API: 最上位の項目 [${la.keys.join(', ')}] / グループ ${la.groups.length} 個 / 取り込みで使ったのは ${la.used_by_import == null ? '-' : `グループ${la.used_by_import + 1}`}`);
+    la.groups.forEach((g, i) => {
+      L.push(`  グループ${i + 1}: ラップ ${g.count} 本 / グループの項目 [${g.keys.join(', ')}] ${JSON.stringify(g.info)}`);
+      L.push(`    ラップの項目: [${g.lapKeys.join(', ')}]`);
+      g.laps.slice(0, 25).forEach((l, k) => L.push(`    ${k + 1}: ${JSON.stringify(l)}`));
+    });
+  }
+  const f = r.fit;
+  if (r.fit_error) L.push(`FIT: エラー ${r.fit_error}`);
+  else if (f?.error) L.push(`FIT: ${f.error}`);
+  else if (f) {
+    L.push(`FIT のメッセージ: ${Object.entries(f.messages).map(([k, n]) => `${k}=${n}`).join(', ')}`);
+    L.push(`FIT のワークアウト: ${f.workout ? `「${f.workout.name}」 ステップ ${f.workout.steps ?? '-'}` : 'なし'}`);
+    f.steps.forEach((x) => L.push(`  ステップ${x.i ?? ''}: ${x.name || '(名前なし)'} / ${x.intensity ?? '-'} / ${x.duration} ${x.value ?? ''} / 目標 ${x.target_type ?? '-'} ${x.low ?? ''}-${x.high ?? ''}${x.notes ? ` / ${x.notes}` : ''}`));
+    L.push(`FIT のラップ: ${f.laps.length} 本`);
+    f.laps.forEach((x) => L.push(`  ${x.i + 1}: ${x.dist_m != null ? (x.dist_m / 1000).toFixed(2) + 'km' : '-'} ${x.timer_s != null ? dur(x.timer_s) : '-'} / 種類 ${x.intensity ?? '-'} / きっかけ ${x.trigger ?? '-'} / ステップ ${x.step ?? '-'}`));
+  }
+  return L.join('\n');
 }
 
 // ---- レース
