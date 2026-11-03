@@ -190,8 +190,13 @@ describe('evaluateRun', () => {
   it('コメントは数字つきで、次に意識することが出る', () => {
     const ev = evaluateRun(input([{ sec: 2400, pace: 370, hr: 125, spm: 170 }]), null, S);
     expect(ev.comments.some((c) => /ピッチ 170spm/.test(c))).toBe(true);
-    expect(ev.comments.some((c) => /平均ペース 6:10/.test(c) && c.includes('サブ3'))).toBe(true);
-    expect(ev.focus!.some((c) => c.includes('170→177'))).toBe(true);
+    // 平均ペースは 運動時間 ÷ 距離 で、将来の目標 (サブ3) とは比べない (2026-11 改修)
+    expect(ev.comments.some((c) => /平均ペース 6:10\/km \(運動時間/.test(c))).toBe(true);
+    expect(ev.comments.join('')).not.toContain('サブ3');
+    // ピッチ 170 でも、決まった値 (180) との差では減点も指摘もしない
+    expect(ev.cadence.score).toBe(100);
+    expect(ev.focus!.length).toBeGreaterThan(0);
+    expect(ev.focus!.join('')).not.toContain('177');
   });
 
   it('計画なしはフリーラン、距離評価なし', () => {

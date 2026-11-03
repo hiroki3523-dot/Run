@@ -1,3 +1,8 @@
 node_modules/
 .wrangler/
 .dev.vars
+review-bundle/
+review-shots/
+stride-review*.zip
+test-results.json
+change-report.md
