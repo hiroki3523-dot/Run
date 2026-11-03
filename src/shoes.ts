@@ -32,10 +32,13 @@ export interface ShoeRow { name: string; purpose: string; retired: number; total
 
 /** 用途が合う順 → 走行距離の少ない順 */
 export function pickShoe<T extends ShoeRow>(shoes: T[], type: PlanType): T | null {
-  const pool = shoes.filter((s) => !s.retired && s.total_km < s.limit_km);
-  for (const pu of SHOE_PREF[type] ?? ['easy']) {
-    const c = pool.filter((s) => purposesOf(s.purpose).includes(pu)).sort((a, b) => a.total_km / a.limit_km - b.total_km / b.limit_km)[0];
-    if (c) return c;
+  // 使用中の靴から。合う靴が無いときだけ予備 (retired = 2) から。引退 (1) は選ばない
+  for (const st of [0, 2]) {
+    const pool = shoes.filter((s) => (s.retired || 0) === st && s.total_km < s.limit_km);
+    for (const pu of SHOE_PREF[type] ?? ['easy']) {
+      const c = pool.filter((s) => purposesOf(s.purpose).includes(pu)).sort((a, b) => a.total_km / a.limit_km - b.total_km / b.limit_km)[0];
+      if (c) return c;
+    }
   }
   return null;
 }
