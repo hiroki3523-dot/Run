@@ -1426,3 +1426,14 @@ body { padding-bottom: calc(120px + env(safe-area-inset-bottom)); } /* 下の固
 .rd-hero { position: relative; }
 .rd-photo { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: rgb(255 255 255 / .2); color: #fff; cursor: pointer; }
 .rd-photo svg { width: 18px; height: 18px; }
+/* ---- シューズの編集: ボタンを小さく、使用感を見つけやすく (2026-11) ---- */
+.sm-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sm-chips .chip.mini { min-height: 34px; padding: 5px 12px; font-size: 13px; }
+.shoe-photo .shoe-img.big { height: 120px; }
+.shoe-photo .row .btn, .shoe-photo .row button { min-height: 38px; padding: 6px 12px; font-size: 13px; }
+.shoe-feel { border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 14px; padding: 10px 12px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.sf-sum { display: flex; justify-content: space-between; align-items: center; gap: 8px; list-style: none; }
+.sf-sum::-webkit-details-marker { display: none; }
+.sf-sum b { font-size: 14px; color: var(--accent); }
+.sf-sum b::before { content: "▸ "; } .shoe-feel[open] .sf-sum b::before { content: "▾ "; }
+.sf-sum .muted { font-size: 12px; }

@@ -265,6 +265,22 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     const inf = JSON.parse((await call(env, 'GET', '/races')).json.find((x: any) => x.id === raceId).info);
     expect(inf.image).toMatch(/^data:image\/jpeg;base64,/);
     expect(await page.$eval('.rd-hero', (e: Element) => e.classList.contains('has-img'))).toBe(true);
+  it('シューズの編集: 用途のボタンが小さく、「使用感を入力・編集」で使用感の欄が開く', async () => {
+    const sh = (await call(env, 'GET', '/shoes')).json.find((x: any) => x.name === 'テストシューズA');
+    await open(`#/shoes/${sh.id}`);
+    await page.click('[data-shtab="feel"]');
+    await page.click('[data-feel-edit]');
+    await page.waitForSelector('dialog[open]');
+    await page.waitForTimeout(500);
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/11c-shoe-edit.png` });
+    expect(await page.$eval('#sf-box', (d: HTMLDetailsElement) => d.open)).toBe(true);
+    const h = await page.$eval('[data-pu]', (b: Element) => b.getBoundingClientRect().height);
+    expect(h).toBeLessThanOrEqual(40);
+    await page.selectOption('dialog [name=f_overall]', '8');
+    await page.click('dialog button[value=ok]');
+    await page.waitForTimeout(1000);
+    const after = (await call(env, 'GET', '/shoes')).json.find((x: any) => x.id === sh.id);
+    expect(after.feel.overall).toBe(8);
   }, 40000);
 
   it('ナビゲーション: 下のメニューで各画面に移れる', async () => {

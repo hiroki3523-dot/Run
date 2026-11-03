@@ -3543,7 +3543,7 @@ async function shoeDetailView(id) {
   SHOES = shoes; SHOE_FIT = cmp;
   setTimeout(() => {
     view.querySelector('#shoe-edit').onclick = () => editShoe(s);
-    view.querySelector('[data-feel-edit]').onclick = () => editShoe(s);
+    view.querySelector('[data-feel-edit]').onclick = () => editShoe(s, { feel: true });
     view.querySelectorAll('[data-shtab]').forEach((a) => (a.onclick = () => {
       view.querySelectorAll('[data-shtab]').forEach((x) => x.classList.toggle('on', x === a));
       view.querySelectorAll('.sh-pane').forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== a.dataset.shtab));
@@ -3694,7 +3694,7 @@ function wireShoePhoto() {
   };
 }
 
-async function editShoe(s) {
+async function editShoe(s, opts = {}) {
   const pending = openDialog(`
     <h2>${s.id ? 'シューズを編集' : 'シューズを追加'}</h2>
     <label>名称<input name="name" value="${esc(s.name)}" required></label>
@@ -3703,32 +3703,34 @@ async function editShoe(s) {
       <div class="row">
         <label class="btn" style="margin:0">写真を選ぶ<input type="file" id="shoe-file" accept="image/*" hidden></label>
         <a class="btn" id="shoe-search" target="_blank" rel="noopener">画像を探す</a>
-        <button type="button" id="shoe-clear" class="danger">削除</button>
+        <button type="button" id="shoe-clear" class="danger">写真を外す</button>
       </div>
       <input type="hidden" name="image" id="shoe-image" value="${s.image ? esc(s.image) : ''}">
     </div>
     <div class="field"><span class="lbl">どんな練習で使う？ (複数選べます)</span>
-      <div class="chips" id="pu-chips">${Object.entries(PURPOSE_LABELS).map(([k, v]) => `<button type="button" class="chip ${purposesOf(s.purpose).includes(k) ? 'on' : ''}" data-pu="${k}">${v}</button>`).join('')}</div>
+      <div class="chips sm-chips" id="pu-chips">${Object.entries(PURPOSE_LABELS).map(([k, v]) => `<button type="button" class="chip mini ${purposesOf(s.purpose).includes(k) ? 'on' : ''}" data-pu="${k}" title="${esc(v)}">${PURPOSE_SHORT[k]}</button>`).join('')}</div>
       <p class="muted hint" id="pu-hint"></p>
       <input type="hidden" name="purpose" value="${purposesOf(s.purpose).join(',')}">
     </div>
+    <details class="field shoe-feel" id="sf-box" ${opts.feel || (s.feel && Object.keys(s.feel).some((k) => SHOE_FEEL.some(([f]) => f === k))) ? 'open' : ''}><summary class="sf-sum"><b>使用感 (走った感覚)</b><span class="muted num">${SHOE_FEEL.filter(([k]) => s.feel?.[k] != null).length}/${SHOE_FEEL.length} 入力・任意</span></summary>
+      <div class="sf-grid">${SHOE_FEEL.map(([k, l]) => `<label>${l}<select name="f_${k}"><option value="">-</option>${Array.from({ length: 11 }, (_, v) => `<option ${s.feel?.[k] === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`).join('')}</div>
+      <p class="muted hint">「総合的な走りやすさ」が 3 以下だと、おすすめに出にくくなります。</p>
+    </details>
     <label>交換目安 (km)<input name="limit_km" inputmode="numeric" value="${s.limit_km}"></label>
     <div class="grid2">
       <label>走行距離 (km)<input name="total_km" inputmode="decimal" value="${s.id ? Math.round((s.total_km ?? s.initial_km) * 10) / 10 : (s.initial_km || 0)}"></label>
       <label>Strava gear ID<input name="strava_gear_id" placeholder="g12345" value="${esc(s.strava_gear_id)}"></label>
     </div>
     <label>色・呼び名 (同じモデルが複数あるとき)<input name="f_label" maxlength="20" placeholder="例: 白・2足目" value="${esc(s.feel?.label || '')}"></label>
-    <details class="field shoe-feel" ${s.feel && Object.keys(s.feel).some((k) => SHOE_FEEL.some(([f]) => f === k)) ? 'open' : ''}><summary class="lbl">走った感覚 (任意・0〜10)</summary>
-      <div class="sf-grid">${SHOE_FEEL.map(([k, l]) => `<label>${l}<select name="f_${k}"><option value="">-</option>${Array.from({ length: 11 }, (_, v) => `<option ${s.feel?.[k] === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`).join('')}</div>
-      <p class="muted hint">「総合的な走りやすさ」が 3 以下だと、おすすめに出にくくなります。</p>
-    </details>
     <div class="field"><span class="lbl">状態</span>
-      <div class="chips" id="st-chips">${STATUS.map(([v, l]) => `<button type="button" class="chip ${(s.retired || 0) === v ? 'on' : ''}" data-stv="${v}">${l}</button>`).join('')}</div>
+      <div class="chips sm-chips" id="st-chips">${STATUS.map(([v, l]) => `<button type="button" class="chip mini ${(s.retired || 0) === v ? 'on' : ''}" data-stv="${v}">${l}</button>`).join('')}</div>
       <input type="hidden" name="retired" value="${s.retired || 0}">
     </div>`,
     s.id ? { onDelete: async () => { await api(`/shoes/${s.id}`, { method: 'DELETE' }); if (location.hash.startsWith('#/shoes/')) location.hash = '#/shoes'; else route(); } } : {},
   );
   wireShoePhoto();
+  // 「使用感を入力・編集」から開いたときは、使用感の欄へ
+  if (opts.feel) setTimeout(() => { const el = dialogForm.querySelector('#sf-box'); if (el) el.scrollIntoView({ block: 'start' }); }, 150);
   const hint = () => {
     const sel = [...dialogForm.querySelectorAll('[data-pu].on')].map((b) => b.dataset.pu);
     dialogForm.querySelector('#pu-hint').textContent = sel.map((k) => `${PURPOSE_LABELS[k]}: ${PURPOSE_HINTS[k]}`).join(' / ');
