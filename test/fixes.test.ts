@@ -66,3 +66,14 @@ describe('K-09 レース詳細の補給・ペースの型・スタートロス�
     expect(inf.start_time).toBe('8:20');
   });
 });
+
+describe('大会の写真 (自分で選んだもの)', () => {
+  it('画面で縮小した画像だけ保存し、ほかの文字列や大きすぎる画像は保存しない', async () => {
+    const r = (await call(env, 'POST', '/races', { name: 'x', date: '2026-12-13', distance_m: 42195, no_auto: true })).json;
+    const put = async (image: unknown) => { await call(env, 'PUT', `/races/${r.id}`, { ...r, info: { image }, no_auto: true }); return JSON.parse((await call(env, 'GET', '/races')).json[0].info).image; };
+    expect(await put('data:image/jpeg;base64,AAAA')).toBe('data:image/jpeg;base64,AAAA');
+    expect(await put('https://example.com/a.jpg')).toBeUndefined();
+    expect(await put('data:image/jpeg;base64,' + 'A'.repeat(400_000))).toBeUndefined();
+    expect(await put(null)).toBeUndefined();
+  });
+});

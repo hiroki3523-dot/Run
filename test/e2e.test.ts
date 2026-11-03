@@ -239,6 +239,34 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect(gap).toBeGreaterThanOrEqual(0);
   }, 30000);
 
+  it('レース詳細: スクロールしてもタブが見出しのすぐ下に残る (iPhone のノッチ分の高さでも)', async () => {
+    await open(`#/races/${raceId}`);
+    // iPhone のノッチ分、見出しを高くしても、タブは見出しの下に出る
+    await page.addStyleTag({ content: 'header { padding-top: 64px !important; }' });
+    await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+    for (const y of [800, 1800]) {
+      await page.evaluate((yy: number) => window.scrollTo(0, yy), y);
+      await page.waitForTimeout(300);
+      const r = await page.evaluate(() => ({ tabs: document.querySelector('.rd-tabs')!.getBoundingClientRect().top, head: document.querySelector('header')!.getBoundingClientRect().bottom }));
+      expect(Math.abs(r.tabs - r.head)).toBeLessThanOrEqual(2);
+    }
+    // タブを押すと、その項目の見出しがタブのすぐ下に来る
+    await page.click('.rd-tabs [data-go="prep"]');
+    await page.waitForTimeout(900);
+    const pos = await page.evaluate(() => ({ sec: document.querySelector('#rs-prep')!.getBoundingClientRect().top, tabs: document.querySelector('.rd-tabs')!.getBoundingClientRect().bottom }));
+    expect(pos.sec).toBeGreaterThanOrEqual(pos.tabs - 2);
+    expect(pos.sec - pos.tabs).toBeLessThan(40);
+  }, 40000);
+  it('レース詳細: 大会の写真を選ぶと見出しの背景になる', async () => {
+    await open(`#/races/${raceId}`);
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVR4nGNk+M/AwMDAwMDAwMDAAAAPkAEBXqP1AQAAAABJRU5ErkJggg==', 'base64');
+    await page.setInputFiles('#race-photo', { name: 'p.png', mimeType: 'image/png', buffer: png });
+    await page.waitForTimeout(1500);
+    const inf = JSON.parse((await call(env, 'GET', '/races')).json.find((x: any) => x.id === raceId).info);
+    expect(inf.image).toMatch(/^data:image\/jpeg;base64,/);
+    expect(await page.$eval('.rd-hero', (e: Element) => e.classList.contains('has-img'))).toBe(true);
+  }, 40000);
+
   it('ナビゲーション: 下のメニューで各画面に移れる', async () => {
     await open('#/');
     for (const tab of ['plans', 'activities', 'races', 'shoes', 'settings', 'home']) {
