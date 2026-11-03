@@ -175,6 +175,12 @@ async function captureView(title) {
     ov.querySelector('[data-cap="close"]').onclick = close;
   }
 }
+// 入力欄にフォーカスしたら、キーボードや下のメニューに隠れないよう画面の中央へ
+document.addEventListener('focusin', (e) => {
+  const el = e.target;
+  if (!el.matches?.('input:not([type=checkbox]):not([type=radio]):not([type=file]), textarea, select')) return;
+  setTimeout(() => el.scrollIntoView({ block: 'center', behavior: 'smooth' }), 280);
+});
 document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-capture]'); if (b) captureView(b.dataset.capture); });
 
 /** ホームのニュース。画面を出したあとで読み込む (遅くてもホームの表示を待たせない) */
@@ -528,6 +534,11 @@ const LV_COLOR = { ok: 'var(--good)', warn: 'var(--mid)', bad: 'var(--bad)' };
 function goalCard() {
   return `<div class="card ins"><h2>目標への現在地</h2><div id="insights"><p class="muted">読み込み中…</p></div></div>`;
 }
+/** 円形のメーター (0〜100) */
+function ringGauge(v, label, color) {
+  const r = 34, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, v / 100));
+  return `<div class="ring"><svg viewBox="0 0 84 84" width="84" height="84" aria-hidden="true"><circle cx="42" cy="42" r="${r}" fill="none" stroke="var(--line)" stroke-width="7"/><circle cx="42" cy="42" r="${r}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${c * f} ${c}" transform="rotate(-90 42 42)"/><text x="42" y="48" text-anchor="middle" class="ring-v">${v}</text></svg><small>${label}</small></div>`;
+}
 /** 毎朝の体調 (脚・張り・痛み・睡眠・全身の疲労)。疲労の蓄積や、回復状態・シューズの相性に使う */
 const COND = [['leg', '脚の疲労感', 'なし', '最大'], ['tight', '筋肉の張り', 'なし', '最大'], ['fatigue', '全身の疲労感', 'なし', '最大'], ['sleep', '睡眠の質', '悪い', 'よく眠れた'], ['pain', '痛み', 'なし', '最大']];
 async function loadCondition() {
@@ -580,8 +591,11 @@ async function loadCondition() {
   else if (worst >= 5 || (sleep != null && sleep <= 3)) { impact = `${worst >= 5 ? `疲労がやや残っている (${worst}/10)` : `睡眠が浅め (${sleep}/10)`}。${hard ? '予定どおりで良いが、序盤は抑えて体の反応を見ながら。' : '予定どおり、ゆっくりめで。'}`; }
   else impact = `疲労は少なく、${hard ? 'ポイント練も' : ''}予定どおり実施できそう。`;
   const impactHtml = impact ? `<p class="cd-impact ${tone}"><b>今日の練習への影響</b>${esc(impact)}${tone !== 'ok' && todayPlan.length ? ' <a href="#/plans">計画で相談 ›</a>' : ''}</p>` : '';
+  const vals = [cur.leg, cur.tight, cur.fatigue].filter((x) => x != null);
+  const ready = vals.length ? Math.max(0, Math.min(100, Math.round(100 - (vals.reduce((a, b) => a + b, 0) / vals.length) * 7 - (cur.pain ?? 0) * 5 + (cur.sleep != null ? (cur.sleep - 5) * 2 : 0)))) : null;
   box.innerHTML = `<div class="row spread"><h2>今朝の体調</h2><button type="button" class="chip" data-cd="edit">修正</button></div>
-    <div class="cd-sum">${COND.filter(([k]) => cur[k] != null).map(([k]) => `<div><small>${SH[k]}</small><b class="num">${cur[k]}</b></div>`).join('')}${(cur.pain_part || []).length ? `<div><small>痛む場所</small><b style="font-size:13px">${cur.pain_part.map(esc).join('・')}</b></div>` : ''}</div>${impactHtml}${trend}${warn}`;
+    ${ready != null ? `<div class="cd-top">${ringGauge(ready, 'コンディション', ready >= 70 ? 'var(--good)' : ready >= 50 ? 'var(--accent)' : 'var(--mid)')}<div class="cd-top-r">${impactHtml}</div></div>` : ''}
+    <div class="cd-sum">${COND.filter(([k]) => cur[k] != null).map(([k]) => `<div><small>${SH[k]}</small><b class="num">${cur[k]}</b></div>`).join('')}${(cur.pain_part || []).length ? `<div><small>痛む場所</small><b style="font-size:13px">${cur.pain_part.map(esc).join('・')}</b></div>` : ''}</div>${ready == null ? impactHtml : ''}${trend}${warn}`;
   box.querySelector('[data-cd="edit"]').onclick = () => form({ ...cur });
 }
 
@@ -3474,6 +3488,18 @@ async function settingsView() {
   });
 
   return `
+    ${getToken() && !err && status ? `<details class="card set-adv"><summary><b>アクセストークン</b> <span class="muted">設定済み</span></summary>
+      <form id="token-form" class="row">
+        <input name="token" id="token-input" type="password" placeholder="APP_TOKEN" value="${esc(getToken())}" style="flex:1">
+        <button class="primary">保存</button>
+      </form>
+      <div class="row" style="margin-top:8px">
+        <button id="token-show" type="button">表示する</button>
+        <button id="token-copy" type="button">コピー</button>
+      </div>
+      <p class="muted">ホーム画面のアプリと Safari は別々に保存されます。Safari でコピーして、ホーム画面のアプリに貼り付けてください。</p>
+      ${err ? `<p class="error">${esc(err)}</p>` : ''}
+    </details>` : `
     <div class="card">
       <h2>アクセストークン</h2>
       <form id="token-form" class="row">
@@ -3487,7 +3513,9 @@ async function settingsView() {
       <p class="muted">ホーム画面のアプリと Safari は別々に保存されます。Safari でコピーして、ホーム画面のアプリに貼り付けてください。</p>
       ${err ? `<p class="error">${esc(err)}</p>` : ''}
     </div>
+    `}
     <pre id="out" style="white-space:pre-wrap;word-break:break-all;margin:8px 4px"></pre>
+    ${status ? '<h2 class="sect">データの取り込み</h2>' : ''}
     ${status && settings ? `
     <div class="card" id="src-card"><h2>ランの取り込み元</h2>
       <div class="pf-seg pred-seg" style="--n:2"><button type="button" class="${(settings.source || 'strava') === 'strava' ? 'on' : ''}" data-src="strava">Strava のみ</button><button type="button" class="${settings.source === 'coros' ? 'on' : ''}" data-src="coros">COROS 優先</button></div>
@@ -3504,28 +3532,12 @@ async function settingsView() {
         <button id="subscription">Webhook 確認</button>
       </div>
     </div>
-    <div class="card">
-      <h2>過去データの取り込み</h2>
+    <details class="card set-adv"><summary><b>過去データの取り込み・再評価</b></summary>
       <div id="bf-live" class="bf-live muted">読み込み中…</div>
       <div class="row"><button id="backfill-2025" class="primary">2025年1月から取り込む</button><button id="backfill-all">全期間</button><button id="backfill-30">直近30日</button><button id="reeval-30">直近30日を再評価</button><button id="backfill-status">進み具合</button><button id="backfill-stop">停止</button></div>
       <p class="muted">直近30日を先に取り込み、そのあと古い記録へ進みます。閉じて大丈夫です。Strava の上限に当たると自動で待って再開します。</p>
-    </div>
-    <div class="card">
-      <h2>iPhone カレンダー</h2>
-      <p class="muted">練習メニューとレースを iPhone のカレンダーに表示します (読み取り専用・自動更新)。</p>
-      <div class="row"><button id="open-cal" class="primary">カレンダーに追加</button><button id="copy-cal">URL をコピー</button></div>
-    </div>
-    <div class="card">
-      <h2>バックアップ</h2>
-      <p class="muted">計画・実績・レース・シューズ・ふりかえり・体調をファイルに書き出し、別の環境へ引き継げます (COROS の 1 秒ごとの記録は含みません。COROS から取り直せます)。読み込むと、同じ記録は上書き、無い記録は追加します。</p>
-      <div class="row"><button id="bk-out" class="primary">書き出す</button><button id="bk-in">読み込む</button><input type="file" id="bk-file" accept="application/json,.json" hidden></div>
-      <p class="muted" id="bk-msg"></p>
-    </div>
-    <div class="card">
-      <h2>通知</h2>
-      <p class="muted">ntfy: ${status.ntfy_topic_set ? '設定済み' : '未設定'}・Bark: ${status.bark_set ? '設定済み' : '未設定'}</p>
-      <div class="row"><button id="test-notify">テスト通知</button><button id="morning">朝の通知を今すぐ送る</button></div>
-    </div>
+    </details>
+    <h2 class="sect">評価と予測</h2>
     ${settings ? (() => {
       const src = settings.predict?.source || 'auto';
       const fs = settings.predict?.full_s ?? 11400;
@@ -3540,7 +3552,7 @@ async function settingsView() {
       </div>`;
     })() : ''}
     ${settings.coros ? `<div class="card">
-      <h2>COROS の基準 (${esc(settings.coros.updated)})</h2>
+      <div class="row spread"><h2>COROS の値</h2><span class="src-tag coros">COROS 由来・${esc(settings.coros.updated)}</span></div>
       <div class="grid2 num">
         <div><div class="muted">ランニングレベル</div><div class="big" style="font-size:32px">${settings.coros.running_level}</div></div>
         <div><div class="muted">VO2max</div><div class="big" style="font-size:32px">${settings.coros.vo2max}</div></div>
@@ -3556,7 +3568,7 @@ async function settingsView() {
       <div class="row" style="margin-top:12px"><button id="reset-settings">ペース帯・心拍の基準を標準に戻す</button></div>
     </div>` : ''}
     <form class="card" id="settings-form">
-      <h2>評価の基準</h2>
+      <div class="row spread"><h2>評価の基準</h2><span class="src-tag stride">STRIDE</span></div>
       <div class="pf-seg pred-seg" style="--n:2;margin-bottom:10px"><button type="button" class="${settings.paces_auto !== false ? 'on' : ''}" data-pa="1">データから自動</button><button type="button" class="${settings.paces_auto === false ? 'on' : ''}" data-pa="0">手で設定</button></div>
       <p class="muted" style="margin:0 0 12px">${settings.paces_auto !== false
         ? `${settings.source === 'coros' || settings.predict?.source === 'coros' ? 'COROS の閾値・ゾーン' : '予測タイム'}、次のレースの目標タイム、最近の最大心拍から決めます。COROS の値やレースの目標が変わると自動で直ります。`
@@ -3566,13 +3578,32 @@ async function settingsView() {
         <label>最大心拍<input name="max_hr" inputmode="numeric" value="${settings.max_hr}"></label>
         <label>LTHR (閾値心拍)<input name="lthr" inputmode="numeric" value="${settings.lthr}"></label>
       </div>
-      <label>目標ケイデンス (spm)<input name="target_cadence" inputmode="numeric" value="${settings.target_cadence}"></label>
+      <label>ピッチの参考値 (spm・減点の基準にはしません)<input name="target_cadence" inputmode="numeric" value="${settings.target_cadence}"></label>
       <table><tr><th>種別</th><th>速い側</th><th>遅い側</th></tr>
       ${Object.entries(settings.paces).map(([k, b]) => `<tr><td>${PLAN_LABELS[k]}</td><td><input name="${k}_min" value="${pace(b.min)}"></td><td><input name="${k}_max" value="${pace(b.max)}"></td></tr>`).join('')}
       </table>
       <p style="margin-top:12px"><button class="primary">保存</button></p>
       </fieldset>
-    </form>` : ''}
+      <details class="ri-more"><summary>この基準を使う分析</summary><p class="muted" style="font-size:12.5px">ペース帯 → 練習達成度のペース・計画の自動配置。最大心拍・閾値心拍 → 心拍の評価・心拍ゾーン・マラソン適性の心肺持久力・予測 (Strava で推定)。ピッチの参考値 → 表示だけ (後半まで保てたかで評価します)。</p></details>
+    </form>
+    <h2 class="sect">アプリ</h2>
+    <div class="card">
+      <h2>iPhone カレンダー</h2>
+      <p class="muted">練習メニューとレースを iPhone のカレンダーに表示します (読み取り専用・自動更新)。</p>
+      <div class="row"><button id="open-cal" class="primary">カレンダーに追加</button><button id="copy-cal">URL をコピー</button></div>
+    </div>
+    <div class="card">
+      <h2>通知</h2>
+      <p class="muted">ntfy: ${status.ntfy_topic_set ? '設定済み' : '未設定'}・Bark: ${status.bark_set ? '設定済み' : '未設定'}</p>
+      <div class="row"><button id="test-notify">テスト通知</button><button id="morning">朝の通知を今すぐ送る</button></div>
+    </div>
+    <div class="card">
+      <h2>バックアップ</h2>
+      <p class="muted">計画・実績・レース・シューズ・ふりかえり・体調をファイルに書き出し、別の環境へ引き継げます (COROS の 1 秒ごとの記録は含みません。COROS から取り直せます)。読み込むと、同じ記録は上書き、無い記録は追加します。</p>
+      <div class="row"><button id="bk-out" class="primary">書き出す</button><button id="bk-in">読み込む</button><input type="file" id="bk-file" accept="application/json,.json" hidden></div>
+      <p class="muted" id="bk-msg"></p>
+    </div>
+    ` : ''}
     `;
 }
 

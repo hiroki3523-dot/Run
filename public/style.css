@@ -1215,3 +1215,24 @@ body::after {
 .fuel-r:first-child { border-top: 0; }
 .ck-fuel { margin: 0 0 8px; padding: 8px 12px; border-radius: 12px; font-size: 13px; background: var(--accent-soft); }
 .rres p { font-size: 14px; }
+
+/* ---- 第4段階: 画面の整理 */
+.set-adv { padding: 14px 18px; }
+.set-adv > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.set-adv > summary::-webkit-details-marker { display: none; }
+.set-adv > summary::after { content: '›'; margin-left: auto; color: var(--muted); font-size: 20px; transition: transform .2s; }
+.set-adv[open] > summary::after { transform: rotate(90deg); }
+.set-adv[open] > summary { margin-bottom: 10px; }
+.src-tag { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.src-tag.coros { color: #35c3c9; background: color-mix(in srgb, #35c3c9 15%, transparent); }
+.src-tag.stride { color: var(--accent); background: var(--accent-soft); }
+.ring { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; }
+.ring small { font-size: 11px; color: var(--muted); font-weight: 600; }
+.ring-v { font-size: 24px; font-weight: 800; fill: var(--text); font-variant-numeric: tabular-nums; }
+.cd-top { display: flex; align-items: center; gap: 14px; margin: 4px 0 6px; }
+.cd-top-r { flex: 1; min-width: 0; }
+.cd-top-r .cd-impact { margin: 0; }
+/* 入力中・下のメニューの上に余白 (保存ボタンが隠れないように) */
+html { scroll-padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
+dialog { max-height: calc(100dvh - 40px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; }
+.sheet-body { max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain; }
