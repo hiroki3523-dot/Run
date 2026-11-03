@@ -24,6 +24,8 @@ export interface RaceInfo {
   fee?: string | null;            // 参加料
   my_block?: string | null;       // 自分のブロック
   bib?: string | null;            // ゼッケン番号
+  race_date?: string | null;      // 開催日 (YYYY-MM-DD)。一覧から追加した大会の日付を確定するため
+  date_estimated?: boolean;       // 日付が仮 (例年の月から) のとき
   source?: string | null;         // 取り込んだ元 (URL)
   updated?: string | null;
 }
@@ -43,6 +45,8 @@ export function cleanRaceInfo(o: any): RaceInfo {
       .sort((a: RaceCutoff, b: RaceCutoff) => a.km - b.km),
     reception: str(o.reception, 200), baggage: str(o.baggage, 200), aid: str(o.aid, 200), access: str(o.access, 200),
     entry_open: date(o.entry_open), entry_close: date(o.entry_close), lottery_result: date(o.lottery_result), fee: str(o.fee, 60),
+    race_date: typeof o.race_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.race_date.trim()) ? o.race_date.trim() : null,
+    date_estimated: o.date_estimated === true ? true : undefined,
     my_block: str(o.my_block, 20), bib: str(o.bib, 20), source: str(o.source, 500), updated: str(o.updated, 20),
   };
 }
@@ -63,17 +67,18 @@ export function htmlText(html: string): string {
 
 const SYSTEM = `マラソン大会の公式ページの文章から、出場するランナーが当日までに必要な情報を取り出します。
 - 文章に書いてあることだけを使う。書いていない項目は null (推測しない)
+- race_date: 次に開かれる大会の開催日 ("YYYY-MM-DD")。前回大会の結果ページなら null
 - 時刻は "8:30" の形。日付は "YYYY-MM-DD" (年が書いていなければ大会日の年から判断)
 - blocks: スタートブロックごとにスタート時刻や整列締め切りが違うときだけ (name は "A" など)
 - cutoffs: 関門。km は数字、time は "11:05" の形 (スタートからの時間しか無ければ "2:35後" のように)、place は地名
 - 各項目は短く (1〜2 行)
 次の JSON だけを返す:
-{"venue":null,"start_time":null,"line_close":null,"blocks":[],"time_limit":null,"cutoffs":[],"reception":null,"baggage":null,"aid":null,"access":null,"entry_open":null,"entry_close":null,"lottery_result":null,"fee":null}`;
+{"race_date":null,"venue":null,"start_time":null,"line_close":null,"blocks":[],"time_limit":null,"cutoffs":[],"reception":null,"baggage":null,"aid":null,"access":null,"entry_open":null,"entry_close":null,"lottery_result":null,"fee":null}`;
 
 const SCHEMA = {
   type: 'object',
   properties: {
-    venue: { type: ['string', 'null'] }, start_time: { type: ['string', 'null'] }, line_close: { type: ['string', 'null'] },
+    race_date: { type: ['string', 'null'] }, venue: { type: ['string', 'null'] }, start_time: { type: ['string', 'null'] }, line_close: { type: ['string', 'null'] },
     blocks: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, start: { type: ['string', 'null'] }, close: { type: ['string', 'null'] } } } },
     time_limit: { type: ['string', 'null'] },
     cutoffs: { type: 'array', items: { type: 'object', properties: { km: { type: 'number' }, time: { type: 'string' }, place: { type: ['string', 'null'] } } } },
@@ -87,8 +92,10 @@ export async function extractRaceInfo(env: Env, race: { name: string; date: stri
   let text = (src.text ?? '').trim();
   if (!text) {
     if (!src.url || !/^https?:\/\//.test(src.url)) throw new Error('公式サイトの URL か、ページの文章を入れてください');
-    const res = await fetch(src.url, { headers: { 'User-Agent': 'Mozilla/5.0 (STRIDE race info)', 'Accept-Language': 'ja' }, redirect: 'follow' });
-    if (!res.ok) throw new Error(`ページを開けませんでした (${res.status})。ページの文章をコピーして貼り付けてください`);
+    let res: Response;
+    try { res = await fetch(src.url, { headers: { 'User-Agent': 'Mozilla/5.0 (STRIDE race info)', 'Accept-Language': 'ja' }, redirect: 'follow' }); }
+    catch { throw new Error('公式サイトにつながりませんでした。URL を確かめるか、ページの文章をコピーして貼り付けてください'); }
+    if (!res.ok) throw new Error(`ページを開けませんでした (${res.status})。公式サイトの URL を確かめるか、ページの文章をコピーして貼り付けてください`);
     const ct = res.headers.get('content-type') ?? '';
     if (ct.includes('pdf')) throw new Error('PDF は読めません。PDF の文章をコピーして貼り付けてください');
     text = htmlText(await res.text());
@@ -97,10 +104,43 @@ export async function extractRaceInfo(env: Env, race: { name: string; date: stri
   const body = text.slice(0, 14000);
   const out = await runModel(env, [
     { role: 'system', content: SYSTEM },
-    { role: 'user', content: `大会: ${race.name} (${race.date})\n\n# ページの文章\n${body}` },
+    { role: 'user', content: `大会: ${race.name} (今日 ${new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)}、予定日 ${race.date} ごろ)\n\n# ページの文章\n${body}` },
   ], SCHEMA, 1500);
   let o: any = out.text;
   if (typeof o === 'string') { const m = o.match(/\{[\s\S]*\}/); try { o = m ? JSON.parse(m[0]) : {}; } catch { o = {}; } }
   const info = cleanRaceInfo(o);
   return { ...info, source: src.text ? null : src.url ?? null, chars: body.length };
+}
+
+/** 毎朝 1 件: 公式サイトを登録した今後のレースの大会情報を、2 週間ごとに読み直す (日付の確定・エントリー期間など) */
+export async function refreshRaceInfo(env: Env): Promise<void> {
+  const t = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const { results } = await env.DB.prepare("SELECT * FROM races WHERE date >= ? AND url IS NOT NULL ORDER BY date").bind(t).all<any>();
+  const old = new Date(Date.parse(t) - 14 * 86400_000).toISOString().slice(0, 10);
+  const r = results.find((x) => { try { const i = JSON.parse(x.info || '{}'); return !i.updated || i.updated <= old; } catch { return true; } });
+  if (!r) return;
+  const cur = cleanRaceInfo(JSON.parse(r.info || '{}'));
+  try {
+    const got = await extractRaceInfo(env, { name: r.name, date: r.date }, { url: r.url });
+    const next = mergeRaceInfo(cur, got, t);
+    const date = cur.date_estimated && got.race_date && got.race_date >= t ? got.race_date : r.date;
+    if (date !== r.date) next.date_estimated = undefined;
+    await env.DB.prepare('UPDATE races SET info = ?, date = ? WHERE id = ?').bind(JSON.stringify(next), date, r.id).run();
+  } catch (e) {
+    // 読めなかったときも日付を進めて、毎日同じ大会でつまらないように
+    await env.DB.prepare('UPDATE races SET info = ? WHERE id = ?').bind(JSON.stringify({ ...cur, updated: t }), r.id).run();
+    console.warn('race info refresh failed', r.name, (e as Error).message);
+  }
+}
+
+/** 読み取った情報を今の情報に重ねる (空の項目・自分のブロック・ゼッケンは上書きしない) */
+export function mergeRaceInfo(cur: RaceInfo, got: RaceInfo, today: string): RaceInfo {
+  const out: any = { ...cur };
+  for (const [k, v] of Object.entries(got)) {
+    if (['my_block', 'bib', 'chars', 'date_estimated', 'updated'].includes(k)) continue;
+    if (v == null || (Array.isArray(v) && !v.length)) continue;
+    out[k] = v;
+  }
+  out.updated = today;
+  return out;
 }

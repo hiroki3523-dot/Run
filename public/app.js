@@ -1,3 +1,4 @@
+import { RACE_CATALOG, AREA_NAMES, areaOf } from './race-catalog.js';
 // STRIDE — 依存なしの小さな SPA
 const view = document.getElementById('view');
 const dialog = document.getElementById('dialog');
@@ -2156,6 +2157,7 @@ async function raceDetailView(id) {
 }
 
 // ---- レースの状態と大会情報
+const searchUrl = (name) => `https://www.google.com/search?q=${encodeURIComponent(`${String(name).replace(/\s*\(.*?\)\s*/g, '').replace(/20\d\d$/, '')} 公式サイト`)}`;
 const RACE_STATUS = [['candidate', 'エントリー候補'], ['entered', 'エントリー済み'], ['confirmed', '出場決定']];
 const raceInfoOf = (r) => { try { return typeof r.info === 'string' ? JSON.parse(r.info) : r.info || {}; } catch { return {}; } };
 const fmtD = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? `${md(d)}(${dow(d)})` : esc(d || ''));
@@ -2192,7 +2194,8 @@ function raceInfoCard(r) {
   const cut = inf.cutoffs || [];
   const blocks = inf.blocks || [];
   const has = rows.length || cut.length;
-  return `<div class="card rinfo"><div class="row spread"><h2>大会情報</h2>${r.url ? `<a class="muted" href="${esc(r.url)}" target="_blank" rel="noopener">公式サイト ↗</a>` : ''}</div>
+  return `<div class="card rinfo"><div class="row spread"><h2>大会情報</h2>${r.url ? `<a class="muted" href="${esc(r.url)}" target="_blank" rel="noopener">公式サイト ↗</a>` : `<a class="muted" href="${searchUrl(r.name)}" target="_blank" rel="noopener">公式サイトを探す ↗</a>`}</div>
+    ${inf.date_estimated ? `<p class="ri-est">日付は仮です (例年の月から)。公式サイトから取り込むと正しい日付に直ります。</p>` : ''}
     <div class="ri-me">
       <button type="button" class="ri-tile" data-ri="block"><small>自分のブロック</small><b>${inf.my_block ? esc(inf.my_block) : '未設定'}</b></button>
       <button type="button" class="ri-tile" data-ri="bib"><small>ゼッケン</small><b class="num">${inf.bib ? esc(inf.bib) : '未設定'}</b></button>
@@ -2211,19 +2214,26 @@ function wireRaceInfo(root, r) {
   const save = async (info, extra = {}) => { await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, ...extra, info } }); route(); };
   const merge = (cur, got) => {
     const out = { ...cur };
-    for (const [k, v] of Object.entries(got)) if (!['my_block', 'bib', 'chars'].includes(k) && v != null && !(Array.isArray(v) && !v.length)) out[k] = v;
+    for (const [k, v] of Object.entries(got)) if (!['my_block', 'bib', 'chars', 'date_estimated', 'updated'].includes(k) && v != null && !(Array.isArray(v) && !v.length)) out[k] = v;
     out.updated = today();
     return out;
   };
   const preview = (got) => {
     const n = Object.entries(got).filter(([k, v]) => !['source', 'chars'].includes(k) && v != null && !(Array.isArray(v) && !v.length)).length;
     if (!n) { alert('大会情報が見つかりませんでした。要項のページの URL か、要項の文章を貼り付けてください。'); return false; }
-    const L = [got.start_time && `スタート ${got.start_time}`, got.line_close && `整列締め切り ${got.line_close}`, got.blocks?.length && `ブロック ${got.blocks.length}`, got.time_limit && `制限時間 ${got.time_limit}`, got.cutoffs?.length && `関門 ${got.cutoffs.length}か所`, got.reception && '受付', got.entry_close && `エントリー締切 ${got.entry_close}`].filter(Boolean);
+    const L = [got.race_date && `開催日 ${fmtD(got.race_date)}`, got.start_time && `スタート ${got.start_time}`, got.line_close && `整列締め切り ${got.line_close}`, got.blocks?.length && `ブロック ${got.blocks.length}`, got.time_limit && `制限時間 ${got.time_limit}`, got.cutoffs?.length && `関門 ${got.cutoffs.length}か所`, got.reception && '受付', got.entry_close && `エントリー締切 ${got.entry_close}`].filter(Boolean);
     return confirm(`${n} 項目を読み取りました。\n${L.join('\n')}\n\nこの内容で大会情報を上書きしますか？ (自分のブロック・ゼッケンはそのまま)`);
   };
   const run = async (body, btn) => {
     const label = btn.textContent; btn.disabled = true; btn.textContent = '読み取り中…';
-    try { const got = await api(`/races/${r.id}/extract`, { method: 'POST', body }); if (preview(got)) await save(merge(raceInfoOf(r), got), body.url ? { url: body.url } : {}); }
+    try {
+      const got = await api(`/races/${r.id}/extract`, { method: 'POST', body });
+      if (!preview(got)) { btn.disabled = false; btn.textContent = label; return; }
+      const cur = raceInfoOf(r), next = merge(cur, got), extra = body.url ? { url: body.url } : {};
+      if (got.race_date && got.race_date >= today() && (cur.date_estimated || got.race_date !== r.date) && (cur.date_estimated || confirm(`公式サイトの開催日は ${fmtD(got.race_date)} です。日付をこの日に直しますか？`))) { extra.date = got.race_date; delete next.date_estimated; }
+      delete next.race_date;
+      await save(next, extra);
+    }
     catch (e) { alert(e.message); }
     btn.disabled = false; btn.textContent = label;
   };
@@ -2254,6 +2264,79 @@ function wireRaceInfo(root, r) {
   }));
 }
 
+
+// ---- 大会を探す (主な大会の一覧から、エントリー候補に追加)
+let FIND = { area: '', when: '', dist: '' };
+try { FIND = { ...FIND, ...JSON.parse(localStorage.getItem('race-find') || '{}') }; } catch {}
+/** 次に開かれる日の目安 (例年の月の第 2 日曜) */
+function nextOccur(month) {
+  const t = today();
+  for (const y of [Number(t.slice(0, 4)), Number(t.slice(0, 4)) + 1]) {
+    const first = new Date(Date.UTC(y, month - 1, 1));
+    const d = new Date(first.getTime() + (((7 - first.getUTCDay()) % 7) + 7) * 86400000).toISOString().slice(0, 10);
+    if (d >= t) return d;
+  }
+}
+const baseName = (n) => String(n).replace(/\s*\(.*?\)\s*/g, '').replace(/20\d\d|[\s・]/g, '');
+async function raceFindView() {
+  const races = await api('/races');
+  const t = today();
+  const have = new Map(races.filter((r) => r.date >= t).map((r) => [baseName(r.name), r]));
+  const monthsAhead = (d) => Math.round((Date.parse(d) - Date.parse(t)) / (30.4 * 86400000));
+  const list = RACE_CATALOG.map(([name, pref, month, dist, url]) => ({ name, pref, month, dist, url, area: areaOf(pref), when: nextOccur(month) }))
+    .sort((a, b) => a.when.localeCompare(b.when));
+  const WHEN = [['', 'すべて'], ['3', '3か月以内'], ['6', '4〜6か月'], ['12', '7か月以降']];
+  const pass = (x) => (!FIND.area || x.area === FIND.area) && (!FIND.dist || x.dist === FIND.dist)
+    && (!FIND.when || (() => { const m = monthsAhead(x.when); return FIND.when === '3' ? m <= 3 : FIND.when === '6' ? m > 3 && m <= 6 : m > 6; })());
+  const chips = (key, opts) => `<div class="fchips">${opts.map(([v, l]) => `<button type="button" class="chip ${FIND[key] === v ? 'on' : ''}" data-f="${key}:${v}">${l}</button>`).join('')}</div>`;
+  const rowHtml = (x) => {
+    const got = have.get(baseName(x.name));
+    return `<li class="rf" data-name="${esc(x.name)}">
+      <div class="rf-main"><b>${esc(x.name)}</b><span class="muted">${esc(x.pref)}・例年${x.month}月・${x.dist === 'full' ? 'フル' : 'ハーフ'}${monthsAhead(x.when) >= 1 ? `・約${monthsAhead(x.when)}か月後` : '・まもなく'}</span><span class="rf-msg muted"></span></div>
+      ${got ? `<a class="chip on" href="#/races/${got.id}">${RACE_STATUS.find(([k]) => k === (got.status || 'confirmed'))[1]}</a>` : `<button type="button" class="chip" data-addc="${esc(x.name)}">候補に追加</button>`}
+    </li>`;
+  };
+  setTimeout(() => {
+    view.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => {
+      const [k, v] = b.dataset.f.split(':');
+      FIND[k] = FIND[k] === v ? '' : v;
+      try { localStorage.setItem('race-find', JSON.stringify(FIND)); } catch {}
+      route();
+    }));
+    view.querySelectorAll('[data-addc]').forEach((b) => (b.onclick = async () => {
+      const x = list.find((y) => y.name === b.dataset.addc);
+      const li = b.closest('li'), msg = li.querySelector('.rf-msg');
+      b.disabled = true; b.textContent = '追加中…';
+      try {
+        const r = await api('/races', { method: 'POST', body: { name: `${x.name.replace(/\s*\(.*?\)\s*/g, '')}${x.when.slice(0, 4)}`, date: x.when, distance_m: x.dist === 'full' ? 42195 : 21097.5, priority: 'B', status: 'candidate', url: x.url || null, info: { date_estimated: true } } });
+        b.outerHTML = `<a class="chip on" href="#/races/${r.id}">エントリー候補</a>`;
+        if (!x.url) { msg.innerHTML = `追加しました・<a href="${searchUrl(x.name)}" target="_blank" rel="noopener">公式サイトを探す ↗</a>`; return; }
+        msg.textContent = '公式サイトから日付とエントリー期間を読み取り中…';
+        try {
+          const got = await api(`/races/${r.id}/extract`, { method: 'POST', body: { url: x.url } });
+          const info = { ...got, date_estimated: true, updated: today() };
+          delete info.chars;
+          let date = r.date;
+          if (got.race_date && got.race_date >= today()) { date = got.race_date; delete info.date_estimated; }
+          delete info.race_date;
+          await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, date, info } });
+          msg.innerHTML = `${info.date_estimated ? '日付はまだ仮です' : `${fmtD(date)} 開催`}${got.entry_close ? `・エントリー締切 ${fmtD(got.entry_close)}` : got.entry_open ? `・エントリー開始 ${fmtD(got.entry_open)}` : ''}`;
+        } catch (e) { msg.textContent = `追加しました (公式サイトは読めませんでした: ${e.message})`; }
+      } catch (e) { b.disabled = false; b.textContent = '候補に追加'; msg.textContent = e.message; }
+    }));
+  });
+  const shown = list.filter(pass);
+  return `
+    <div class="row spread" style="margin-bottom:8px"><h2>大会を探す</h2><span class="muted">${shown.length}大会</span></div>
+    <div class="card rf-filter">
+      <span class="lbl">地域</span>${chips('area', [['', 'すべて'], ...AREA_NAMES.map((a) => [a, a])])}
+      <span class="lbl">時期</span>${chips('when', WHEN)}
+      <span class="lbl">種目</span>${chips('dist', [['', 'すべて'], ['full', 'フル'], ['half', 'ハーフ']])}
+    </div>
+    <div class="card">${shown.length ? `<ul class="list rf-list">${shown.map(rowHtml).join('')}</ul>` : '<p class="muted">条件に合う大会がありません</p>'}
+      <p class="muted" style="font-size:12px;margin:12px 0 0">月は例年の目安です。追加すると公式サイトから今年の日付とエントリー期間を読み取ります (公式サイトを登録している大会は 2 週間ごとに自動で読み直します)。一覧に無い大会は「＋ 追加」から。</p></div>`;
+}
+
 async function racesView() {
   const races = await api('/races');
   const t = today();
@@ -2276,7 +2359,7 @@ async function racesView() {
   const group = (k) => upcoming.filter((r) => (r.status || 'confirmed') === k);
   const sect = (k, label, hint) => { const g = group(k); return g.length ? `<div class="card"><div class="row spread"><h2>${label}</h2><span class="muted">${g.length}件</span></div>${hint ? `<p class="muted" style="margin:-4px 0 6px;font-size:12.5px">${hint}</p>` : ''}<ul class="list">${g.map(row).join('')}</ul></div>` : ''; };
   return `
-    <div class="row spread" style="margin-bottom:8px"><h2>レース</h2><button class="primary" id="add-race">＋ 追加</button></div>
+    <div class="row spread" style="margin-bottom:8px"><h2>レース</h2><div class="row" style="gap:8px"><a class="btn" href="#/races/find">大会を探す</a><button class="primary" id="add-race">＋ 追加</button></div></div>
     ${sect('confirmed', '出場決定')}
     ${sect('entered', 'エントリー済み', '抽選や入金の結果待ち。計画はこの大会も目標に入れます')}
     ${sect('candidate', 'エントリー候補', '出るか検討中。計画やホームの目標には入れません')}
@@ -2818,7 +2901,7 @@ async function route() {
       tab === 'plans' ? await plansView(params)
       : tab === 'activities' ? (parts[1] ? await activityDetailView(parts[1]) : await activitiesView(params))
       : tab === 'weather' ? await weatherView()
-      : tab === 'races' ? (parts[1] ? await raceDetailView(parts[1]) : await racesView())
+      : tab === 'races' ? (parts[1] === 'find' ? await raceFindView() : parts[1] ? await raceDetailView(parts[1]) : await racesView())
       : tab === 'shoes' ? await shoesView()
       : tab === 'settings' ? await settingsView()
       : await homeView();

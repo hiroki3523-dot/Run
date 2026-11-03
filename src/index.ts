@@ -8,6 +8,7 @@ import { authorizeUrl, exchangeCode, getAthleteId } from './strava';
 import { corosAuthorizeUrl, corosFinishAuth, corosTick, enqueueCoros, mergeCorosTwins, syncCorosFitness } from './coros';
 import { getSettings } from './settings';
 import type { Env, Plan } from './types';
+import { refreshRaceInfo } from './raceinfo';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -136,6 +137,9 @@ export default {
       ctx.waitUntil(backfillStep(env).catch((e) => console.error('backfill step failed', e)));
       ctx.waitUntil(corosTick(env, new Date(event.scheduledTime).getUTCMinutes()).catch((e) => console.error('coros tick failed', e)));
     }
-    else ctx.waitUntil(sendMorning(env));
+    else {
+      ctx.waitUntil(sendMorning(env));
+      ctx.waitUntil(refreshRaceInfo(env).catch((e) => console.error('race info refresh failed', e)));
+    }
   },
 } satisfies ExportedHandler<Env>;
