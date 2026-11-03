@@ -124,6 +124,8 @@ async function api(path, opts = {}) {
   return data;
 }
 
+/** 入力欄のフォーカスを外す (キーボードを閉じる) */
+function noFocus() { const el = document.activeElement; if (el && el !== document.body && el.matches?.('input, textarea, select')) el.blur(); }
 /** フォーム内容を dialog で表示し、送信値を返す (キャンセルは null) */
 function openDialog(html, { onDelete } = {}) {
   dialogForm.innerHTML = `${html}
@@ -132,6 +134,8 @@ function openDialog(html, { onDelete } = {}) {
       <div class="row"><button value="cancel" formnovalidate>キャンセル</button><button value="ok" class="primary">保存</button></div>
     </div>`;
   dialog.showModal();
+  // 開いたときに最初の入力欄へ自動でフォーカスしない (スマホでキーボードが勝手に出るため)
+  noFocus();
   return new Promise((resolve) => {
     dialog.onclose = async () => {
       if (dialog.returnValue === 'delete' && onDelete) {
@@ -3236,8 +3240,9 @@ function wireShoePhoto() {
   q('#shoe-file').onchange = async (e) => {
     const f = e.target.files[0];
     if (f) try { set(await resizeImage(f)); } catch (err) { alert(err.message); }
+    noFocus();
   };
-  q('#shoe-clear').onclick = () => set('');
+  q('#shoe-clear').onclick = () => { set(''); noFocus(); };
   q('#shoe-search').onclick = () => {
     const name = dialogForm.querySelector('[name=name]').value || 'running shoes';
     q('#shoe-search').href = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(name + ' シューズ')}`;
