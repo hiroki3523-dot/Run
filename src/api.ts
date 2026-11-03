@@ -789,8 +789,8 @@ api.get('/activities/:id', async (c) => {
     `SELECT id, name, start_date_local, distance_m, moving_time_s, avg_hr, score, plan_id, json_extract(evaluation, '$.role') AS role FROM activities WHERE date = ? ORDER BY start_date_local`,
   ).bind(row.date).all();
   // COROS のデータがあれば、その記録 (labelId・種目) も返す (COROS へのリンク用)
-  const ext = await c.env.DB.prepare(`SELECT ext_id, json_extract(data, '$.act.sport_type') AS st FROM ext_activities WHERE id = ? AND data NOT LIKE '{"dup_of"%'`).bind(row.id).first<{ ext_id: string; st: string }>();
-  const coros = ext ? { label_id: ext.ext_id, sport_type: ext.st === 'TrailRun' ? 102 : ext.st === 'VirtualRun' ? 101 : 100 } : null;
+  const ext = await c.env.DB.prepare(`SELECT ext_id, json_extract(data, '$.act.sport_type') AS st, json_extract(data, '$.act.coros_extra') AS ex FROM ext_activities WHERE id = ? AND data NOT LIKE '{"dup_of"%'`).bind(row.id).first<{ ext_id: string; st: string; ex: string | null }>();
+  const coros = ext ? { label_id: ext.ext_id, sport_type: ext.st === 'TrailRun' ? 102 : ext.st === 'VirtualRun' ? 101 : 100, extra: ext.ex ? JSON.parse(ext.ex) : null } : null;
   return c.json({ ...row, evaluation: row.evaluation ? JSON.parse(row.evaluation as string) : null, plan, siblings, coros });
 });
 

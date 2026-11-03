@@ -1107,3 +1107,9 @@ body::after {
 .cap-prev img { display: block; width: 100%; height: auto; -webkit-touch-callout: default; }
 .cap-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
 .cap-acts button { min-height: 50px; border-radius: 14px; font-size: 15px; font-weight: 700; }
+/* トレーニング効果のメーター */
+.te-row { display: flex; justify-content: space-around; gap: 8px; margin-top: 6px; }
+.te-g { display: flex; flex-direction: column; align-items: center; }
+.te-g b { font-size: 13px; color: var(--muted); margin-top: -6px; }
+.te-v { font-size: 26px; font-weight: 800; fill: var(--text); font-variant-numeric: tabular-nums; }
+.te-s { font-size: 11px; font-weight: 600; fill: var(--muted); }
