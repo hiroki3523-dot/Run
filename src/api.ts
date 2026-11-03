@@ -804,6 +804,99 @@ api.get('/insights', async (c) => {
   return c.json({ ...ins, aptitude: apt });
 });
 
+
+// ---------------------------------------------------------------- 回復 (毎朝の体調)
+
+const n10 = (v: unknown) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Math.max(0, Math.min(10, Math.round(Number(v)))));
+/** その日の朝の体調 (脚の疲労・筋肉の張り・痛み・睡眠・全身の疲労)。cond:YYYY-MM-DD */
+api.get('/condition', async (c) => {
+  const to = c.req.query('to') || new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const from = c.req.query('from') || addDays(to, -13);
+  const { results } = await c.env.DB.prepare("SELECT key, value FROM kv WHERE key >= ? AND key <= ? AND key LIKE 'cond:%'").bind(`cond:${from}`, `cond:${to}`).all<{ key: string; value: string }>();
+  return c.json(Object.fromEntries(results.map((r) => [r.key.slice(5), JSON.parse(r.value)])));
+});
+api.put('/condition/:date', async (c) => {
+  const d = c.req.param('date');
+  if (!isDate(d)) return c.json({ error: '日付が不正です' }, 400);
+  const b = await c.req.json<Record<string, unknown>>();
+  const v = { leg: n10(b.leg), tight: n10(b.tight), pain: n10(b.pain), pain_part: Array.isArray(b.pain_part) ? (b.pain_part as string[]).filter((x) => typeof x === 'string').slice(0, 6) : [], sleep: n10(b.sleep), fatigue: n10(b.fatigue), memo: String(b.memo ?? '').slice(0, 300) };
+  await kvSet(c.env, `cond:${d}`, JSON.stringify(v));
+  return c.json(v);
+});
+
+// ---------------------------------------------------------------- シューズの相性
+
+/** シューズごとに、同じ種類のランでの ペース・心拍・ピッチ・接地時間・主観 (走りやすさ・呼吸・脚・痛み)・翌朝の脚 を比べる */
+api.get('/shoes/compare', async (c) => {
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const st = await getSettings(c.env);
+  const [{ results: rows }, { results: shoes }, { results: kvs }] = await Promise.all([
+    c.env.DB.prepare(`SELECT a.id, a.date, a.distance_m, a.moving_time_s, a.avg_hr, a.avg_cadence_spm, a.shoe_id, COALESCE(p.type, json_extract(a.evaluation, '$.type')) AS type, json_extract(a.evaluation, '$.role') AS role
+      FROM activities a LEFT JOIN plans p ON p.id = a.plan_id WHERE a.shoe_id IS NOT NULL AND a.date >= ? AND a.sport_type LIKE '%Run%' AND a.distance_m >= 2000`).bind(addDays(today, -365)).all<any>(),
+    c.env.DB.prepare('SELECT id, name, retired FROM shoes').all<{ id: number; name: string; retired: number }>(),
+    c.env.DB.prepare("SELECT key, value FROM kv WHERE key LIKE 'fb:%' OR key LIKE 'snap:%' OR key LIKE 'cond:%'").all<{ key: string; value: string }>(),
+  ]);
+  const fb = new Map<number, any>(), snap = new Map<number, any>(), cond = new Map<string, any>();
+  for (const k of kvs) { try { const v = JSON.parse(k.value); if (k.key.startsWith('fb:')) fb.set(Number(k.key.slice(3)), normalizeFb(v)); else if (k.key.startsWith('snap:')) snap.set(Number(k.key.slice(5)), v); else cond.set(k.key.slice(5), v); } catch { /* 無視 */ } }
+  const avg = (xs: (number | null | undefined)[]) => { const v = xs.filter((x): x is number => x != null && Number.isFinite(x)); return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null; };
+  const groups: Record<string, any[]> = {};
+  for (const r of rows.filter((x) => x.role !== 'warmup' && x.role !== 'cooldown')) {
+    const pace = r.moving_time_s / (r.distance_m / 1000);
+    const g = groupOf(r.type, pace, st.paces.easy.min);
+    (groups[g] ??= []).push({ ...r, pace, f: fb.get(r.id), s: snap.get(r.id), next: cond.get(addDays(r.date, 1)) });
+  }
+  const out: Record<string, any[]> = {};
+  for (const [g, list] of Object.entries(groups)) {
+    const by = new Map<number, any[]>();
+    for (const r of list) by.set(r.shoe_id, [...(by.get(r.shoe_id) ?? []), r]);
+    const rowsG = [...by.entries()].filter(([, xs]) => xs.length >= 2).map(([sid, xs]) => ({
+      shoe_id: sid, name: shoes.find((x) => x.id === sid)?.name ?? '?', retired: shoes.find((x) => x.id === sid)?.retired ?? 0, n: xs.length,
+      km: Math.round(xs.reduce((a, r) => a + r.distance_m, 0) / 1000),
+      pace: avg(xs.map((r) => r.pace)), hr: avg(xs.map((r) => r.avg_hr)), cad: avg(xs.map((r) => r.s?.cad ?? (r.avg_cadence_spm ? r.avg_cadence_spm * 2 : null))),
+      stride: avg(xs.map((r) => r.s?.stride)), gct: avg(xs.map((r) => r.s?.gct)),
+      form: avg(xs.map((r) => r.f?.form)), breath: avg(xs.map((r) => r.f?.breath)), leg: avg(xs.map((r) => r.f?.leg)),
+      pain_n: xs.filter((r) => (r.f?.pain ?? 0) >= 3).length, next_leg: avg(xs.map((r) => r.next?.leg)),
+    }));
+    if (rowsG.length) out[g] = rowsG.sort((a, b) => b.n - a.n);
+  }
+  return c.json(out);
+});
+
+// ---------------------------------------------------------------- バックアップ (書き出し・読み込み)
+
+const BACKUP_TABLES = ['activities', 'plans', 'races', 'shoes', 'kv'] as const;
+/** すべての記録を JSON で書き出す (COROS の 1 秒ごとの記録は大きいので除く。COROS から取り直せる) */
+api.get('/backup', async (c) => {
+  const out: Record<string, unknown[]> = {};
+  for (const t of BACKUP_TABLES) {
+    const q = t === 'kv' ? "SELECT * FROM kv WHERE key NOT LIKE 'coros_%' AND key NOT LIKE 'strava_%' AND key NOT LIKE 'oauth%' AND key NOT LIKE 'rprev:%' AND key NOT LIKE 'site:%'" : `SELECT * FROM ${t}`;
+    out[t] = (await c.env.DB.prepare(q).all()).results;
+  }
+  c.header('Content-Disposition', `attachment; filename="stride-backup-${new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)}.json"`);
+  return c.json({ app: 'STRIDE', version: 1, exported_at: new Date().toISOString(), tables: out });
+});
+/** バックアップを読み込む。同じ id / key の行は上書き、無い行は追加 (今のデータは消さない) */
+api.post('/backup', async (c) => {
+  const body = await c.req.json<{ app?: string; tables?: Record<string, Record<string, unknown>[]> }>();
+  if (body?.app !== 'STRIDE' || !body.tables) return c.json({ error: 'STRIDE のバックアップファイルではありません' }, 400);
+  const counts: Record<string, number> = {};
+  for (const t of BACKUP_TABLES) {
+    const rows = body.tables[t];
+    if (!Array.isArray(rows) || !rows.length) continue;
+    const { results: cols } = await c.env.DB.prepare(`PRAGMA table_info(${t})`).all<{ name: string }>();
+    const allowed = new Set(cols.map((x) => x.name));
+    const stmts: D1PreparedStatement[] = [];
+    for (const r of rows) {
+      const keys = Object.keys(r).filter((k) => allowed.has(k));
+      if (!keys.length) continue;
+      stmts.push(c.env.DB.prepare(`INSERT OR REPLACE INTO ${t} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`).bind(...keys.map((k) => (r[k] === undefined ? null : r[k] as any))));
+    }
+    for (let k = 0; k < stmts.length; k += 80) await c.env.DB.batch(stmts.slice(k, k + 80));
+    counts[t] = stmts.length;
+  }
+  return c.json({ ok: true, counts });
+});
+
 /** ランニングのニュース (シューズ・大会・レース)。1 時間キャッシュ */
 api.get('/news', async (c) => {
   c.header('Cache-Control', 'private, max-age=1800');

@@ -190,6 +190,7 @@ async function homeView() {
       <div class="row spread"><h2>今日 ${md(t)}(${dow(t)})</h2><a href="#/plans" class="muted">計画を編集</a></div>
       ${todays.length === 0 ? '<p class="muted">メニュー未登録</p>' : todays.map((p, i) => planLine(p, false, i === 0 ? markHtml(dayJudge(t, todays, acts.filter((x) => x.date === t), settings)) : '')).join('')}
     </div>
+    <div class="card cond" id="cond"></div>
     ${wxWeek ? weekWxCard(t, wxWeek.place) : ''}
     ${next ? `
     <div class="card hero">
@@ -474,6 +475,49 @@ const LV_COLOR = { ok: 'var(--good)', warn: 'var(--mid)', bad: 'var(--bad)' };
 function goalCard() {
   return `<div class="card ins"><h2>目標への現在地</h2><div id="insights"><p class="muted">読み込み中…</p></div></div>`;
 }
+/** 毎朝の体調 (脚・張り・痛み・睡眠・全身の疲労)。疲労の蓄積や、回復状態・シューズの相性に使う */
+const COND = [['leg', '脚の疲労感', 'なし', '最大'], ['tight', '筋肉の張り', 'なし', '最大'], ['fatigue', '全身の疲労感', 'なし', '最大'], ['sleep', '睡眠の質', '悪い', 'よく眠れた'], ['pain', '痛み', 'なし', '最大']];
+async function loadCondition() {
+  const box = document.getElementById('cond');
+  if (!box) return;
+  const t = today();
+  let all = {};
+  try { all = await api(`/condition?from=${addDays(t, -6)}&to=${t}`); } catch { box.remove(); return; }
+  const cur = all[t];
+  const week = [...Array(7)].map((_, k) => addDays(t, k - 6));
+  const trend = `<div class="cd-trend">${week.map((d) => { const c = all[d]; const v = c ? Math.max(c.leg ?? 0, c.fatigue ?? 0) : null; return `<div><i style="height:${v == null ? 3 : 4 + v * 2.6}px;background:${v == null ? 'var(--line)' : v >= 7 ? 'var(--mid)' : v >= 4 ? 'var(--accent)' : 'var(--good)'}"></i><small>${dow(d)}</small></div>`; }).join('')}</div>`;
+  const legs = week.map((d) => all[d]?.leg).filter((x) => x != null);
+  const warn = legs.length >= 3 && legs.slice(-3).every((x) => x >= 6) ? '<p class="cd-warn">脚の疲労が 3 日続けて 6 以上。疲れがたまっています。強い練習は 1 日ずらすのがおすすめ。</p>' : '';
+  const form = (st) => {
+    box.innerHTML = `<div class="row spread"><h2>今朝の体調</h2>${cur ? '<button type="button" class="chip" data-cd="cancel">閉じる</button>' : ''}</div>
+      <p class="muted" style="margin:0 0 6px;font-size:12.5px">起きたときの状態を 10 秒で。疲労の蓄積や回復の判断に使います。</p>
+      ${COND.map(([k, title, lo, hi]) => `<div class="fs ${st[k] == null ? 'unset' : ''}" data-k="${k}"><div class="fs-h"><b>${title}</b><span class="fs-v num"><em>${st[k] ?? '–'}</em><small>/10</small></span></div>
+        <div class="fs-track" style="--v:${st[k] ?? 0}"><div class="fs-dots">${Array.from({ length: 11 }, () => '<i></i>').join('')}</div><div class="fs-thumb"></div></div><div class="fs-l"><span>${lo}</span><span>${hi}</span></div></div>`).join('')}
+      <div class="fbx-q fbx-pain ${(st.pain ?? 0) > 0 ? '' : 'hidden'}"><b>痛む場所</b><div class="chips">${PAIN_PARTS.map((v) => `<button type="button" class="chip ${(st.pain_part || []).includes(v) ? 'on' : ''}" data-pn="${v}">${v}</button>`).join('')}</div></div>
+      <button type="button" class="fbx-save" data-cd="save">保存</button>`;
+    box.querySelectorAll('.fs').forEach((el) => {
+      const k = el.dataset.k, tr = el.querySelector('.fs-track');
+      const at = (e) => { const r = tr.getBoundingClientRect(); const v = Math.max(0, Math.min(10, Math.round(((e.clientX - r.left - 22) / (r.width - 44)) * 10))); st[k] = v; el.classList.remove('unset'); tr.style.setProperty('--v', v); el.querySelector('em').textContent = v; if (k === 'pain') box.querySelector('.fbx-pain').classList.toggle('hidden', !(v > 0)); };
+      let on = false;
+      tr.addEventListener('pointerdown', (e) => { on = true; tr.setPointerCapture(e.pointerId); at(e); });
+      tr.addEventListener('pointermove', (e) => { if (on) at(e); });
+      ['pointerup', 'pointercancel'].forEach((ev) => tr.addEventListener(ev, () => { on = false; }));
+    });
+    box.querySelectorAll('[data-pn]').forEach((b) => (b.onclick = () => { const set = new Set(st.pain_part || []); set.has(b.dataset.pn) ? set.delete(b.dataset.pn) : set.add(b.dataset.pn); st.pain_part = [...set]; b.classList.toggle('on'); }));
+    box.querySelector('[data-cd="save"]').onclick = async (e) => { e.target.disabled = true; try { all[t] = await api(`/condition/${t}`, { method: 'PUT', body: st }); loadCondition(); } catch (err) { alert(err.message); e.target.disabled = false; } };
+    const cancel = box.querySelector('[data-cd="cancel"]'); if (cancel) cancel.onclick = () => loadCondition();
+  };
+  if (!cur) {
+    box.innerHTML = `<div class="row spread"><h2>今朝の体調</h2><button type="button" class="chip" data-cd="open">記録する</button></div>${trend}${warn}`;
+    box.querySelector('[data-cd="open"]').onclick = () => form({ leg: null, tight: null, fatigue: null, sleep: null, pain: null, pain_part: [] });
+    return;
+  }
+  const SH = { leg: '脚', tight: '張り', fatigue: '全身', sleep: '睡眠', pain: '痛み' };
+  box.innerHTML = `<div class="row spread"><h2>今朝の体調</h2><button type="button" class="chip" data-cd="edit">修正</button></div>
+    <div class="cd-sum">${COND.filter(([k]) => cur[k] != null).map(([k]) => `<div><small>${SH[k]}</small><b class="num">${cur[k]}</b></div>`).join('')}${(cur.pain_part || []).length ? `<div><small>痛む場所</small><b style="font-size:13px">${cur.pain_part.map(esc).join('・')}</b></div>` : ''}</div>${trend}${warn}`;
+  box.querySelector('[data-cd="edit"]').onclick = () => form({ ...cur });
+}
+
 /** マラソン適性 (6 つの能力) と予測の根拠 */
 function aptitudeHtml(a) {
   const LV = { good: ['良い', 'var(--good)'], ok: ['普通', 'var(--accent)'], bad: ['課題', 'var(--mid)'], hold: ['保留', 'var(--muted)'] };
@@ -2923,7 +2967,41 @@ async function shoesView() {
     ${guesses.length ? `<div class="card"><p class="muted" style="margin-top:0">名前から、用途を自動で設定できます (${guesses.length}足)。</p><button id="guess" class="primary wide">用途をまとめて設定</button></div>` : ''}
     <div class="card"><ul class="list shoes">${active.map(row).join('') || '<li class="muted">使用中のシューズはありません</li>'}</ul></div>
     ${rest.length ? `<h3 class="sub" style="margin:18px 4px 6px">予備・引退 (${rest.length}足)</h3><div class="card"><ul class="list shoes">${rest.map(row).join('')}</ul></div>` : ''}
-    <p class="muted hint">右へスライドで「予備/使用中」、左へスライドで「引退」。タップすると写真・用途・走行距離を直せます。</p>`;
+    <p class="muted hint">右へスライドで「予備/使用中」、左へスライドで「引退」。タップすると写真・用途・走行距離を直せます。</p>
+    <h2 class="sect">シューズの相性</h2><div class="card" id="shoe-cmp"><p class="muted">読み込み中…</p></div>`;
+}
+
+/** シューズの相性: 同じ種類のランで、シューズごとに比べる (2 本以上走ったシューズだけ) */
+const GROUP_LABEL = { easy: 'ジョグ・イージー', tempo: 'ポイント練', long: 'ロング走', interval: 'インターバル', race: 'レース' };
+async function loadShoeCompare() {
+  const box = document.getElementById('shoe-cmp');
+  if (!box) return;
+  let data = {};
+  try { data = await api('/shoes/compare'); } catch { box.innerHTML = '<p class="muted">読み込めませんでした。</p>'; return; }
+  const keys = Object.keys(GROUP_LABEL).filter((k) => data[k]?.length);
+  if (!keys.length) { box.innerHTML = '<p class="muted">シューズを付けたランが、同じ種類で 2 本以上あるシューズが出てくると比べられます。</p>'; return; }
+  let cur = keys.find((k) => data[k].length >= 2) || keys[0];
+  const f = (v, u = '') => (v == null ? '-' : `${v}${u}`);
+  const draw = () => {
+    const rows = data[cur];
+    const best = (k, low) => { const v = rows.map((r) => r[k]).filter((x) => x != null); return v.length >= 2 ? (low ? Math.min(...v) : Math.max(...v)) : null; };
+    const mark = (r, k, low) => (r[k] != null && r[k] === best(k, low) ? ' class="sc-best"' : '');
+    box.innerHTML = `<div class="seg sc-tabs">${keys.map((k) => `<a href="javascript:void 0" data-sg="${k}" class="${k === cur ? 'on' : ''}">${GROUP_LABEL[k]}</a>`).join('')}</div>
+      <div class="sc-wrap"><table class="an-cmp num sc-t"><tr><th></th>${rows.map((r) => `<th>${esc(r.name)}<br><small>${r.n}本・${r.km}km</small></th>`).join('')}</tr>
+      <tr><td>ペース</td>${rows.map((r) => `<td${mark(r, 'pace', true)}>${r.pace ? pace(r.pace) : '-'}</td>`).join('')}</tr>
+      <tr><td>心拍</td>${rows.map((r) => `<td${mark(r, 'hr', true)}>${f(r.hr)}</td>`).join('')}</tr>
+      <tr><td>ピッチ</td>${rows.map((r) => `<td>${f(r.cad)}</td>`).join('')}</tr>
+      <tr><td>ストライド</td>${rows.map((r) => `<td>${f(r.stride, 'cm')}</td>`).join('')}</tr>
+      <tr><td>接地時間</td>${rows.map((r) => `<td${mark(r, 'gct', true)}>${f(r.gct, 'ms')}</td>`).join('')}</tr>
+      <tr><td>走りやすさ</td>${rows.map((r) => `<td${mark(r, 'form', false)}>${f(r.form, '/10')}</td>`).join('')}</tr>
+      <tr><td>呼吸</td>${rows.map((r) => `<td${mark(r, 'breath', true)}>${f(r.breath, '/10')}</td>`).join('')}</tr>
+      <tr><td>脚の疲労</td>${rows.map((r) => `<td${mark(r, 'leg', true)}>${f(r.leg, '/10')}</td>`).join('')}</tr>
+      <tr><td>翌朝の脚</td>${rows.map((r) => `<td${mark(r, 'next_leg', true)}>${f(r.next_leg, '/10')}</td>`).join('')}</tr>
+      <tr><td>痛み (3以上)</td>${rows.map((r) => `<td>${r.pain_n}回</td>`).join('')}</tr></table></div>
+      <p class="muted an-note">同じ種類のランだけで比べています。速さより「自然に走れるか (走りやすさ)」「疲れが少ないか (脚・翌朝の脚)」を重く見てください。緑はその項目でいちばん良いシューズ。主観は、ふりかえりと毎朝の体調から。</p>`;
+    box.querySelectorAll('[data-sg]').forEach((a) => (a.onclick = () => { cur = a.dataset.sg; draw(); }));
+  };
+  draw();
 }
 
 /** 写真を選ぶと 320px 以内の JPEG に縮小して data URL にする */
@@ -3107,6 +3185,34 @@ async function settingsView() {
       return res.map((x) => `[${x.ok ? 'OK' : '失敗'}] ${x.channel}${x.error ? `: ${x.error}` : ' に送信しました'}`).join('\n');
     };
     run('#test-notify', async () => notifyText(await api('/notify/test', { method: 'POST' })));
+    const bkMsg = (t) => { const m = view.querySelector('#bk-msg'); if (m) m.textContent = t; };
+    view.querySelector('#bk-out')?.addEventListener('click', async () => {
+      bkMsg('書き出し中…');
+      try {
+        const data = await api('/backup');
+        const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+        const name = `stride-backup-${today()}.json`;
+        const file = new File([blob], name, { type: 'application/json' });
+        if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file] }); } catch {} }
+        else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+        const n = Object.entries(data.tables).map(([k, v]) => `${k} ${v.length}`).join('・');
+        bkMsg(`書き出しました (${n})`);
+      } catch (e) { bkMsg(`エラー: ${e.message}`); }
+    });
+    view.querySelector('#bk-in')?.addEventListener('click', () => view.querySelector('#bk-file').click());
+    view.querySelector('#bk-file')?.addEventListener('change', async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      try {
+        const data = JSON.parse(await f.text());
+        if (!confirm(`${f.name} を読み込みます。同じ記録は上書きされます。よろしいですか？`)) return;
+        bkMsg('読み込み中…');
+        const r = await api('/backup', { method: 'POST', body: data });
+        bkMsg(`読み込みました (${Object.entries(r.counts).map(([k, v]) => `${k} ${v}`).join('・')})`);
+        cachedSettings = null;
+      } catch (err) { bkMsg(`エラー: ${err.message}`); }
+      e.target.value = '';
+    });
     run('#morning', async () => notifyText(await api('/notify/morning', { method: 'POST' })));
     const fmtTime = (ep) => new Date(ep * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
     const renderBackfill = (b) => {
@@ -3219,6 +3325,12 @@ async function settingsView() {
       <div class="row"><button id="open-cal" class="primary">カレンダーに追加</button><button id="copy-cal">URL をコピー</button></div>
     </div>
     <div class="card">
+      <h2>バックアップ</h2>
+      <p class="muted">計画・実績・レース・シューズ・ふりかえり・体調をファイルに書き出し、別の環境へ引き継げます (COROS の 1 秒ごとの記録は含みません。COROS から取り直せます)。読み込むと、同じ記録は上書き、無い記録は追加します。</p>
+      <div class="row"><button id="bk-out" class="primary">書き出す</button><button id="bk-in">読み込む</button><input type="file" id="bk-file" accept="application/json,.json" hidden></div>
+      <p class="muted" id="bk-msg"></p>
+    </div>
+    <div class="card">
       <h2>通知</h2>
       <p class="muted">ntfy: ${status.ntfy_topic_set ? '設定済み' : '未設定'}・Bark: ${status.bark_set ? '設定済み' : '未設定'}</p>
       <div class="row"><button id="test-notify">テスト通知</button><button id="morning">朝の通知を今すぐ送る</button></div>
@@ -3306,6 +3418,8 @@ async function route() {
     bindTrend(view);
     if (document.getElementById('news-list')) loadNews();
     if (document.getElementById('insights')) loadInsights();
+    if (document.getElementById('shoe-cmp')) loadShoeCompare();
+    if (document.getElementById('cond')) loadCondition();
   } catch (e) {
     view.innerHTML = `<div class="card error">${esc(e.message)}</div>`;
   }
