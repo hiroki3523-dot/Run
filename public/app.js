@@ -117,6 +117,37 @@ function openDialog(html, { onDelete } = {}) {
 
 // ---------------------------------------------------------------- views
 
+/** 今の画面 (内容の部分) を 1 枚の画像にして、保存・共有できるようにする */
+async function captureView(title) {
+  const ov = document.createElement('div');
+  ov.className = 'sheet capsheet';
+  ov.innerHTML = '<div class="sheet-bg"></div><div class="sheet-body"><p class="muted" style="text-align:center;margin:30px 0">画像を作っています…</p></div>';
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector('.sheet-bg').onclick = close;
+  try {
+    const { toBlob } = await import('https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/+esm');
+    // 開いている折りたたみはそのまま、ボタン類 (no-cap) は写さない
+    const bg = getComputedStyle(document.body).backgroundColor;
+    const blob = await toBlob(view, { pixelRatio: Math.min(3, window.devicePixelRatio || 2), backgroundColor: bg, cacheBust: true, filter: (n) => !(n.classList && n.classList.contains('no-cap')), style: { padding: '14px', margin: '0' } });
+    const name = `${String(title || 'STRIDE').replace(/[\\/:*?"<>|]/g, '')}.png`;
+    const file = new File([blob], name, { type: 'image/png' });
+    const url = URL.createObjectURL(blob);
+    ov.querySelector('.sheet-body').innerHTML = `<div class="cap-prev"><img src="${url}" alt=""></div>
+      <div class="cap-acts"><button type="button" class="primary" data-cap="share">保存・共有</button><button type="button" data-cap="close">閉じる</button></div>
+      <p class="muted" style="text-align:center;font-size:12px;margin:8px 0 0">「保存・共有」→「画像を保存」で写真に入ります。画像を長押ししても保存できます。</p>`;
+    ov.querySelector('[data-cap="close"]').onclick = () => { URL.revokeObjectURL(url); close(); };
+    ov.querySelector('[data-cap="share"]').onclick = async () => {
+      if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file] }); } catch {} return; }
+      const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    };
+  } catch (e) {
+    ov.querySelector('.sheet-body').innerHTML = `<p class="error" style="margin:24px 16px">画像を作れませんでした: ${esc(e.message)}</p><div class="cap-acts"><button type="button" data-cap="close">閉じる</button></div>`;
+    ov.querySelector('[data-cap="close"]').onclick = close;
+  }
+}
+document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-capture]'); if (b) captureView(b.dataset.capture); });
+
 /** ホームのニュース。画面を出したあとで読み込む (遅くてもホームの表示を待たせない) */
 const NEWS_TAG = { シューズ: 'var(--c-long)', 大会: 'var(--c-m)', レース: 'var(--c-easy)', セール: 'var(--bad)' };
 function ago(iso) {
@@ -1935,7 +1966,7 @@ async function activityDetailView(id) {
 
   return `
     <div class="card hd">
-      <div class="row spread"><h2>${esc(a.name)}</h2><span class="ext-links">${a.coros ? `<a class="muted" href="https://t.coros.com/activity-detail?labelId=${encodeURIComponent(a.coros.label_id)}&sportType=${a.coros.sport_type}" target="_blank" rel="noopener">COROS ↗</a>` : ''}${a.id > 0 ? `<a class="muted" href="https://www.strava.com/activities/${a.id}" target="_blank" rel="noopener">Strava ↗</a>` : ''}</span></div>
+      <div class="row spread"><h2>${esc(a.name)}</h2><span class="ext-links"><button type="button" class="cap-btn no-cap" data-capture="${esc(a.name)}" aria-label="画面を画像で保存"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19h14"/></svg>画像</button>${a.coros ? `<a class="muted" href="https://t.coros.com/activity-detail?labelId=${encodeURIComponent(a.coros.label_id)}&sportType=${a.coros.sport_type}" target="_blank" rel="noopener">COROS ↗</a>` : ''}${a.id > 0 ? `<a class="muted" href="https://www.strava.com/activities/${a.id}" target="_blank" rel="noopener">Strava ↗</a>` : ''}</span></div>
       <div class="muted">${a.start_date_local.slice(0, 16).replace('T', ' ')}${ev?.role ? `<span class="role">${{ warmup: 'アップ', work: 'メイン', cooldown: 'ダウン' }[ev.role]}</span>` : ''}</div>
       <div class="row spread hd-main"><div class="num"><span class="hd-km">${km(a.distance_m, 2)}</span><span class="hd-u">km</span></div>
         <div style="text-align:right"><div class="muted">総合</div><div class="big">${scoreHtml(a.score)}</div></div></div>
@@ -2880,7 +2911,7 @@ async function settingsView() {
           <div class="row coros-btns"><button type="button" data-cs="sync" class="primary">今すぐ確認</button><button type="button" data-cs="b30">過去30日</button><button type="button" data-cs="all">全期間</button><button type="button" data-cs="fit">体力データ</button></div>
           <p class="muted coros-msg" style="margin:6px 0 0"></p>
           <details class="coros-dbg"><summary>うまく取り込めないとき (診断)</summary>
-            <div class="row"><button type="button" data-dbg="querySportRecords">ランの一覧</button><button type="button" data-dbg="queryFitnessAssessmentOverview">体力評価</button><button type="button" data-probe="1">取得テスト</button><button type="button" data-cs="off" class="danger">連携を解除</button></div>
+            <div class="row"><button type="button" data-dbg="querySportRecords">ランの一覧</button><button type="button" data-dbg="queryFitnessAssessmentOverview">体力評価</button><button type="button" data-probe="1">取得テスト</button><button type="button" data-cs="fitf">FIT の項目</button><button type="button" data-cs="re14">直近14日を取り直す</button><button type="button" data-cs="off" class="danger">連携を解除</button></div>
             <pre class="coros-raw"></pre><button type="button" class="chip" data-copyraw="1">結果をコピー</button></details>`
           : `<div class="coros-st"><span class="dot"></span><b>COROS は未連携</b></div>
              <a class="btn primary wide" style="margin-top:8px;display:block;text-align:center" href="/auth/coros?key=${encodeURIComponent(getToken())}">COROS と連携</a>
@@ -2897,6 +2928,8 @@ async function settingsView() {
           if (probe) { box.querySelector('.coros-raw').textContent = '調べています (20 秒ほど)…'; const r = await api('/coros/probe'); box.querySelector('.coros-raw').textContent = r.text; }
           else if (dbg) { const r = await api(`/coros/debug?tool=${dbg}`); box.querySelector('.coros-raw').textContent = r.text || JSON.stringify(r.structured, null, 1); }
           else if (act === 'sync') { const r = await api('/coros/sync', { method: 'POST' }); draw(r); msg(`新しいラン ${r.added} 件・取り込み ${r.imported} 件${r.removed ? `・Strava と同じ ${r.removed} 件を 1 件にまとめました` : ''}`); }
+          else if (act === 'fitf') { const r = await api('/coros/status'); box.querySelector('.coros-raw').textContent = r.fit_fields ? `${r.fit_fields.date} のラン (${r.fit_fields.label})\n${r.fit_fields.fields.join('\n')}` : 'まだ記録がありません (次にランを取り込むと出ます)'; }
+          else if (act === 're14') { if (!confirm('直近14日のランを COROS から取り直します (歩幅・接地時間・上下動などを入れ直すため)。1 日 50 件までです。')) { b.disabled = false; return; } const r = await api('/coros/reimport', { method: 'POST', body: { days: 14 } }); msg(`${r.queued} 件を取り直します。毎分 2 件ずつ`); }
           else if (act === 'b30') { const r = await api('/coros/backfill', { method: 'POST', body: { days: 30 } }); draw(r); msg(`${r.added} 件を取り込み待ちにしました。毎分少しずつ取り込みます`); }
           else if (act === 'all') { if (!confirm('COROS の全期間のランを取り込みます。Strava にもあるランは 1 件のまま中身を COROS に置き換えます (Strava のランは消えません)。新しいものから 1 日 50 件ずつ取り込みます。')) { b.disabled = false; return; } const r = await api('/coros/backfill', { method: 'POST', body: { all: true } }); draw(r); msg('全期間の取り込みを始めました。閉じて大丈夫です'); }
           else if (act === 'fit') { const f = await api('/coros/fitness', { method: 'POST' }); msg(`ランニングレベル ${f.running_level ?? '-'}・予測 フル ${f.predicted_s?.full ? dur(f.predicted_s.full) : '-'}・閾値ペース ${f.lt_pace_s ? pace(f.lt_pace_s) : '-'}・閾値心拍 ${f.lthr ?? '-'}。反映しました`); setTimeout(route, 1500); }
