@@ -198,9 +198,11 @@ async function loadNews() {
   if (!box) return;
   try {
     const list = await api('/news');
-    box.innerHTML = list.length ? `<ul class="news-l">${list.map((n) => `<li><a href="${esc(n.url)}" target="_blank" rel="noopener">
+    const item = (n) => `<li><a href="${esc(n.url)}" target="_blank" rel="noopener">
       <span class="news-tag" style="--tc:${NEWS_TAG[n.tag] || 'var(--muted)'}">${esc(n.tag)}</span>
-      <b>${esc(n.title)}</b><small class="muted">${esc(n.source)}・${ago(n.date)}</small></a></li>`).join('')}</ul>` : '<p class="muted">いまは表示できるニュースがありません。</p>';
+      <b>${esc(n.title)}</b><small class="muted">${esc(n.source)}・${ago(n.date)}</small></a></li>`;
+    // 初めは 5 件。残りは「もっと見る」で
+    box.innerHTML = list.length ? `<ul class="news-l">${list.slice(0, 5).map(item).join('')}</ul>${list.length > 5 ? `<details class="news-more"><summary>もっと見る (${list.length - 5}件)</summary><ul class="news-l">${list.slice(5).map(item).join('')}</ul></details>` : ''}` : '<p class="muted">いまは表示できるニュースがありません。</p>';
   } catch { box.innerHTML = '<p class="muted">ニュースを読み込めませんでした。</p>'; }
 }
 
@@ -223,29 +225,37 @@ async function homeView() {
   const endDay = next && next.date <= addDays(ws, 7 * 14) ? next.date : addDays(ws, 6);
   const summary = await api(`/summary?from=${addDays(ws, -7 * 6)}&to=${endDay}`);
 
+  // 今週の走行距離 / 計画 (計画画面の上と同じ数え方: 週の計画の合計と、週に走った距離)
+  const weekActs = acts.filter((x) => x.date >= ws && x.date <= addDays(ws, 6));
+  const wkKm = weekActs.reduce((x, a) => x + a.distance_m, 0) / 1000;
+  const wkPlan = uniqPlans(plans).filter((p) => p.type !== 'rest').reduce((x, p) => x + (p.distance_m || 0), 0) / 1000;
+  const wkPct = wkPlan ? Math.round((wkKm / wkPlan) * 100) : null;
+  const ranToday = acts.some((x) => x.date === t);
   return `
     ${status.strava_connected || status.coros_connected || settings.source === 'coros' ? '' : '<div class="card error">ランのデータが未連携です。<a href="#/settings">設定</a>から COROS か Strava と連携してください。</div>'}
-    <div class="card">
-      <div class="row spread"><h2>今日 ${md(t)}(${dow(t)})</h2><a href="#/plans" class="muted">計画を編集</a></div>
-      ${todays.length === 0 ? '<p class="muted">メニュー未登録</p>' : todays.map((p, i) => planLine(p, false, i === 0 ? markHtml(dayJudge(t, todays, acts.filter((x) => x.date === t), settings)) : '')).join('')}
+    <div class="card hm-today">
+      <div class="row spread"><h2>今日のトレーニング <small class="muted num">${md(t)}(${dow(t)})</small></h2><a href="#/plans" class="chip mini">計画</a></div>
+      ${todays.length === 0 ? '<p class="muted">メニュー未登録。<a href="#/plans">計画</a>から追加できます。</p>' : todays.map((p, i) => planLine(p, false, i === 0 ? markHtml(dayJudge(t, todays, acts.filter((x) => x.date === t), settings)) : '')).join('')}
+      ${ranToday ? `<a class="hm-link" href="#/activities?view=day&date=${t}">今日の実績を見る ›</a>` : ''}
     </div>
+    <a class="card hm-week" href="#/plans">
+      <div class="row spread"><b>今週の走行距離</b><span class="muted num">${wkPct != null ? `${wkPct}%` : ''}</span></div>
+      <div class="hm-week-n num"><b>${wkKm.toFixed(1)}</b><small>km</small><span class="muted">${wkPlan ? `/ 計画 ${wkPlan.toFixed(1)}km` : '計画なし'}</span></div>
+      ${wkPlan ? `<div class="bar"><div style="width:${Math.min(100, wkPct)}%"></div></div>` : ''}
+    </a>
     <div class="card cond" id="cond" data-plan="${esc(JSON.stringify(todays.map((p) => ({ type: p.type, km: p.distance_m ? Math.round(p.distance_m / 100) / 10 : null }))))}"></div>
     ${next ? `
-    <div class="card hero">
-      <div class="row spread"><h2>${esc(next.name)}まで</h2><span class="badge">${esc(next.priority)}</span></div>
-      <div class="row spread">
-        <div class="hero-d">${daysBetween(t, next.date) === 0 ? '<span class="big" style="font-size:44px">本日</span>' : `あと <span class="big">${daysBetween(t, next.date)}</span> 日`}</div>
-        <div class="muted num">${md(next.date)}・${km(next.distance_m)}km${next.goal_time_s ? `<br>目標 ${dur(next.goal_time_s)} (${pace(next.goal_time_s / (next.distance_m / 1000))}/km)` : ''}</div>
-      </div>
-      <a class="herolink" href="#/races/${next.id}">ペース表・持ち物 ›</a>
-    </div>
-    ${weatherCard(weather)}
-    ${goalCard()}` : ''}
+    <a class="card hm-race" href="#/races/${next.id}">
+      <div class="row spread"><small class="muted">次のレース</small>${next.priority === 'A' ? '<span class="rb rb-main">本命</span>' : ''}</div>
+      <b class="hm-rname">${esc(next.name)}</b>
+      <div class="hm-rrow"><div class="num">${daysBetween(t, next.date) === 0 ? '<b class="hm-days">本日</b>' : `あと <b class="hm-days">${daysBetween(t, next.date)}</b> 日`}</div>
+        <div class="num hm-rgoal"><small class="muted">${md(next.date)}(${dow(next.date)})・${km(next.distance_m)}km</small>${next.goal_time_s ? `<b>目標 ${dur(next.goal_time_s)}</b><small class="muted">${pace(next.goal_time_s / (next.distance_m / 1000))}/km</small>` : '<small class="muted">目標未設定</small>'}</div></div>
+      <span class="hm-link">ペース表・持ち物 ›</span>
+    </a>
+    ${goalCard()}
+    ${weatherCard(weather)}` : ''}
     ${await monthGoalCard(t)}
-    <div class="card">
-      <h2>週間距離</h2>
-      ${weeklyChart(summary)}
-    </div>
+    <details class="card rv-acc hm-acc"><summary>週間距離のグラフ</summary><div class="rv-acc-b">${weeklyChart(summary)}</div></details>
     ${wxWeek ? weekWxCard(t, wxWeek.place) : ''}
     <div class="card news"><h2>ランニングニュース</h2><div id="news-list"><p class="muted">読み込み中…</p></div></div>`;
 }
@@ -2793,6 +2803,11 @@ async function raceDetailView(id) {
       <div class="rl-hrow"><div>${!upcoming ? '<span class="muted">終了</span>' : est0 ? '<span class="muted">開催日が決まったら残り日数を出します</span>' : `あと <b class="big num">${dleft}</b> 日`}</div>
         <div class="rl-hgoal num"><small>目標</small><b>${r.goal_time_s ? dur(r.goal_time_s) : '未設定'}</b>${r.goal_time_s ? `<small>平均 ${pace(r.goal_time_s / (r.distance_m / 1000))}/km</small>` : ''}</div></div>
     </div>
+    <div class="rd-tiles">
+      <div class="hl-tile"><small>目標</small><b class="num">${r.goal_time_s ? dur(r.goal_time_s) : '-'}</b></div>
+      <div class="hl-tile"><small>平均ペース</small><b class="num">${r.goal_time_s ? `${pace(r.goal_time_s / (r.distance_m / 1000))}<small>/km</small>` : '-'}</b></div>
+      <div class="hl-tile"><small>スタート</small><b class="num">${myStartClock(r) != null ? clockTxt(myStartClock(r)) : esc(inf0.start_time || '-')}</b></div>
+    </div>
     <div class="rd-tabs" role="tablist" aria-label="レースの項目">${[['about', '概要'], ['plan', '戦略'], ['prep', '準備'], ['result', '実績']].map(([k, l], i) => `<a href="javascript:void 0" data-go="${k}" class="${i === 0 ? 'on' : ''}">${l}</a>`).join('')}</div>
     <div id="rs-about" class="rd-sec">
     ${raceInfoCard(r)}
@@ -3512,6 +3527,7 @@ async function shoeDetailView(id) {
   SHOES = shoes; SHOE_FIT = cmp;
   setTimeout(() => {
     view.querySelector('#shoe-edit').onclick = () => editShoe(s);
+    view.querySelector('[data-feel-edit]').onclick = () => editShoe(s);
     view.querySelectorAll('[data-shtab]').forEach((a) => (a.onclick = () => {
       view.querySelectorAll('[data-shtab]').forEach((x) => x.classList.toggle('on', x === a));
       view.querySelectorAll('.sh-pane').forEach((p) => p.classList.toggle('hidden', p.dataset.pane !== a.dataset.shtab));
@@ -3535,32 +3551,61 @@ async function shoeDetailView(id) {
   }).join('');
   // 履き分け: これから 7 日の計画のうち、このシューズがおすすめになる日
   const recs = plans.filter((p) => p.type !== 'rest').map((p) => ({ p, r: recommendShoe(p.type) })).filter((x) => x.r && x.r.shoe.id === s.id);
+  // このシューズの結論 (使用実績から読み取れることだけ。データが無ければ書かない)
+  const mine = Object.entries(GROUP_LABEL).map(([g, label]) => ({ g, label, me: (cmp[g] || []).find((r) => r.shoe_id === s.id), others: (cmp[g] || []).filter((r) => r.shoe_id !== s.id) })).filter((x) => x.me);
+  const mostUsed = [...mine].sort((a, b) => b.me.n - a.me.n)[0];
+  const facts = [];
+  for (const x of mine) {
+    if (!x.others.length) continue;
+    const avg = (k) => { const v = x.others.map((r) => r[k]).filter((y) => y != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+    const leg = avg('leg'), hr = avg('hr');
+    if (x.me.leg != null && leg != null && x.me.leg - leg <= -1) facts.push(`${x.label}では、ほかのシューズより脚の疲労が少なめ`);
+    else if (x.me.leg != null && leg != null && x.me.leg - leg >= 1) facts.push(`${x.label}では、ほかのシューズより脚の疲労が多め`);
+    if (x.me.hr != null && hr != null && Math.abs(x.me.hr - hr) >= 3) facts.push(`${x.label}では、ほかのシューズより心拍が ${Math.abs(Math.round(x.me.hr - hr))}bpm ${x.me.hr < hr ? '低め' : '高め'}`);
+  }
+  const conclusion = mostUsed ? `主に${mostUsed.label}で使用 (${mostUsed.me.n}本・${mostUsed.me.km}km)。${facts.length ? facts.slice(0, 2).join('。') + '。' : ''}` : '';
+  const kmax = Math.max(1, ...mine.map((x) => x.me.km));
+  const recent = h.months.slice(-6), older = h.months.slice(0, -6);
+  const mrow = (m) => `<div class="mbk"><span>${Number(m.month.slice(5))}月 <small class="muted">${m.month.slice(0, 4)}</small></span><i style="width:${(m.km / mmax) * 100}%"></i><b class="num">${m.km}km</b></div>`;
+  const histRow = (a) => {
+    const kmv = a.distance_m / 1000;
+    const lab = a.race_name ? esc(a.race_name) : (a.type && a.type !== 'free') || a.plan_type ? runTypeLabel(a) : esc(a.name);
+    return `<a class="hl-run" href="#/activities/${a.id}"><span class="sh-hd num">${md(a.date)}<small>(${dow(a.date)})</small></span><div class="hl-tx"><b>${lab}</b><small class="num">${kmv.toFixed(2)}km・${pace(a.moving_time_s / kmv)}/km${a.avg_hr ? `・${Math.round(a.avg_hr)}bpm` : ''}</small></div>${scoreTag(a.score)}</a>`;
+  };
+  const feelN = SHOE_FEEL.filter(([k]) => f[k] != null).length;
+  const wear = s.limit_km ? s.total_km / s.limit_km : null;
   return `
-    <div class="card sh-hero">
-      ${shoeImg(s, true)}
-      <h2 style="margin:10px 0 4px">${esc(shoeName(s))}</h2>
-      <div class="sh-tags" style="justify-content:center">${pu.map((p) => `<span class="sh-tag">${PURPOSE_SHORT[p]}</span>`).join('') || '<span class="sh-tag none">用途未設定</span>'}<span class="sh-tag st">${st}</span></div>
-      <div class="hl-tiles" style="margin-top:12px"><div class="hl-tile"><small>累計</small><b class="num">${s.total_km.toFixed(1)}<small>km</small></b><span>${s.initial_km ? `登録前 ${s.initial_km}km を含む` : ''}</span></div>
-        <div class="hl-tile"><small>目安</small><b class="num">${s.limit_km}<small>km</small></b><span>${s.limit_km ? `${Math.round((s.total_km / s.limit_km) * 100)}%` : ''}</span></div>
-        <div class="hl-tile"><small>使った回数</small><b class="num">${h.total_runs}<small>回</small></b><span>${h.first_date ? `${md(h.first_date)}〜${md(h.last_date)}` : '記録なし'}</span></div></div>
-      ${wearBar(s)}
-      <p class="muted an-note" style="text-align:left">目安は登録した値で、靴の傷み具合を測ったものではありません。</p>
+    <div class="card sh-head">
+      <div class="sh-head-top">${shoeImg(s, false)}<div class="sh-head-tx"><b class="sh-title">${esc(shoeName(s))}</b>
+        <div class="sh-tags">${pu.map((p) => `<span class="sh-tag">${PURPOSE_SHORT[p]}</span>`).join('') || '<span class="sh-tag none">用途未設定</span>'}<span class="sh-tag st">${st}</span></div></div></div>
+      <div class="hl-tiles"><div class="hl-tile"><small>累計距離</small><b class="num">${s.total_km.toFixed(1)}<small>km</small></b><span>${s.initial_km ? '補正を含む' : 'アプリの記録'}</span></div>
+        <div class="hl-tile"><small>目安 (設定値)</small><b class="num">${s.limit_km}<small>km</small></b><span>${wear != null ? `累計の ${Math.round(wear * 100)}%` : ''}</span></div>
+        <div class="hl-tile"><small>使用回数</small><b class="num">${h.total_runs}<small>回</small></b><span>${h.first_date ? `${md(h.first_date)}〜${md(h.last_date)}` : '記録なし'}</span></div></div>
+      <div class="bar" style="margin-top:10px"><div style="width:${Math.min(100, (wear ?? 0) * 100)}%"></div></div>
+      <p class="muted an-note">目安は自分で決めた値で、靴の傷み具合を測ったものではありません。</p>
       <button type="button" class="wide" id="shoe-edit" style="margin-top:8px">写真・用途・距離・使用感を編集</button>
     </div>
     <div class="seg sh-tabs"><a href="javascript:void 0" data-shtab="fit" class="on">相性</a><a href="javascript:void 0" data-shtab="hist">使用履歴</a><a href="javascript:void 0" data-shtab="feel">使用感</a></div>
     <div class="sh-pane" data-pane="fit">
-      <div class="card"><h2>このシューズの傾向</h2>${fitRows || '<p class="muted">このシューズで、同じ種類のランが 2 本以上あると出ます。</p>'}
+      ${conclusion ? `<div class="card sh-concl"><small>このシューズの傾向</small><p>${esc(conclusion)}</p></div>` : ''}
+      <div class="card"><h2>練習の種類ごと</h2>${mine.length ? mine.map((x) => `<div class="mbk"><span>${x.label}</span><i style="width:${(x.me.km / kmax) * 100}%"></i><b class="num">${x.me.n}本・${x.me.km}km</b></div>`).join('') : ''}
+        ${fitRows ? `<details class="rv-acc"><summary>くわしい数字 (ペース・心拍・ピッチ・ほかのシューズとの差)</summary><div class="rv-acc-b">${fitRows}</div></details>` : '<p class="muted">このシューズで、同じ種類のランが 2 本以上あると出ます。</p>'}
         <p class="muted an-note">気温・コース・疲れ・練習の目的の違いも数字に入っています。シューズのせいだと決めつけず、傾向として見てください。</p></div>
-      <div class="card"><h2>履き分けの提案</h2>${recs.length ? recs.map(({ p, r }) => `<p class="hl-p"><b class="num">${md(p.date)}(${dow(p.date)})</b><span>${esc(PLAN_LABELS[p.type] || p.type)}${p.distance_m ? ` ${km(p.distance_m)}km` : ''} — ${esc(r.why)}</span></p>`).join('') : '<p class="muted">これから 7 日の計画で、このシューズがおすすめになる日はありません (用途・使用感・使用実績から選んでいます)。</p>'}</div>
+      <div class="card"><h2>履き分けの提案</h2>${recs.length ? `<p class="sh-recs-lead">これから 7 日で ${recs.length} 回、このシューズがおすすめです。</p>${recs.map(({ p, r }) => `<p class="hl-p"><b class="num">${md(p.date)}(${dow(p.date)})</b><span>${esc(PLAN_LABELS[p.type] || p.type)}${p.distance_m ? ` ${km(p.distance_m)}km` : ''} — ${esc(r.why)}</span></p>`).join('')}` : '<p class="muted">これから 7 日の計画で、このシューズがおすすめになる日はありません (用途・使用感・使用実績から選んでいます)。</p>'}</div>
     </div>
     <div class="sh-pane hidden" data-pane="hist">
-      <div class="card"><h2>月ごとの距離</h2>${h.months.length ? h.months.map((m) => `<div class="mbk"><span>${Number(m.month.slice(5))}月 <small class="muted">${m.month.slice(0, 4)}</small></span><i style="width:${(m.km / mmax) * 100}%"></i><b class="num">${m.km}km</b></div>`).join('') : '<p class="muted">記録なし</p>'}</div>
+      <div class="card"><h2>月ごとの距離 <small class="muted">このアプリに記録したラン</small></h2>${recent.length ? recent.map(mrow).join('') : '<p class="muted">記録なし</p>'}
+        ${older.length ? `<details class="rv-acc"><summary>さらに表示 (${older.length}か月)</summary><div class="rv-acc-b">${older.map(mrow).join('')}</div></details>` : ''}
+        <p class="muted an-note">月ごとの距離は、このシューズを付けたランの合計です。上の「累計距離」(手入力の補正を含む) とは数え方が違います。</p></div>
       ${h.races.length ? `<div class="card"><h2>レースでの使用</h2>${h.races.map((r) => `<a class="hl-run" href="#/activities/${r.id}"><div class="hl-tx"><b>${esc(r.name)}</b><small class="num">${md(r.date)}・${r.km}km・${dur(r.time_s)}</small></div></a>`).join('')}</div>` : ''}
-      <div class="card hl-day"><h2 style="margin:8px 2px">使ったラン <small class="muted">${h.total_runs}本${h.total_runs > h.runs.length ? ` (新しい ${h.runs.length} 本)` : ''}</small></h2>${h.runs.map((a) => runRow({ ...a }, false)).join('') || '<p class="muted">このシューズを付けたランはありません。ランの詳細でシューズを選べます。</p>'}</div>
+      <div class="card hl-day"><h2 style="margin:8px 2px">使ったラン <small class="muted">${h.total_runs}本${h.total_runs > h.runs.length ? ` (新しい ${h.runs.length} 本)` : ''}</small></h2>${h.runs.map(histRow).join('') || '<p class="muted">このシューズを付けたランはありません。ランの詳細でシューズを選べます。</p>'}</div>
     </div>
     <div class="sh-pane hidden" data-pane="feel">
-      <div class="card"><h2>走った感覚</h2><div class="an-items">${SHOE_FEEL.map(([k, l]) => `<div class="an-it"><span class="an-j j-${f[k] == null ? 'hold' : 'ok'} num">${f[k] == null ? '未入力' : `${f[k]}/10`}</span><div><b>${l}</b></div></div>`).join('')}</div>
-        ${f.memo ? `<p class="hl-p"><span>${esc(f.memo)}</span></p>` : ''}<p class="muted an-note">「編集」から入れられます。未入力は未入力のまま (推測で埋めません)。</p></div>
+      <div class="card"><div class="row spread"><h2>走った感覚</h2><span class="muted num">入力 ${feelN}/${SHOE_FEEL.length}</span></div>
+        ${SHOE_FEEL.map(([k, l]) => `<div class="sh-feel"><span>${l}</span>${f[k] == null ? '<span class="muted">未入力</span>' : `<span class="sh-fbar"><i style="width:${f[k] * 10}%"></i></span><b class="num">${f[k]}<small>/10</small></b>`}</div>`).join('')}
+        ${f.memo ? `<p class="hl-p"><span>${esc(f.memo)}</span></p>` : ''}
+        <button type="button" class="wide" data-feel-edit style="margin-top:10px">使用感を入力・編集</button>
+        <p class="muted an-note">未入力は未入力のまま (推測で埋めません)。</p></div>
     </div>`;
 }
 
