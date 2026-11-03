@@ -1496,3 +1496,12 @@ a.sc-rec { color: var(--text); text-decoration: none; } a.sc-rec:active { opacit
 .sc-all { margin-top: 6px; font-size: 12.5px; }
 /* ニュース: もっと見る ⇄ 閉じる */
 .news-tg { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 42px; margin-top: 6px; border-radius: 12px; font-size: 13px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+/* シューズの相性: 並び替え・4 足以上は横にスライド (先頭の列は固定) */
+.sc-ord { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 12px; }
+.sc-ord .chip { min-height: 30px; padding: 3px 10px; font-size: 12px; }
+.sc-hint { margin: 0 0 4px; font-size: 11.5px; }
+.sc-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+.sc-scroll .sc-fix { width: max-content; min-width: 100%; }
+.sc-scroll .sc-fix tr > :not(:first-child) { width: 86px; min-width: 86px; max-width: 86px; }
+.sc-scroll .sc-fix tr > :first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); width: 4.8em; min-width: 4.8em; }
+.sc-scroll .sc-nm { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

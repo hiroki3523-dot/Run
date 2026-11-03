@@ -482,7 +482,16 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       await page.click('[data-crit="speed"]');
       expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('Nike ズームフライ 6');
       await page.click('[data-scall]');
-      expect(await page.$$eval('#shoe-cmp > table.sc-fix th .sc-nm', (els: Element[]) => els.length)).toBe(4);
+      // 4 足以上は横にスライド: 列の幅は固定で、セルが重ならない・ページは横にはみ出さない
+      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.length)).toBe(4);
+      const cells = await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix tr:nth-child(2) td', (els: HTMLElement[]) => els.map((e) => e.getBoundingClientRect().width));
+      expect(Math.min(...cells.slice(1))).toBeGreaterThanOrEqual(80);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+      if (SHOTS) await (await page.$('#shoe-cmp')).screenshot({ path: `${SHOTS}/11f-shoe-compat-all.png` });
+      // 並び: 使用回数の順 / 観点の順 (スピード寄り → 速い順)
+      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ズームフライ 6', 'Nike ボメロプラス', 'テストシューズA', 'Nike ボメロ18']);
+      await page.click('[data-ord="n"]');
+      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6', 'テストシューズA']);
     } finally {
       await page.unroute('**/api/shoes/compare');
       await call(env, 'DELETE', `/shoes/${near.id}`);

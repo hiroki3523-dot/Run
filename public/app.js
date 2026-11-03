@@ -3872,44 +3872,50 @@ async function loadShoeCompare() {
   const keys = Object.keys(GROUP_LABEL).filter((k) => data[k]?.length);
   if (!keys.length) { box.innerHTML = '<p class="muted">シューズを付けたランが、同じ種類で 2 本以上あるシューズが出てくると比べられます。</p>'; return; }
   let cur = keys.find((k) => data[k].length >= 2) || keys[0];
-  let crit = 'natural', all = false;
+  let crit = 'natural', all = false, order = 'crit'; // order: crit = 選んだ観点の良い順 / n = 使用回数の多い順
   const f = (v, u = '') => (v == null ? '-' : `${v}${u}`);
   const img = (id) => { const s = SHOES.find((x) => x.id === id); return s?.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'; };
   const draw = () => {
-    const rowsAll = [...data[cur]].sort((a, b) => b.n - a.n);
+    const C = FIT_CRIT.find((c) => c[0] === crit);
+    // 並び: 観点の良い順 (値の無い靴は後ろに、使用回数順) / 使用回数順
+    const byCrit = (a, b) => { const x = C[3](a), y = C[3](b); if (x == null || y == null) return x == null && y == null ? b.n - a.n : x == null ? 1 : -1; return (C[4] ? x - y : y - x) || b.n - a.n; };
+    const rowsAll = [...data[cur]].sort(order === 'crit' ? byCrit : (a, b) => b.n - a.n);
     const rows = all ? rowsAll : rowsAll.slice(0, 3);
     const best = (k, low) => { const v = rowsAll.map((r) => r[k]).filter((x) => x != null); return v.length >= 2 ? (low ? Math.min(...v) : Math.max(...v)) : null; };
     const mark = (r, k, low) => (r[k] != null && r[k] === best(k, low) ? ' class="sc-best"' : '');
     // おすすめ: 選んだ観点でいちばん良いシューズ (2 足以上に値があるときだけ)
-    const C = FIT_CRIT.find((c) => c[0] === crit);
     const vals = rowsAll.filter((r) => C[3](r) != null);
     const top = vals.length >= 2 ? [...vals].sort((a, b) => (C[4] ? C[3](a) - C[3](b) : C[3](b) - C[3](a)))[0] : null;
     const tie = top && vals.filter((r) => C[3](r) === C[3](top)).length > 1;
     const rec = top && !tie
       ? `<a class="sc-rec" href="#/shoes/${top.shoe_id}"><span class="sc-rec-l">結論</span><div><small>おすすめ・${C[1]}</small><b>${esc(top.name)}</b><span class="muted num">${C[5](top)} (${GROUP_LABEL[cur]}・${top.n}本)</span></div><span class="pm-chev">›</span></a>`
       : `<div class="sc-rec none"><span class="sc-rec-l">結論</span><div><small>${C[1]}</small><span class="muted">${tie ? '差がありません' : 'この観点の記録がある靴が 2 足未満のため、比べられません'}</span></div></div>`;
+    const wide = rows.length > 3; // 4 足以上は横にスライド (列の幅を固定して、名前・数字が重ならないように)
     const th = rows.map((r) => `<th><span class="sc-img">${img(r.shoe_id)}</span><span class="sc-nm">${esc(r.name)}</span><small>${r.n}本・${r.km}km</small></th>`).join('');
     const tr = (label, cells) => `<tr><td>${label}</td>${cells}</tr>`;
     box.innerHTML = `<div class="seg sc-tabs">${keys.map((k) => `<a href="javascript:void 0" data-sg="${k}" class="${k === cur ? 'on' : ''}">${GROUP_LABEL[k]}</a>`).join('')}</div>
       ${rec}
       <div class="sc-crit">${FIT_CRIT.map(([k, l, ic]) => `<button type="button" class="chip ${k === crit ? 'on' : ''}" data-crit="${k}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ic}</svg>${l}</button>`).join('')}</div>
-      <table class="an-cmp num sc-t sc-fix"><tr><th></th>${th}</tr>
+      <div class="sc-ord"><span class="muted">並び</span>${[['crit', `${C[1]}の順`], ['n', '使用回数の順']].map(([k, l]) => `<button type="button" class="chip ${k === order ? 'on' : ''}" data-ord="${k}">${l}</button>`).join('')}</div>
+      ${wide ? '<p class="muted sc-hint">横にスライドすると全部の靴を見られます</p>' : ''}
+      <div class="${wide ? 'sc-scroll' : ''}"><table class="an-cmp num sc-t sc-fix"><tr><th></th>${th}</tr>
       ${tr('ペース', rows.map((r) => `<td${mark(r, 'pace', true)}>${r.pace ? pace(r.pace) : '-'}</td>`).join(''))}
       ${tr('心拍', rows.map((r) => `<td${mark(r, 'hr', true)}>${f(r.hr)}</td>`).join(''))}
       ${tr('ピッチ', rows.map((r) => `<td>${f(r.cad)}</td>`).join(''))}
       ${tr('ストライド', rows.map((r) => `<td>${f(r.stride, 'cm')}</td>`).join(''))}
       ${tr('走りやすさ', rows.map((r) => `<td${mark(r, 'form', false)}>${f(r.form, '/10')}</td>`).join(''))}
       ${tr('脚の疲労', rows.map((r) => `<td${mark(r, 'leg', true)}>${f(r.leg, '/10')}</td>`).join(''))}
-      </table>
-      <details class="rv-acc sc-more"><summary>ほかの項目 (接地時間・呼吸・翌朝の脚・痛み)</summary><div class="rv-acc-b"><table class="an-cmp num sc-t sc-fix"><tr><th></th>${rows.map((r) => `<th><span class="sc-nm">${esc(r.name)}</span></th>`).join('')}</tr>
+      </table></div>
+      <details class="rv-acc sc-more"><summary>ほかの項目 (接地時間・呼吸・翌朝の脚・痛み)</summary><div class="rv-acc-b ${wide ? 'sc-scroll' : ''}"><table class="an-cmp num sc-t sc-fix"><tr><th></th>${rows.map((r) => `<th><span class="sc-nm">${esc(r.name)}</span></th>`).join('')}</tr>
       ${tr('接地時間', rows.map((r) => `<td${mark(r, 'gct', true)}>${f(r.gct, 'ms')}</td>`).join(''))}
       ${tr('呼吸', rows.map((r) => `<td${mark(r, 'breath', true)}>${f(r.breath, '/10')}</td>`).join(''))}
       ${tr('翌朝の脚', rows.map((r) => `<td${mark(r, 'next_leg', true)}>${f(r.next_leg, '/10')}</td>`).join(''))}
       ${tr('痛み (3以上)', rows.map((r) => `<td>${r.pain_n}回</td>`).join(''))}</table></div></details>
-      ${rowsAll.length > 3 ? `<button type="button" class="linkbtn sc-all" data-scall>${all ? '使用回数の多い 3 足だけにする' : `ほかの ${rowsAll.length - 3} 足も表示`}</button>` : ''}
+      ${rowsAll.length > 3 ? `<button type="button" class="linkbtn sc-all" data-scall>${all ? '上の 3 足だけにする' : `ほかの ${rowsAll.length - 3} 足も表示`}</button>` : ''}
       <p class="muted an-note">同じ種類のランだけで比べています。速さより「自然に走れるか (走りやすさ)」「疲れが少ないか (脚・翌朝の脚)」を重く見てください。緑はその項目でいちばん良いシューズ。主観は、ふりかえりと毎朝の体調から。</p>`;
     box.querySelectorAll('[data-sg]').forEach((a) => (a.onclick = () => { cur = a.dataset.sg; draw(); }));
     box.querySelectorAll('[data-crit]').forEach((b) => (b.onclick = () => { crit = b.dataset.crit; draw(); }));
+    box.querySelectorAll('[data-ord]').forEach((b) => (b.onclick = () => { order = b.dataset.ord; draw(); }));
     box.querySelector('[data-scall]')?.addEventListener('click', () => { all = !all; draw(); });
   };
   draw();
