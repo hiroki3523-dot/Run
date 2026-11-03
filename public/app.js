@@ -678,6 +678,7 @@ async function plansView(params) {
       if (open) {
         b.classList.add('on');
         view.querySelector(`#pm-${k}`).classList.remove('hidden');
+        if (k === 'coach') view._coachOpen?.();
         try { sessionStorage.setItem('pm', k); } catch {}
       } else { try { sessionStorage.removeItem('pm'); } catch {} }
     }));
@@ -789,18 +790,16 @@ function wireCopy(root, ws) {
 }
 
 // ---- 予定の相談 (AI)。会話はこの画面を開いている間だけ残す
-const COACH_QUICK = ['脚に痛みがある', '疲れが残っている', '走り足りない', '今日は走れない', '今日のメニューを軽くしたい', '雨で走れない'];
 let COACH_LOG = (() => { try { return JSON.parse(sessionStorage.getItem('coach') || '[]'); } catch { return []; } })();
 const saveCoach = () => { try { sessionStorage.setItem('coach', JSON.stringify(COACH_LOG.slice(-20))); } catch {} };
 function coachPane() {
   return `<div class="coach">
     <div class="coach-log" id="coach-log"></div>
-    <div class="coach-quick">${COACH_QUICK.map((q) => `<button type="button" class="chip" data-cq="${esc(q)}">${esc(q)}</button>`).join('')}</div>
     <form class="coach-in" id="coach-form">
       <textarea id="coach-text" rows="2" placeholder="例: 右ふくらはぎに張りがある。明日の LT 走はどうする？"></textarea>
       <button class="primary" id="coach-send" aria-label="送信"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </form>
-    <div class="row spread coach-foot"><span class="muted">計画と直近 3 週間の実績・ふりかえりを見て答えます</span><button type="button" class="linkbtn" id="coach-clear">会話を消す</button></div>
+    <div class="row spread coach-foot"><span class="muted" id="coach-model">計画と直近 3 週間の実績・ふりかえりを見て答えます</span><button type="button" class="linkbtn" id="coach-clear">会話を消す</button></div>
   </div>`;
 }
 function wireCoach(root) {
@@ -813,12 +812,14 @@ function wireCoach(root) {
     let cur = [];
     if (dates.length) { try { cur = uniqPlans(await api(`/plans?from=${dates[0]}&to=${dates[dates.length - 1]}`)); } catch {} }
     const before = (d) => cur.filter((p) => p.date === d).map((p) => `${PLAN_LABELS[p.type]}${p.distance_m ? ` ${km(p.distance_m)}km` : ''}`).join('・') || 'なし';
-    log.innerHTML = COACH_LOG.length ? COACH_LOG.map((m, i) => m.role === 'user'
+    log.innerHTML = COACH_LOG.length ? COACH_LOG.map((m, i) => m.hidden ? '' : m.role === 'user'
       ? `<div class="cm me">${esc(m.content)}</div>`
-      : `<div class="cm ai">${esc(m.content).replace(/\n/g, '<br>')}${m.changes?.length ? `<div class="cchg">
+      : `<div class="cm ai">${m.brief ? '<span class="cm-tag">今週の見立て</span>' : ''}${esc(m.content).replace(/\n/g, '<br>')}${m.changes?.length ? `<div class="cchg">
           <b>変更案</b>${m.changes.map((c) => `<div class="cchg-r"><span class="num">${md(c.date)}(${dow(c.date)})</span><span class="muted">${esc(m.applied ? '' : before(c.date))}</span><span>→ <b>${esc(fmtChange(c))}</b>${c.notes ? `<small class="muted">${esc(c.notes)}</small>` : ''}</span></div>`).join('')}
           ${m.applied ? '<p class="muted" style="margin:8px 0 0">反映しました</p>' : `<button type="button" class="primary wide" data-capply="${i}">この内容で予定に反映</button>`}</div>` : ''}</div>`).join('')
       : '<p class="muted coach-empty">体の状態や都合を書くと、計画の組み直しを提案します。反映するかはあとで選べます。</p>';
+    const lastModel = [...COACH_LOG].reverse().find((m) => m.model)?.model;
+    if (lastModel) root.querySelector('#coach-model').textContent = `AI: ${lastModel.split('/').pop()}`;
     log.querySelectorAll('[data-capply]').forEach((b) => (b.onclick = async () => {
       const m = COACH_LOG[Number(b.dataset.capply)];
       b.disabled = true;
@@ -837,7 +838,7 @@ function wireCoach(root) {
     const btn = root.querySelector('#coach-send'); btn.disabled = true;
     try {
       const r = await api('/coach', { method: 'POST', body: { messages: COACH_LOG.map((m) => ({ role: m.role, content: m.content, changes: m.changes })) } });
-      COACH_LOG.push({ role: 'assistant', content: r.reply, changes: r.changes || [] });
+      COACH_LOG.push({ role: 'assistant', content: r.reply, changes: r.changes || [], model: r.model });
     } catch (e) {
       COACH_LOG.push({ role: 'assistant', content: `エラー: ${e.message}` });
     }
@@ -847,8 +848,19 @@ function wireCoach(root) {
     log.lastElementChild?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   };
   root.querySelector('#coach-form').onsubmit = (e) => { e.preventDefault(); send(ta.value); };
-  root.querySelectorAll('[data-cq]').forEach((b) => (b.onclick = () => { ta.value = ta.value ? `${ta.value}。${b.dataset.cq}` : b.dataset.cq; ta.focus(); }));
-  root.querySelector('#coach-clear').onclick = () => { COACH_LOG = []; saveCoach(); draw(); };
+  root.querySelector('#coach-clear').onclick = () => { COACH_LOG = []; saveCoach(); draw(); root._coachOpen(); };
+  // 開いたとき、会話が空なら「今週の見立て」を出す (同じ状況ならサーバーのキャッシュ)
+  root._coachOpen = async () => {
+    if (COACH_LOG.length) return;
+    log.innerHTML = '<div class="cm ai typing"><i></i><i></i><i></i></div>';
+    try {
+      const r = await api('/coach/brief', { method: 'POST', body: {} });
+      if (COACH_LOG.length) return;
+      COACH_LOG.push({ role: 'user', content: r.q || '今週の見立てをください', hidden: true }, { role: 'assistant', content: r.reply, changes: r.changes || [], brief: true, model: r.model });
+      saveCoach();
+    } catch (e) { log.innerHTML = `<p class="muted coach-empty">今週の見立てを出せませんでした (${esc(e.message)})。下に書いて相談できます。</p>`; return; }
+    draw();
+  };
   draw();
 }
 
