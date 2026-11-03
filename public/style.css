@@ -1244,3 +1244,4 @@ dialog { max-height: calc(100dvh - 40px - env(safe-area-inset-top) - env(safe-ar
 .sheet-body { max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain; }
 
 .hd-basis { font-size: 11.5px; margin: 8px 0 0; }
+.seg-pre { white-space: pre-wrap; word-break: break-all; font-size: 11px; line-height: 1.5; max-height: 420px; overflow: auto; background: color-mix(in srgb, var(--text) 5%, transparent); padding: 8px; border-radius: 10px; }
