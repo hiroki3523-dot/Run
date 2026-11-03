@@ -973,3 +973,14 @@ body::after {
 .wsum-f { font-size: 13px; color: var(--muted); }
 .coach-log + .coach-in { margin-top: 10px; }
 .cm-tag { display: table; margin-bottom: 6px; font-size: 11px; font-weight: 700; color: var(--accent); background: var(--accent-soft); padding: 2px 8px; border-radius: 999px; }
+
+/* −/＋ つきの数字 (タップで細かく選ぶ) */
+.stp { display: flex; align-items: center; gap: 10px; }
+.stp > :not(.stp-b) { flex: 1; min-width: 0; }
+.stp-b { flex: none; width: 48px; height: 48px; padding: 0; border-radius: 50%; display: grid; place-items: center; color: var(--accent); }
+.stp-b:active { transform: scale(.92); }
+.stp .wk-pick { margin: 4px 0 10px; }
+.stp .wk-pick2 { margin: 4px 0 8px; }
+.stp .wk-pick2 .wk-pick { margin: 0; font-size: 22px; padding: 10px 4px; }
+.stp-tiles { grid-template-columns: 1fr; }
+.stp-tiles .wk-tile { align-items: center; text-align: center; }
