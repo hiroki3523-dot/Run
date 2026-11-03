@@ -15,9 +15,16 @@ export interface Snapshot {
   id: number; date: string; km: number; pace: number; hr: number | null; group: string;
   rpe: number | null; half_diff: number | null; cad: number | null; stride: number | null;
   gct: number | null; vo: number | null; power: number | null; elev_per_km: number | null; drift: number | null;
+  /** 走った時間の気温 (℃) */ temp?: number | null;
 }
 export interface CompareMetric { key: string; label: string; now: string; past: string; diff: string; trend: 'up' | 'same' | 'down' | 'hold'; note?: string }
 export interface Analysis {
+  /** 総評 (1〜2 文) */
+  summary: string;
+  /** 主観と客観の照らし合わせ */
+  subj: { text: string; kind: 'match' | 'gap' | 'fact' }[];
+  /** 次に活かすこと */
+  next: string[];
   achievement: { score: number | null; items: AItem[]; hold_reason?: string };
   fitness: { score: number | null; items: AItem[]; hold_reason?: string };
   good: string[];
@@ -46,12 +53,14 @@ export function groupOf(type: string | null | undefined, pace: number, easyMin: 
   return pace < easyMin - 10 ? 'tempo' : 'easy';
 }
 
+const snapshotElev = (i: { elev_gain: number | null }, km: number) => (i.elev_gain != null && km > 0 ? i.elev_gain / km : null);
 const RESERVE_SCORE: Record<string, number> = { limit: 30, '1-3': 45, '3-5': 65, '5-10': 80, '10+': 92 };
 const RESERVE_TXT: Record<string, string> = { limit: 'ほぼ限界', '1-3': 'あと 1〜3km', '3-5': 'あと 3〜5km', '5-10': 'あと 5〜10km', '10+': 'あと 10km 以上' };
 
 export interface AnalysisIn {
   id: number; date: string; distance_m: number; moving_time_s: number; avg_hr: number | null; avg_cad_spm: number | null;
   elev_gain: number | null;
+  /** 走った時間の気温 (℃) */ temp?: number | null;
   ev: any | null; plan_type: string | null; has_plan: boolean;
   fb: Fb | null; series: Series | null; easy_min: number; lthr: number;
   past: Snapshot[];
@@ -164,14 +173,14 @@ export function analyzeRun(i: AnalysisIn): Analysis {
     rpe: i.fb?.rpe ?? null, half_diff: ev?.pace?.details?.half_diff_s ?? null,
     cad: sr?.avg.cad ?? (i.avg_cad_spm ? Math.round(i.avg_cad_spm * 2) : null), stride: sr?.avg.stride ?? null,
     gct: X?.gct?.avg ?? null, vo: X?.vo?.avg ?? null, power: X?.power?.avg ?? null,
-    elev_per_km: i.elev_gain != null && km > 0 ? Math.round((i.elev_gain / km) * 10) / 10 : null, drift,
+    elev_per_km: i.elev_gain != null && km > 0 ? Math.round((i.elev_gain / km) * 10) / 10 : null, drift, temp: i.temp ?? null,
   };
 
   // ---------------- 過去との比較 (同じまとまり・距離と ペースが近いもの)
   let compare: Analysis['compare'] = null;
   const sim = i.past
     .filter((p) => p.id !== i.id && p.group === group && p.km >= km * 0.6 && p.km <= km * 1.6 && Math.abs(p.pace - pace) <= 25)
-    .map((p) => ({ p, d: Math.abs(Math.log(p.km / km)) * 60 + Math.abs(p.pace - pace) }))
+    .map((p) => ({ p, d: Math.abs(Math.log(p.km / km)) * 60 + Math.abs(p.pace - pace) + (i.temp != null && p.temp != null ? Math.max(0, Math.abs(p.temp - i.temp) - 3) * 2 : 4) + (snapshotElev(i, km) != null && p.elev_per_km != null ? Math.max(0, Math.abs(p.elev_per_km - snapshotElev(i, km)!) - 5) : 0) }))
     .sort((a, b) => a.d - b.d).slice(0, 6).map((x) => x.p);
   if (sim.length >= 2) {
     const metrics: CompareMetric[] = [];
@@ -201,8 +210,11 @@ export function analyzeRun(i: AnalysisIn): Analysis {
     if (snapshot.elev_per_km != null && ep.length && Math.abs(snapshot.elev_per_km - median(ep)) >= 8) notes.push(`今回は 1km あたりの上り ${snapshot.elev_per_km}m で、比べたランの ${median(ep)}m と坂の条件が違います。`);
     const kmGap = Math.abs(mean(sim.map((p) => p.km)) - km) / km;
     if (kmGap > 0.3) notes.push('比べたランとは距離が 3 割以上違うので、参考程度に。');
-    notes.push('気温・天気は比較に入っていません。暑い日は心拍が高めに出ます。');
-    compare = { n: sim.length, runs: sim.map((p) => ({ id: p.id, date: p.date, km: p.km, pace: p.pace, hr: p.hr })), metrics, notes };
+    const ts = nums(sim.map((p) => p.temp));
+    if (i.temp == null || ts.length < 2) notes.push('気温が分からないランがあるため、気温の条件はそろえきれていません (暑い日は心拍が高めに出ます)。');
+    else if (Math.abs(i.temp - median(ts)) >= 5) notes.push(`今回は ${Math.round(i.temp)}℃、比べたランは ${Math.round(median(ts))}℃ 前後。気温差があるので心拍の比較は参考程度に (暑いほど高く出ます)。`);
+    else notes.push(`気温は今回 ${Math.round(i.temp)}℃・比べたラン ${Math.round(median(ts))}℃ 前後で、条件は近い。`);
+    compare = { n: sim.length, runs: sim.map((p) => ({ id: p.id, date: p.date, km: p.km, pace: p.pace, hr: p.hr, temp: p.temp ?? null })), metrics, notes };
   }
 
   // ---------------- 練習達成度 (計画に対して)
@@ -261,7 +273,50 @@ export function analyzeRun(i: AnalysisIn): Analysis {
   if (i.fb?.rpe != null && i.fb.rpe_late != null && i.fb.rpe_late - i.fb.rpe >= 2) issues.push(`後半のきつさ ${i.fb.rpe_late}/10 (全体 ${i.fb.rpe}/10)。後半に余裕がなくなっている`);
   if ((i.fb?.pain ?? 0) >= 3) issues.unshift(`痛み ${i.fb!.pain}/10${i.fb!.pain_part?.length ? ` (${i.fb!.pain_part.join('・')})` : ''}`);
 
+  // ---------------- 主観と客観の照らし合わせ (点数に足すのではなく、合っているか・ずれているかを見る)
+  const subj: Analysis['subj'] = [];
+  const f = i.fb;
+  const hrRatio = i.avg_hr ? i.avg_hr / i.lthr : null;
+  const easyish = group === 'easy' || group === 'long';
+  if (f && f.rpe != null && hrRatio != null) {
+    const hrHigh = hrRatio >= (easyish ? 0.87 : 0.95), hrLow = hrRatio <= (easyish ? 0.8 : 0.88);
+    if (f.rpe <= 4 && hrHigh) subj.push({ kind: 'gap', text: `心拍は閾値の ${Math.round(hrRatio * 100)}% と高めなのに、きつさは ${f.rpe}/10。体は負荷を感じていない一方、心拍は上がっている。暑さ・脱水・疲労の可能性 (推測)。` });
+    else if (f.rpe >= 7 && hrLow) subj.push({ kind: 'gap', text: `心拍は閾値の ${Math.round(hrRatio * 100)}% と低めなのに、きつさは ${f.rpe}/10。心肺より脚や全身の疲れが原因の可能性 (推測)。翌朝の脚の状態も見たい。` });
+    else subj.push({ kind: 'match', text: `きつさ ${f.rpe}/10 と心拍 (閾値の ${Math.round(hrRatio * 100)}%) は釣り合っている。` });
+  }
+  if (f && f.breath != null && f.leg != null && Math.abs(f.breath - f.leg) >= 3) subj.push({ kind: 'fact', text: f.breath > f.leg ? `呼吸 ${f.breath}/10 > 脚 ${f.leg}/10。心肺側が先にきつい。` : `脚 ${f.leg}/10 > 呼吸 ${f.breath}/10。脚の筋持久力が先に限界に近い。` });
+  if (f && f.form != null && form) {
+    const changed = form.rows.filter((x) => x.flag).length;
+    if (f.form >= 7 && changed >= 2) subj.push({ kind: 'gap', text: `フォームの感覚は ${f.form}/10 で自然だが、数値では後半に ${changed} 項目が変化。疲れで気づかないうちに崩れている可能性 (推測)。` });
+    else if (f.form <= 4 && changed === 0) subj.push({ kind: 'gap', text: `数値ではフォームは安定しているが、感覚は ${f.form}/10 で力みがある。数値に出ない力み (肩・腕) かもしれない (推測)。` });
+  }
+  if (f && f.reserve && drift != null) {
+    if ((f.reserve === '10+' || f.reserve === '5-10') && drift > 5) subj.push({ kind: 'gap', text: `余裕は「${RESERVE_TXT[f.reserve]}」だが、心拍ドリフト ${drift}% と後半の上昇は大きい。長い距離では見込みより早くきつくなる可能性 (推測)。` });
+    else if ((f.reserve === 'limit' || f.reserve === '1-3') && drift <= 3) subj.push({ kind: 'gap', text: `余裕は「${RESERVE_TXT[f.reserve]}」と少ないが、心拍は安定 (ドリフト ${drift}%)。脚の疲れや睡眠など、心肺以外の要因の可能性 (推測)。` });
+  }
+  if (!f || (f.rpe == null && f.reserve == null)) subj.push({ kind: 'fact', text: 'ふりかえりが未入力なので、主観との照らし合わせはできません (未入力は 0 点として扱いません)。' });
+
+  // ---------------- 次に活かすこと (分かったことから、次の練習の行動に)
+  const next: string[] = [];
+  if ((f?.pain ?? 0) >= 3) next.push(`痛み ${f!.pain}/10。次の練習は Jog か休養にし、翌朝の体調で痛みを記録する。`);
+  if (drift != null && drift > 5) next.push(`心拍ドリフト ${drift}%。次の同じ練習では前半を 5〜10 秒/km 抑え、補水を早めに。`);
+  if (snapshot.half_diff != null && snapshot.half_diff > 8 && km >= 8) next.push(`後半 ${snapshot.half_diff} 秒/km の失速。次は最初の 2〜3km を目標より 5 秒/km 遅く入る。`);
+  const hrCmp2 = compare?.metrics.find((m) => m.key === 'hr_at_pace');
+  if (hrCmp2?.trend === 'up') next.push(`同じペースでの心拍が過去より ${hrCmp2.diff.replace('-', '')}bpm 低い。力がついているので、次のポイント練は設定どおりで良い。`);
+  if (hrCmp2?.trend === 'down' && !next.length) next.push(`同じペースでの心拍が過去より +${hrCmp2.diff.replace('+', '')}bpm 高い。疲れが残っている可能性があるので、次の Easy はゆっくり、睡眠を優先。`);
+  if (f?.rpe != null && f.rpe_late != null && f.rpe_late - f.rpe >= 2) next.push('後半に急にきつくなっている。ロング走で後半の補給 (ジェル) を試す。');
+  if (form?.paceup && /ストライド/.test(form.paceup) && group === 'tempo') next.push('ペースアップは主にストライド頼み。脚への負担が増えやすいので、ピッチも少し上げる意識を試す。');
+  if (!next.length) next.push(group === 'easy' ? 'このまま、Easy は楽なペースを守る。' : '今回の内容を基準にして、次の同じ練習と比べる。');
+
+  // ---------------- 総評
+  const a = achScore, fz = fitScore;
+  const summary = [
+    a != null ? `計画に対しては${a >= 85 ? 'よくできた' : a >= 70 ? 'おおむねできた' : '課題が残った'} (${a}点)` : '計画が無いので達成度は保留',
+    fz != null ? `走力面は${fz >= 85 ? '余裕を持って走れている' : fz >= 70 ? '標準的' : '余裕が少ない'} (${fz}点)` : '走力面は材料が少なく保留',
+  ].join('。') + '。';
+
   return {
+    summary, subj, next: next.slice(0, 3),
     achievement: { score: achScore, items: ach, ...(achHold ? { hold_reason: achHold } : {}) },
     fitness: { score: fitScore, items: fit, ...(fitHold ? { hold_reason: fitHold } : {}) },
     good, issues: issues.slice(0, 3), hrpace, compare, form, snapshot,
