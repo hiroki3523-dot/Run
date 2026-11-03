@@ -58,7 +58,7 @@ export function cleanRaceInfo(o: any): RaceInfo {
     ...(Array.isArray(o.pace_adj) ? { pace_adj: o.pace_adj.slice(0, 30).map((x: any) => (Number.isFinite(Number(x)) ? Math.max(-60, Math.min(60, Math.round(Number(x)))) : 0)) } : {}),
     ...(Number.isFinite(Number(o.start_loss_s)) && o.start_loss_s != null ? { start_loss_s: Math.max(0, Math.min(1800, Math.round(Number(o.start_loss_s)))) } : {}),
     // 見出しの画像の選び方 (自動の景色・写真・なし)
-    ...(['auto', 'city', 'coast', 'sea', 'mountain', 'photo', 'plain'].includes(o.hero) ? { hero: o.hero } : {}),
+    ...(['auto', 'city', 'coast', 'sea', 'mountain', 'country', 'photo', 'plain'].includes(o.hero) ? { hero: o.hero } : {}),
     // 大会の写真 (自分で選んだもの。画面で縮小した JPEG。大きすぎるものは保存しない)
     ...(typeof o.image === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(o.image) && o.image.length < 400_000 ? { image: o.image } : {}),
     ...(Array.isArray(o.fuel) ? { fuel: o.fuel.slice(0, 30).map((x: any) => ({ km: Math.round(Number(x?.km) * 10) / 10, item: str(x?.item, 30) ?? '' })).filter((x: any) => Number.isFinite(x.km) && x.km >= 0 && x.km <= 100 && x.item).sort((a: any, b: any) => a.km - b.km) } : {}),

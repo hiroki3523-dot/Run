@@ -57,7 +57,8 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
 
   const open = async (hash: string, shot?: string) => {
     errors.length = 0;
-    await page.goto(`${srv.url}/${hash}`);
+    // 画面の一時保存 (30 秒) を消すため、毎回ページを読み込み直す (テストはサーバー側のデータを直接変えるので)
+    await page.goto(`${srv.url}/?t=${Date.now()}${hash}`);
     await page.waitForFunction(() => !document.querySelector('#view')?.textContent?.includes('読み込み中…'), null, { timeout: 15000 });
     await page.waitForTimeout(600);
     if (SHOTS && shot) await page.screenshot({ path: `${SHOTS}/${shot}.png`, fullPage: true });
