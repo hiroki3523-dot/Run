@@ -24,7 +24,7 @@ for (const f of git('ls-files').split('\n').filter(Boolean)) {
   cpSync(f, to);
 }
 // ドキュメント
-for (const f of ['FEATURES.md', 'AUDIT.md', 'TESTING.md', 'REVIEW_PROCESS.md']) if (existsSync(`docs/${f}`)) cpSync(`docs/${f}`, join(dir, f));
+for (const f of ['FEATURES.md', 'AUDIT.md', 'SEGMENTS.md', 'TESTING.md', 'REVIEW_PROCESS.md']) if (existsSync(`docs/${f}`)) cpSync(`docs/${f}`, join(dir, f));
 // 改修履歴と差分
 execFileSync('node', ['scripts/history.mjs', '--out', join(dir, 'HISTORY.md')]);
 const base = baseRef();
@@ -53,6 +53,7 @@ Cloudflare Workers + D1 (SQLite) + 1 ページの画面 (public/app.js)。COROS�
 |---|---|
 | FEATURES.md | 機能一覧・画面構成・画面間の関係・計算のしくみ |
 | AUDIT.md | 監査結果 (不具合の可能性・計算や表示の不整合・重複・影響しやすい箇所)。**未修正の問題の一覧** |
+| SEGMENTS.md | 1 記録の中のアップ・メイン・ダウン (区間) の調査 (あれば) |
 | TESTING.md | 自動テストの作りと、どの機能をどこまで確かめているか |
 | HISTORY.md | 改修履歴 (PR ごと) |
 | CHANGE_REPORT.md | 直近の改修レポート (あれば) |
