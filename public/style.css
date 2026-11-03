@@ -1048,3 +1048,4 @@ body::after {
 .race-st-v .seg-r span { justify-content: flex-start; gap: 10px; padding: 10px 14px; font-size: 15px; min-height: 48px; }
 .race-st-v .seg-r span b { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; background: color-mix(in srgb, var(--text) 10%, transparent); }
 .rl-foot { flex-wrap: wrap; }
+.rf-entry { font-size: 12px; margin-top: 2px; color: var(--muted); } .rf-entry.warn-t { color: var(--mid); font-weight: 700; }

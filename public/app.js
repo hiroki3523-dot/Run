@@ -2311,6 +2311,27 @@ function nextOccur(month) {
 const baseName = (n) => String(n).replace(/\s*\(.*?\)\s*/g, '').replace(/20\d\d|[\s・]/g, '');
 const RF_OPEN = new Set();
 let RF_Q = '';
+/** エントリー時期: 公式サイトで読んだ期間 → 分かっている開始日 → 例年の時期 の順。short は一覧用 */
+function entryHint(x, got, t, short) {
+  const cls = (warn) => `class="rf-entry num ${warn ? 'warn-t' : ''}"`;
+  if (got && (got.entry_open || got.entry_close)) {
+    const left = got.entry_close && /^\d{4}-/.test(got.entry_close) ? daysBetween(t, got.entry_close) : null;
+    const open = got.entry_open && /^\d{4}-/.test(got.entry_open) && got.entry_open > t;
+    const txt = `エントリー ${fmtD(got.entry_open)}〜${fmtD(got.entry_close)}${open ? '' : left != null && left >= 0 ? `・締切まで${left}日` : left != null ? '・締切済み' : ''}`;
+    return `<span ${cls(left != null && left >= 0 && left <= 30 || open)}>${txt}</span>`;
+  }
+  if (x.entry) {
+    const m = Number(x.entry.slice(5, 7)), dd = Number(x.entry.slice(8, 10));
+    const part = dd <= 10 ? '上旬' : dd <= 20 ? '中旬' : '下旬';
+    if (x.known && x.entry > t) return `<span ${cls(daysBetween(t, x.entry) <= 45)}>エントリー ${fmtD(x.entry)} 開始予定</span>`;
+    if (x.known) return `<span ${cls(false)}>エントリー ${md(x.entry)}〜</span>`;
+    return `<span ${cls(false)}>エントリー 例年${m}月${part}ごろ開始</span>`;
+  }
+  // 分からない大会: 一般的な目安 (フルは 4〜7 か月前、ハーフは 2〜4 か月前)
+  const back = x.dist === 'full' ? [7, 4] : [4, 2];
+  const mm = (k) => ((x.month - k - 1 + 24) % 12) + 1;
+  return `<span ${cls(false)}>エントリー 目安 ${mm(back[0])}〜${mm(back[1])}月ごろ${short ? '' : ' (一般的な時期。公式サイトで確認)'}</span>`;
+}
 /** 大会の詳細 (公式サイトから読んだもの)。開いたときだけ読む (同じ URL はサーバーが 1 週間覚えておく) */
 function rfDetail(x, got) {
   const known = x.known;
@@ -2319,6 +2340,7 @@ function rfDetail(x, got) {
     ['場所', `${esc(x.pref)}（${esc(x.area)}）`],
     ['種目', x.dist === 'full' ? 'フルマラソン' : 'ハーフマラソン'],
   ];
+  if (!got || !(got.entry_open || got.entry_close)) lines.push(['エントリー', entryHint(x, null, today(), false)]);
   if (got) {
     if (got.race_date && got.race_date !== x.when) lines[0] = ['開催日', `${fmtD(got.race_date)}（公式サイト）`];
     const add = (k, v) => v && lines.push([k, esc(v)]);
@@ -2337,9 +2359,9 @@ async function raceFindView() {
   const t = today();
   const have = new Map(races.filter((r) => r.date >= t).map((r) => [baseName(r.name), r]));
   const monthsAhead = (d) => Math.round((Date.parse(d) - Date.parse(t)) / (30.4 * 86400000));
-  const list = RACE_CATALOG.map(([name, pref, month, dist, url, date]) => {
+  const list = RACE_CATALOG.map(([name, pref, month, dist, url, date, entry]) => {
     const known = !!(date && date >= t);
-    return { name, pref, month, dist, url, area: areaOf(pref), known, when: known ? date : nextOccur(month) };
+    return { name, pref, month, dist, url, entry, area: areaOf(pref), known, when: known ? date : nextOccur(month) };
   }).sort((a, b) => a.when.localeCompare(b.when));
   const WHEN = [['', 'すべて'], ['3', '3か月以内'], ['6', '4〜6か月'], ['12', '7か月以降']];
   const norm = (v) => String(v).toLowerCase().replace(/[\s・ー-]/g, '');
@@ -2353,7 +2375,7 @@ async function raceFindView() {
     const open = RF_OPEN.has(x.name);
     return `<li class="rf ${open ? 'open' : ''}" data-name="${esc(x.name)}">
       <div class="rf-top">
-        <button type="button" class="rf-main" data-rfopen="${esc(x.name)}"><b>${esc(x.name)}</b><span class="muted num">${x.known ? fmtD(x.when) : `例年${x.month}月`}・${esc(x.pref)}・${x.dist === 'full' ? 'フル' : 'ハーフ'}</span><span class="rf-msg muted"></span></button>
+        <button type="button" class="rf-main" data-rfopen="${esc(x.name)}"><b>${esc(x.name)}</b><span class="muted num">${x.known ? fmtD(x.when) : `例年${x.month}月`}・${esc(x.pref)}・${x.dist === 'full' ? 'フル' : 'ハーフ'}</span>${entryHint(x, cache.get(x.name), t, true)}<span class="rf-msg muted"></span></button>
         ${got ? `<a class="chip on" href="#/races/${got.id}">${RACE_STATUS.find(([k]) => k === (got.status || 'confirmed'))[1]}</a>` : `<button type="button" class="chip" data-addc="${esc(x.name)}">候補に追加</button>`}
       </div>
       ${open ? `<div class="rf-detail">${rfDetail(x, cache.get(x.name))}</div>` : ''}
