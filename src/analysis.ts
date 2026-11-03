@@ -291,7 +291,8 @@ export function analyzeRun(i: AnalysisIn): Analysis {
   // ---------------- 良かった点・課題
   const good: string[] = [], issues: string[] = [];
   for (const x of [...fit, ...ach]) {
-    if (x.score == null) continue;
+    // 距離 (参考) は点数に入れていないので、良かった点・課題にも出さない (アップ・ダウンを別の記録にした日は、計画の距離と比べられないため)
+    if (x.score == null || x.key === 'volume') continue;
     if (x.score >= 80 && good.length < 3) good.push(`${x.label.replace(/ \(\d+%\)/, '')}: ${x.value}`);
     if (x.score < 60 && issues.length < 3) issues.push(`${x.label.replace(/ \(\d+%\)/, '')}: ${x.value}`);
   }

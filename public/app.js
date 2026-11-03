@@ -1747,49 +1747,228 @@ function periodOf(kind, anchor) {
 
 const GRADE_NOTE = { A: '狙いどおり', B: '概ね良好', C: '要調整', D: '立て直し' };
 
+/* ---------------- 実績: 一覧・日・週・月 (2026-11 指示書 v3.0 第3・4段階) ---------------- */
+const ROLE_LABEL = { warmup: 'アップ', cooldown: 'ダウン', work: 'メイン' };
+const typeOf = (a) => a.eff_type || a.type || a.plan_type || null;
+const typeLabel = (t) => (t && PLAN_LABELS[t]) || 'フリー';
+/** 種類のまとまり (src/review.ts kindGroup と同じ) */
+const kindOf = (t, role, kmv) => (role === 'warmup' || role === 'cooldown' ? 'link' : t === 'race' ? 'race' : ['m', 'lt', 'interval'].includes(t) ? 'point' : t === 'long' || kmv >= 20 ? 'long' : ['easy', 'jog'].includes(t) ? 'easy' : 'free');
+const KIND_FILTER = [['all', 'すべて'], ['point', 'ポイント'], ['long', 'ロング'], ['easy', 'Easy・Jog'], ['race', 'レース']];
+const RUN_IC = {
+  point: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+  long: '<path d="M3 17c4-8 8 4 12-4s4-6 6-6"/>',
+  race: '<path d="M5 21V4h11l-2 4 2 4H5"/>',
+  link: '<circle cx="8" cy="12" r="2.5"/><circle cx="16" cy="12" r="2.5"/>',
+  easy: '<circle cx="13" cy="4" r="2"/><path d="M8 21l3-6 3 3v-6l-3-3-3 2M14 9l3 3h3"/>',
+  free: '<circle cx="13" cy="4" r="2"/><path d="M8 21l3-6 3 3v-6l-3-3-3 2M14 9l3 3h3"/>',
+};
+const runIcon = (t, role, kmv) => { const k = kindOf(t, role, kmv); return `<i class="hl-ic" style="--tc:var(--c-${role === 'warmup' || role === 'cooldown' ? 'rest' : t || 'free'})"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${RUN_IC[k]}</svg></i>`; };
+const scoreTag = (v) => (v == null ? '<span class="hl-sc muted">-</span>' : `<span class="hl-sc ${scoreCls(v)} num">${v}</span>`);
+const navRow = (prevHref, label, nextHref, right = '') => `<div class="hl-nav"><a class="btn" href="${prevHref}" aria-label="前へ">‹</a><b>${label}</b><a class="btn" href="${nextHref}" aria-label="次へ">›</a>${right}</div>`;
+const jClass = (v) => (v == null ? 'hold' : v >= 80 ? 'good' : v >= 60 ? 'ok' : 'bad');
+const signed = (v, unit = '', dig = 0) => (v == null || !isFinite(v) ? '-' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(dig)}${unit}`);
+
+/** 1 本のランの行 (一覧・日で共通) */
+function runRow(a, main) {
+  const t = typeOf(a), kmv = a.distance_m / 1000;
+  const name = a.role ? `${ROLE_LABEL[a.role] ?? ''}${a.role === 'work' ? ` (${typeLabel(t)})` : ''}` : t ? typeLabel(t) : esc(a.name);
+  return `<a class="hl-run ${main ? 'main' : ''}" href="#/activities/${a.id}">${runIcon(t, a.role, kmv)}
+    <div class="hl-tx"><b>${name}${main && !a.role ? ' <small class="hl-main">メイン</small>' : ''}</b><small class="num">${km(a.distance_m, 2)}km・${pace(a.moving_time_s / kmv)}/km${a.avg_hr ? `・${Math.round(a.avg_hr)}bpm` : ''}</small></div>${scoreTag(a.score)}</a>`;
+}
+/** その日のメイン (アップ・ダウン以外で一番長いラン) */
+const mainOf = (runs) => [...runs].filter((r) => r.role !== 'warmup' && r.role !== 'cooldown').sort((x, y) => y.distance_m - x.distance_m)[0] ?? null;
+
 async function activitiesView(params) {
   const kind = params?.get('view') || 'list';
   const tabs = `<div class="seg">${REVIEW_TABS.map(([k, l]) => `<a href="#/activities${k === 'list' ? '' : `?view=${k}`}" class="${k === kind ? 'on' : ''}">${l}</a>`).join('')}</div>`;
-  if (kind === 'list') {
-    const acts = await api('/activities');
-    return `${tabs}<div class="card"><h2>ラン一覧</h2>${activityList(acts)}</div>`;
-  }
+  if (kind === 'list') return tabs + await histList(params);
   const anchor = params.get('date') || today();
-  const p = periodOf(kind, anchor);
-  const [r, trend] = await Promise.all([api(`/review?from=${p.from}&to=${p.to}&kind=${kind}`), kind === 'list' || kind === 'day' ? null : api('/trend?weeks=12')]);
-  const link = (d) => `#/activities?view=${kind}&date=${d}`;
-  const stat = (label, value, sub = '') => `<div><div class="muted">${label}</div><div class="stat num">${value}</div>${sub ? `<div class="muted num">${sub}</div>` : ''}</div>`;
-  const pct = r.completion == null ? '' : `${Math.round(r.completion * 100)}%`;
-  return `${tabs}
-    <div class="row spread" style="margin-bottom:8px">
-      <a class="btn" href="${link(p.prev)}">‹</a><strong>${p.label}</strong><a class="btn" href="${link(p.next)}">›</a>
-    </div>
-    <div class="card">
-      <div class="row spread"><h2>${kind === 'day' ? '日次' : kind === 'week' ? '週間' : '月間'}評価</h2>
-        ${r.grade ? `<span class="grade g${r.grade}">${r.grade}<small>${r.in_progress ? '途中経過' : GRADE_NOTE[r.grade]}${r.grade_calc ? `・${r.grade_calc.pts}点` : ''}</small></span>` : r.runs ? '<span class="grade gH">保留<small>材料が少ない</small></span>' : ''}</div>
-      ${r.in_progress || r.phase_note ? `<p class="rv-phase">${r.in_progress ? `<b>途中経過</b> ${md(today())} までの計画と比べています。最終評価は期間が終わってから。` : ''}${r.phase_note ? `${r.in_progress ? '<br>' : ''}${esc(r.phase_note)}` : ''}</p>` : ''}
-      ${r.parts?.length ? `<details class="rv-acc rv-parts"><summary>評価の内訳</summary><div class="an-items">${r.parts.map((x) => `<div class="an-it"><span class="an-j j-${x.score == null ? 'hold' : x.score >= 80 ? 'good' : x.score >= 60 ? 'ok' : 'bad'}">${x.score == null ? '保留' : x.score}</span><div><b>${esc(x.label)} <small class="muted">(重み ${x.weight})</small></b><small class="muted">${esc(x.reason)}</small></div></div>`).join('')}</div>
-        <p class="muted an-note">${kind === 'day' ? '日次はその日の練習全体 (アップ・メイン・ダウン) を、練習の目的と大会までの日数もふまえて見たもの。' : kind === 'week' ? '週次は練習の構成・ポイント練・負荷の増え方。' : '月次は練習の質・継続・負荷の変化。'}保留の項目は除いて、重みで平均しています。月の距離目標は評価に入れていません。</p></details>` : ''}
-      <div class="grid3">
-        ${stat('距離', `${r.km}km`, r.planned_km ? `${r.in_progress ? `今日まで ${r.due_km}km` : `計画 ${r.planned_km}km`}${pct ? `・${pct}` : ''}` : '')}
-        ${stat('回数', `${r.runs}回`, `${r.run_days}日`)}
-        ${stat('平均点', r.avg_score ?? '-', r.avg_hr ? `平均心拍 ${r.avg_hr}` : '')}
-        ${stat('平均ペース', r.avg_pace_s ? `${pace(r.avg_pace_s)}` : '-', `/km`)}
-        ${stat('最長', `${r.longest_km}km`, kind === 'month' ? `28km以上 ${r.long_runs_28}回` : '')}
-        ${stat('負荷(TL)', r.tl, kind === 'day' ? (r.tl < 40 ? '低い' : r.tl < 90 ? '適度' : '高い') : '')}
-        ${stat('ポイント練', r.quality.planned ? `${r.quality.done}/${r.quality.planned}` : '-', r.delta_km_pct != null && kind !== 'day' ? `前${kind === 'week' ? '週' : '月'}比 ${r.delta_km_pct >= 0 ? '+' : ''}${r.delta_km_pct}%` : '')}
-      </div>
-    </div>
-    ${kind === 'week' ? `<div class="card"><h2>日ごとの距離</h2>${bubbles(r.days)}</div>` : ''}
-    ${trend ? `<div class="card"><h2>過去12週間</h2>${trendChart(trend, weekStart(anchor))}</div>` : ''}
-    <div class="card"><h2>コメント</h2><ul class="bullets">${r.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>
-    ${r.next.length ? `<div class="card"><h2>次にやること</h2><ul class="bullets">${r.next.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>` : ''}
-    <div class="card"><h2>ラン</h2>${r.list.length === 0 ? '<p class="muted">記録なし</p>' : `<ul class="list">${r.list.map((a) => `
-      <li><a href="#/activities/${a.id}">
-        <div class="row spread"><span>${md(a.date)}(${dow(a.date)}) ${esc(a.name)}</span>${scoreHtml(a.score)}</div>
-        <div class="muted num">${km(a.distance_m, 2)}km・${pace(a.moving_time_s / (a.distance_m / 1000))}/km${a.avg_hr ? `・${Math.round(a.avg_hr)}bpm` : ''}</div>
-        ${kind === 'day' ? a.comments.map((c) => `<div class="muted">・${esc(c)}</div>`).join('') : ''}
-      </a></li>`).join('')}</ul>`}</div>`;
+  if (kind === 'day') return tabs + await histDay(anchor);
+  if (kind === 'week') return tabs + await histWeek(anchor);
+  return tabs + await histMonth(anchor);
+}
+
+/** 一覧: 記録を探す */
+async function histList(params) {
+  const acts = await api('/activities');
+  const f = params.get('f') || 'all';
+  const n = Number(params.get('n')) || 30;
+  const t = today();
+  const span = (a, b) => acts.filter((x) => x.date > addDays(t, a) && x.date <= addDays(t, b));
+  const cur = span(-7, 0), prv = span(-14, -7);
+  const kmOf = (xs) => xs.reduce((s, x) => s + x.distance_m, 0) / 1000;
+  const avgSc = (xs) => { const v = xs.filter((x) => x.role !== 'warmup' && x.role !== 'cooldown' && x.score != null); return v.length ? Math.round(v.reduce((s, x) => s + x.score, 0) / v.length) : null; };
+  const k1 = kmOf(cur), k0 = kmOf(prv), s1 = avgSc(cur), s0 = avgSc(prv);
+  const tile = (label, v, sub) => `<div class="hl-tile"><small>${label}</small><b class="num">${v}</b>${sub ? `<span class="num">${sub}</span>` : ''}</div>`;
+  // 日ごとにまとめる
+  const days = [];
+  for (const a of acts) { let d = days[days.length - 1]; if (!d || d.date !== a.date) { d = { date: a.date, runs: [] }; days.push(d); } d.runs.push(a); }
+  for (const d of days) d.runs.sort((x, y) => String(x.start_date_local).localeCompare(String(y.start_date_local)));
+  const shown = days.filter((d) => f === 'all' || d.runs.some((r) => kindOf(typeOf(r), r.role, r.distance_m / 1000) === f));
+  const chips = `<div class="hl-chips">${KIND_FILTER.map(([k, l]) => `<a class="chip ${k === f ? 'on' : ''}" href="#/activities${k === 'all' ? '' : `?f=${k}`}">${l}</a>`).join('')}</div>`;
+  const body = shown.slice(0, n).map((d) => {
+    const m = mainOf(d.runs);
+    const tot = d.runs.reduce((s, r) => s + r.distance_m, 0);
+    // 1 本だけの日は 1 行に (日付つき)
+    if (d.runs.length === 1) return `<div class="card hl-day one"><small class="hl-date">${md(d.date)}(${dow(d.date)})</small>${runRow(d.runs[0], false)}</div>`;
+    return `<div class="card hl-day"><a class="hl-dh" href="#/activities?view=day&date=${d.date}"><b>${md(d.date)}(${dow(d.date)})</b><span class="num">${km(tot, 2)}km${d.runs.length > 1 ? `・${d.runs.length}本` : ''}</span><span class="hl-go">›</span></a>
+      ${d.runs.map((r) => runRow(r, d.runs.length > 1 && m && r.id === m.id)).join('')}</div>`;
+  }).join('');
+  return `<div class="card"><h2>ランニング履歴</h2><div class="hl-tiles">
+      ${tile('距離・直近7日', `${k1.toFixed(1)}<small>km</small>`, k0 > 0 ? `${signed((k1 / k0 - 1) * 100, '%')} 前の7日比` : '')}
+      ${tile('ラン回数', `${cur.length}<small>本</small>`, prv.length ? `前の7日 ${prv.length}本` : '')}
+      ${tile('平均評価', s1 ?? '-', s0 != null && s1 != null ? `${signed(s1 - s0)} 前の7日比` : 'メインのランの点')}
+    </div></div>${chips}
+    ${shown.length ? body : '<div class="card"><p class="muted">この条件の記録はありません。</p></div>'}
+    ${shown.length > n ? `<a class="btn wide" href="#/activities?${f !== 'all' ? `f=${f}&` : ''}n=${n + 30}">もっと見る (残り ${shown.length - n} 日)</a>` : ''}`;
+}
+
+/** 日: その日の走りを理解する */
+async function histDay(d) {
+  const r = await api(`/review?from=${d}&to=${d}&kind=day`);
+  const runs = [...r.list].reverse();
+  const m = mainOf(runs);
+  const [ev, an, rv] = m ? await Promise.all([api(`/activities/${m.id}`).catch(() => null), api(`/activities/${m.id}/analysis`).catch(() => null), api(`/activities/${m.id}/review`).catch(() => null)]) : [null, null, null];
+  const nav = navRow(`#/activities?view=day&date=${addDays(d, -1)}`, `${md(d)}(${dow(d)})`, `#/activities?view=day&date=${addDays(d, 1)}`);
+  if (!runs.length) return `${nav}<div class="card"><h2>この日の記録はありません</h2>${r.planned_km ? `<p class="muted">計画 ${r.planned_km}km</p>` : ''}</div>`;
+  const pct = r.planned_km ? Math.round((r.km / r.planned_km) * 100) : null;
+  let h = `${nav}<div class="card hl-sum">
+    <div class="hl-sum-top"><div><small class="muted">日次評価</small>${r.grade ? `<div class="grade g${r.grade}">${r.grade}<small class="num">${r.grade_calc?.pts ?? ''}点</small></div>` : '<div class="grade gH">保留</div>'}</div>
+      <div class="hl-big"><b class="num">${km(runs.reduce((x, y) => x + y.distance_m, 0), 2)}</b><small>km</small>${r.planned_km ? `<span class="muted num">計画 ${r.planned_km}km (${pct}%)</span>` : '<span class="muted">計画なし</span>'}</div></div>
+    <div class="hl-tiles three"><div class="hl-tile"><small>ラン回数</small><b class="num">${r.runs}<small>本</small></b></div><div class="hl-tile"><small>合計時間</small><b class="num">${dur(r.time_s)}</b></div><div class="hl-tile"><small>負荷 (TL)</small><b class="num">${r.tl}</b></div></div>
+    ${r.phase_note ? `<p class="rv-phase">${esc(r.phase_note)}</p>` : ''}</div>
+    <h3 class="sect">この日の練習</h3><div class="card hl-day">${runs.map((x) => runRow(x, runs.length > 1 && m && x.id === m.id)).join('')}</div>`;
+  // 評価対象 (メイン区間): 何を・どの根拠で評価したか
+  const e = ev?.evaluation;
+  if (m && e) {
+    const pd = e.pace?.details || {};
+    const totKm = m.distance_m / 1000;
+    const secKm = e.section_km ?? pd.work_km ?? null;
+    const by = e.role === 'work' ? ['計画のステップ (アップ・ダウンは別の記録)', 'good'] : e.section_km != null ? ['計画のステップ (この記録の中の区間)', 'good'] : secKm != null && secKm < totKm - 0.05 ? ['推定: 目標帯より 20 秒/km 以上遅い記録を除外 (メインの失速も除かれることがあるため参考)', 'ok'] : ['この記録の全体', 'good'];
+    h += `<h3 class="sect">評価対象</h3><div class="card"><div class="hl-target"><div><small class="muted">評価した区間</small><b class="num">${secKm != null ? `${Number(secKm).toFixed(2)}km` : '-'}</b><span class="muted num">記録全体 ${totKm.toFixed(2)}km</span></div>
+      <div><small class="muted">区間の平均</small><b class="num">${pd.avg_pace ? pace(pd.avg_pace) : '-'}<small>/km</small></b><span class="muted num">${pd.target ? `目標 ${esc(pd.target)}` : '目標なし'}</span></div>
+      <div><small class="muted">目標帯に入った距離</small><b class="num">${pd.in_band_pct != null ? `${pd.in_band_pct}%` : '-'}</b><span class="muted num">${e.hr?.details?.avg_hr ? `心拍 ${e.hr.details.avg_hr}bpm` : ''}</span></div></div>
+      <p class="hl-by"><span class="an-j j-${by[1]}">${by[1] === 'good' ? '根拠' : '参考'}</span>${esc(by[0])}</p></div>`;
+  }
+  // 主観とデータの照合
+  if (m) {
+    const fb = rv?.fb || {};
+    const ft = (label, v) => `<div class="hl-tile"><small>${label}</small><b class="num">${v == null ? '-' : `${v}<small>/10</small>`}</b></div>`;
+    const any = ['breath', 'leg', 'rpe', 'form'].some((k) => fb[k] != null);
+    h += `<h3 class="sect">主観とデータの照合</h3><div class="card"><div class="hl-tiles four">${ft('呼吸', fb.breath)}${ft('脚の疲労', fb.leg)}${ft('きつさ', fb.rpe)}${ft('フォーム', fb.form)}</div>
+      ${any ? (an?.subj || []).filter((x) => !/未入力/.test(x.text)).slice(0, 3).map((x) => `<p class="hl-p"><span class="an-j j-${x.kind === 'gap' ? 'bad' : x.kind === 'match' ? 'good' : 'ok'}">${x.kind === 'gap' ? 'ずれ' : x.kind === 'match' ? '一致' : '事実'}</span>${esc(x.text)}</p>`).join('') : `<p class="muted hl-p"><span>ふりかえりが未入力です。<a href="#/activities/${m.id}">ランの詳細</a>で入れると、ここに照合が出ます (未入力は 0 点にしません)。</span></p>`}</div>`;
+  }
+  // 良かった点・課題・次の一手
+  if (an?.top) {
+    h += `<h3 class="sect">まとめ</h3><div class="card an-top" style="margin:0 0 14px">
+      <div><b>総合評価</b><p>${esc(an.top.overall)}</p></div><div><b>最も重要な発見</b><p>${esc(an.top.finding)}</p></div>${an.top.next ? `<div><b>次の一手</b><p>${esc(an.top.next)}</p></div>` : ''}
+      ${an.good?.length || an.issues?.length ? `<div class="an-gi">${an.good.length ? `<div><b class="g">良かった点</b>${an.good.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}${an.issues.length ? `<div><b class="b">課題</b>${an.issues.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}</div>` : ''}</div>`;
+  }
+  h += `<details class="card rv-acc"><summary>採点の根拠</summary><div class="rv-acc-b">${(r.parts || []).map((x) => `<div class="an-it"><span class="an-j j-${jClass(x.score)}">${x.score ?? '保留'}</span><div><b>${esc(x.label)} <small class="muted">(重み ${x.weight})</small></b><small class="muted">${esc(x.reason)}</small></div></div>`).join('')}
+    <p class="muted an-note">日次評価は、その日の練習全体 (アップ・メイン・ダウン) を、目的と大会までの日数もふまえて見たもの。メインの点数は練習達成度。</p>
+    <ul class="bullets">${r.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div></details>`;
+  return h;
+}
+
+/** 週の距離の棒グラフ (実績の棒・計画の枠)。タップでその日へ */
+function weekBars(days) {
+  const W = 320, H = 150, top = 22, bot = 22, bw = 26;
+  const max = Math.max(5, ...days.map((d) => Math.max(d.km, d.plan_km || 0))) * 1.1;
+  const y = (v) => H - bot - (v / max) * (H - top - bot);
+  const step = W / days.length;
+  return `<svg viewBox="0 0 ${W} ${H}" class="wbars" role="img" aria-label="曜日ごとの距離">${days.map((d, i) => {
+    const x = i * step + (step - bw) / 2;
+    const t = d.main_type || 'free';
+    const fut = d.date > today();
+    return `<a href="#/activities?view=day&date=${d.date}">
+      ${d.plan_km ? `<rect x="${x - 2}" y="${y(d.plan_km)}" width="${bw + 4}" height="${H - bot - y(d.plan_km)}" rx="5" class="wb-plan"/>` : ''}
+      ${d.km ? `<rect x="${x}" y="${y(d.km)}" width="${bw}" height="${H - bot - y(d.km)}" rx="4" style="fill:var(--c-${t})"/><text x="${x + bw / 2}" y="${y(d.km) - 5}" class="wb-v">${d.km}</text>` : `<text x="${x + bw / 2}" y="${H - bot - 5}" class="wb-v muted">${fut ? '' : '–'}</text>`}
+      <text x="${x + bw / 2}" y="${H - 6}" class="wb-d ${d.date === today() ? 'cur' : ''}">${dow(d.date)}</text></a>`;
+  }).join('')}</svg><p class="muted wb-leg"><i class="wb-k plan"></i>計画 <i class="wb-k act"></i>実績 (色は練習の種類)</p>`;
+}
+
+/** 週: 練習を調整する */
+async function histWeek(anchor) {
+  const p = periodOf('week', anchor);
+  const [r, cond, trend] = await Promise.all([api(`/review?from=${p.from}&to=${p.to}&kind=week`), api(`/condition?from=${p.from}&to=${p.to}`).catch(() => ({})), api('/trend?weeks=12').catch(() => null)]);
+  const pv = r.prev_detail;
+  const pct = r.planned_km ? Math.round((r.km / r.planned_km) * 100) : null;
+  const long = r.breakdown?.find((x) => x.key === 'long')?.runs ?? 0;
+  const tile = (label, v, sub = '') => `<div class="hl-tile"><small>${label}</small><b class="num">${v}</b>${sub ? `<span class="num">${sub}</span>` : ''}</div>`;
+  // 量・強度・回復
+  const P = Object.fromEntries((r.parts || []).map((x) => [x.key, x]));
+  const cs = Object.values(cond || {});
+  const avgC = (k) => { const v = cs.map((c) => c[k]).filter((x) => x != null); return v.length ? (v.reduce((a, b) => a + b, 0) / v.length).toFixed(1) : null; };
+  const maxPain = cs.map((c) => c.pain).filter((x) => x != null);
+  const rows = [
+    ['量', P.volume],
+    ['強度 (ポイント練)', P.points],
+    ['練習の質', P.quality],
+    ['回復 (負荷の増え方)', P.load],
+  ].filter(([, x]) => x);
+  let h = `${navRow(`#/activities?view=week&date=${p.prev}`, p.label, `#/activities?view=week&date=${p.next}`)}
+    <div class="card hl-sum"><div class="hl-sum-top"><div><small class="muted">週間走行距離</small><div class="hl-big"><b class="num">${r.km}</b><small>km</small></div>
+      <span class="muted num">${r.delta_km_pct != null ? `前週比 ${signed(r.delta_km_pct, '%')}` : ''}</span></div>
+      <div class="hl-plan"><small class="muted">計画</small><b class="num">${r.planned_km || '-'}${r.planned_km ? '<small>km</small>' : ''}</b>${pct != null ? `<span class="num ${pct > 115 ? 'over' : pct < 80 ? 'gap' : 'ok'}">${pct}%</span>` : ''}</div></div>
+      ${weekBars(r.days)}
+      <div class="hl-tiles four">${tile('ラン回数', `${r.runs}<small>回</small>`)}${tile('走った日', `${r.run_days}<small>日</small>`)}${tile('ポイント', r.quality.planned ? `${r.quality.done}/${r.quality.planned}` : `${r.breakdown?.find((x) => x.key === 'point')?.runs ?? 0}<small>回</small>`)}${tile('ロング', `${long}<small>回</small>`)}</div></div>
+    <h3 class="sect">週評価${r.in_progress ? ' <small class="muted">(途中経過)</small>' : ''}</h3><div class="card">
+      <div class="row spread"><b>量・強度・回復のバランス</b>${r.grade ? `<span class="grade g${r.grade}">${r.grade}<small class="num">${r.grade_calc?.pts}点</small></span>` : '<span class="grade gH">保留</span>'}</div>
+      ${r.phase_note ? `<p class="rv-phase">${esc(r.phase_note)}</p>` : ''}
+      <div class="an-items" style="margin-top:8px">${rows.map(([l, x]) => `<div class="an-it"><span class="an-j j-${jClass(x.score)}">${x.score ?? '保留'}</span><div><b>${l}</b><small class="muted">${esc(x.reason)}</small></div></div>`).join('')}</div>
+      <p class="muted an-note">${r.in_progress ? 'まだ来ていない日の計画は、未達として数えていません。' : ''}「量」は計画の距離とのずれで採点します (±10% までは満点)。調整期・回復期は少なくても減点しません。</p></div>
+    <h3 class="sect">先週からの変化</h3><div class="card"><div class="hl-tiles three">
+      ${tile('距離', pv ? `${signed(r.km - pv.km, '', 1)}<small>km</small>` : '-', pv ? `先週 ${pv.km}km` : '先週の記録なし')}
+      ${tile('平均ペース', pv?.avg_pace_s && r.avg_pace_s ? `${signed(Math.round(r.avg_pace_s - pv.avg_pace_s))}<small>秒/km</small>` : '-', pv?.avg_pace_s ? `先週 ${pace(pv.avg_pace_s)}/km` : '')}
+      ${tile('平均心拍', pv?.avg_hr && r.avg_hr ? `${signed(r.avg_hr - pv.avg_hr)}<small>bpm</small>` : '-', pv?.avg_hr ? `先週 ${pv.avg_hr}bpm` : '')}
+    </div><p class="muted an-note">平均ペース・心拍は、練習の中身 (ポイント練・ロング走の有無) で変わります。走力の変化は月の「成長分析」で、同じペース同士を比べて見ます。</p></div>
+    <h3 class="sect">疲労・睡眠・痛み</h3><div class="card">${cs.length ? `<div class="hl-tiles four">${tile('脚の疲労', avgC('leg') ?? '-', '平均/10')}${tile('全身の疲労', avgC('fatigue') ?? '-', '平均/10')}${tile('睡眠', avgC('sleep') ?? '-', '平均/10')}${tile('痛み', maxPain.length ? Math.max(...maxPain) : '-', '最大/10')}</div><p class="muted an-note">朝の体調 ${cs.length} 日分。</p>` : '<p class="muted">この週の朝の体調は未入力です (ホームの「今朝の体調」から記録できます)。</p>'}</div>
+    ${r.next_period?.length ? `<div class="card hl-next"><b>翌週への提案</b>${r.next_period.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}
+    <details class="card rv-acc"><summary>詳しく (コメント・過去12週・ラン)</summary><div class="rv-acc-b">
+      <ul class="bullets">${r.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
+      ${trend ? trendChart(trend, p.from) : ''}
+      <div class="hl-day">${[...r.list].reverse().map((x) => runRow(x, false)).join('') || '<p class="muted">記録なし</p>'}</div></div></details>`;
+  return h;
+}
+
+/** 月: 成長を確認する */
+async function histMonth(anchor) {
+  const p = periodOf('month', anchor);
+  const mon = p.from.slice(0, 7);
+  const [r, goal] = await Promise.all([api(`/review?from=${p.from}&to=${p.to}&kind=month`), api(`/goals/${mon}`).catch(() => ({ km: null }))]);
+  const pv = r.prev_detail;
+  const gpct = goal?.km ? Math.min(100, (r.km / goal.km) * 100) : null;
+  const tile = (label, v, sub = '') => `<div class="hl-tile"><small>${label}</small><b class="num">${v}</b>${sub ? `<span class="num">${sub}</span>` : ''}</div>`;
+  // カレンダー (月曜始まり)
+  const first = p.from, lead = (new Date(`${first}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const t = today();
+  const cells = [...Array(lead).fill(null), ...r.days];
+  const cal = `<div class="mcal">${['月', '火', '水', '木', '金', '土', '日'].map((x) => `<small>${x}</small>`).join('')}${cells.map((d) => d == null ? '<span></span>' : `<a href="#/activities?view=day&date=${d.date}" class="${d.km ? 'run' : ''} ${d.date > t ? 'fut' : ''} ${d.date === t ? 'cur' : ''}" style="${d.km ? `--tc:var(--c-${d.main_type || 'free'})` : ''}"><b>${Number(d.date.slice(8))}</b>${d.km ? `<i class="num">${d.km}</i>` : ''}</a>`).join('')}</div>
+    <p class="muted wb-leg"><i class="wb-k act"></i>走った日 (色は練習の種類・数字は km)　<i class="wb-k fut"></i>未来の日</p>`;
+  // 週ごとの距離
+  const wk = new Map();
+  for (const d of r.days) { const w = weekStart(d.date); wk.set(w, (wk.get(w) || 0) + d.km); }
+  const wmax = Math.max(10, ...wk.values());
+  const weeks = [...wk].map(([w, v]) => `<a class="mwk" href="#/activities?view=week&date=${w}"><span>${md(w < first ? first : w)}〜</span><i style="width:${(v / wmax) * 100}%"></i><b class="num">${v.toFixed(1)}km</b></a>`).join('');
+  const bmax = Math.max(1, ...(r.breakdown || []).map((x) => x.km));
+  return `${navRow(`#/activities?view=month&date=${p.prev}`, p.label, `#/activities?view=month&date=${p.next}`)}
+    <div class="card hl-sum"><div class="hl-sum-top"><div><small class="muted">月間走行距離</small><div class="hl-big"><b class="num">${r.km}</b><small>km</small></div>
+      <span class="muted num">${r.delta_km_pct != null && !r.in_progress ? `前月比 ${signed(r.delta_km_pct, '%')}` : pv ? `前月 ${pv.km}km` : ''}</span></div>
+      <div class="hl-plan"><small class="muted">設定目標</small><b class="num">${goal?.km ? `${goal.km}<small>km</small>` : '-'}</b>${goal?.km ? `<span class="num">${Math.round((r.km / goal.km) * 100)}%</span>` : '<span class="muted">未設定</span>'}</div></div>
+      ${gpct != null ? `<div class="gtrack hl-gt"><i class="ok" style="width:${gpct}%"></i></div>` : ''}
+      ${r.in_progress ? `<p class="muted an-note">${md(t)} 時点の記録 (暫定)。月の途中なので、まだ来ていない日は未達として数えていません。</p>` : ''}
+      <div class="hl-tiles three">${tile('ラン回数', `${r.runs}<small>本</small>`)}${tile('走った日', `${r.run_days}<small>日</small>`)}${tile('最長', `${r.longest_km}<small>km</small>`)}</div></div>
+    <h3 class="sect">練習の内訳</h3><div class="card">${(r.breakdown || []).length ? (r.breakdown || []).map((x) => `<div class="mbk"><span>${esc(x.label)}</span><i style="width:${(x.km / bmax) * 100}%"></i><b class="num">${x.runs}回・${x.km}km</b></div>`).join('') : '<p class="muted">記録なし</p>'}</div>
+    <h3 class="sect">今月の練習カレンダー</h3><div class="card">${cal}</div>
+    <h3 class="sect">週ごとの距離</h3><div class="card">${weeks}</div>
+    <h3 class="sect">月間の成長分析</h3><div class="card">
+      ${(r.growth || []).map((g) => `<div class="an-it"><span class="an-j j-${g.trend === 'up' ? 'good' : g.trend === 'down' ? 'bad' : g.trend === 'same' ? 'ok' : 'hold'}">${{ up: '改善', down: '低下', same: '維持', hold: '保留' }[g.trend]}</span><div><b>${esc(g.label)}</b><span class="num">${g.trend === 'hold' ? '' : `今月 ${g.now}・前月 ${g.past} (${g.diff})`}</span><small class="muted">${esc(g.note)}</small></div></div>`).join('')}
+      <div class="an-it"><span class="an-j j-hold">事実</span><div><b>ロング走・ポイント練</b><small class="muted">ロング走 ${r.breakdown?.find((x) => x.key === 'long')?.runs ?? 0} 回 (28km 以上 ${r.long_runs_28} 回)・ポイント練 ${r.breakdown?.find((x) => x.key === 'point')?.runs ?? 0} 回${r.quality.planned ? ` (計画 ${r.quality.planned} 回中 ${r.quality.done} 回)` : ''}</small></div></div>
+      ${r.phase_note ? `<p class="rv-phase">${esc(r.phase_note)}</p>` : ''}</div>
+    <details class="card rv-acc"><summary>月の評価 ${r.grade ? `${r.grade} (${r.grade_calc?.pts}点)` : '(保留)'}${r.in_progress ? '・暫定' : ''}</summary><div class="rv-acc-b">
+      ${(r.parts || []).map((x) => `<div class="an-it"><span class="an-j j-${jClass(x.score)}">${x.score ?? '保留'}</span><div><b>${esc(x.label)} <small class="muted">(重み ${x.weight})</small></b><small class="muted">${esc(x.reason)}</small></div></div>`).join('')}
+      <ul class="bullets">${r.comments.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
+      ${r.next_period?.length ? `<p><b>翌月への提案</b></p><ul class="bullets">${r.next_period.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}</div></details>`;
 }
 
 const HR_ZONES = [['Z1', '回復', '#98a0b3'], ['Z2', '有酸素持久力', '#16b57a'], ['Z3', '有酸素パワー', '#ffb800'], ['Z4', '乳酸閾値', '#ff8a1f'], ['Z5', '無酸素', '#e63946']];
