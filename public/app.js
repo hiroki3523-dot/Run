@@ -32,18 +32,47 @@ const SHOE_GUESS = [
 ];
 const guessPurposes = (name) => (SHOE_GUESS.find(([re]) => re.test(name || '')) || [null, null])[1];
 let SHOES = [];
-/** メニューに合うシューズを選ぶ: 用途が合う順 → 走行距離の少ない順。理由も返す */
+/** シューズごとの、種類別の使用実績 (/shoes/compare)。推薦に使う */
+let SHOE_FIT = null;
+const SHOE_FEEL = [['overall', '総合的な走りやすさ'], ['natural', 'フォームの自然さ'], ['cushion', 'クッション性'], ['light', '軽さ'], ['rebound', '反発の強さ'], ['stable', '安定感'], ['load', '脚への負担 (10 = 重い)']];
+
+/**
+ * メニューに合うシューズを選ぶ。用途 → 本人の相性評価 → 同じ種類での使用実績 (脚の疲労・走りやすさ・痛み) → 状態の順に見る。
+ * 走行距離が少ないことは、同じくらいの候補の中で少しだけ優先する程度 (レース用は距離で選ばない)
+ */
+const GROUP_OF_TYPE = { easy: 'easy', jog: 'easy', long: 'long', m: 'tempo', lt: 'tempo', interval: 'interval', race: 'race' };
 function recommendShoe(type) {
-  const pool = SHOES.filter((x) => !x.retired && x.total_km < x.limit_km);
-  for (const pu of SHOE_PREF[type] ?? ['easy']) {
-    const c = pool.filter((x) => purposesOf(x.purpose).includes(pu)).sort((a, b) => a.total_km / a.limit_km - b.total_km / b.limit_km);
-    if (c.length) {
-      const why = c.length > 1 ? `${PURPOSE_LABELS[pu]}用 ${c.length} 足のうち、走行距離が最も少ない` : `${PURPOSE_LABELS[pu]}用に設定している唯一の 1 足`;
-      return { shoe: c[0], why };
+  const prefs = SHOE_PREF[type] ?? ['easy'];
+  const g = GROUP_OF_TYPE[type] || 'easy';
+  const fit = (SHOE_FIT && SHOE_FIT[g]) || [];
+  const cands = SHOES.filter((x) => !x.retired && purposesOf(x.purpose).some((p) => prefs.includes(p))).map((x) => {
+    const rank = Math.min(...purposesOf(x.purpose).map((p) => prefs.indexOf(p)).filter((k) => k >= 0));
+    let sc = 30 - rank * 10;
+    const why = [];
+    const f = x.feel || {};
+    if (f.overall != null) { sc += (f.overall - 5) * 3; if (f.overall >= 8) why.push(`走りやすさ ${f.overall}/10`); }
+    if (f.overall != null && f.overall <= 3) { sc -= 30; why.push('相性が良くないと評価'); }
+    if (f.load != null && (g === 'long' || g === 'easy')) sc -= Math.max(0, f.load - 5) * 2;
+    const u = fit.find((r) => r.shoe_id === x.id);
+    if (u) {
+      if (u.leg != null) sc -= (u.leg - 5) * 2;
+      if (u.next_leg != null) sc -= (u.next_leg - 5) * 2;
+      if (u.form != null) sc += (u.form - 5) * 2;
+      if (u.pain_n) { sc -= u.pain_n * 8; why.push(`痛みの記録 ${u.pain_n} 回`); }
+      if (u.leg != null && u.leg <= 4) why.push(`この種類で脚の疲労 平均 ${u.leg}/10`);
+      else if (!why.length) why.push(`この種類で ${u.n} 回使用`);
     }
-  }
-  return null;
+    const wear = x.total_km / x.limit_km;
+    if (wear >= 1) { sc -= 25; why.push('交換目安を超えている'); } else if (wear >= 0.9) { sc -= 8; why.push('交換目安に近い'); }
+    if (g !== 'race') sc -= wear * 4; // 同じくらいなら、使っていない方を少しだけ
+    return { shoe: x, sc, why, pu: purposesOf(x.purpose).find((p) => prefs.includes(p)) };
+  }).sort((a, b) => b.sc - a.sc);
+  const top = cands[0];
+  if (!top) return null;
+  const head = `${PURPOSE_LABELS[top.pu]}用`;
+  return { shoe: top.shoe, why: [head, ...top.why.slice(0, 2)].join('・') };
 }
+const shoeName = (s) => `${s.name}${s.feel?.label ? ` (${s.feel.label})` : ''}`;
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 
 // ---------------------------------------------------------------- utils
@@ -217,11 +246,12 @@ const PACE_PLANS = {
   even: { label: 'イーブン', note: '最初から最後まで同じペース。いちばん安定します。', f: (per) => () => per },
   negative: { label: 'ネガティブ', note: '前半を 4 秒/km 抑え、後半を 4 秒/km 上げます。', f: (per) => (k, dist) => per + (k < dist / 2 ? 4 : -4) },
   active: { label: 'アクティブ', note: '前半を 4 秒/km 速く入って貯金し、後半は粘ります。', f: (per) => (k, dist) => per + (k < dist / 2 ? -4 : 4) },
+  custom: { label: 'カスタム', note: '5km ごとのペースを ±秒 で調整します (区間のペースをタップ)。合計は目標タイムに合うよう自動で整えます。', f: (per, dist, adj) => (k) => per + ((adj || [])[Math.min(Math.floor(k / 5), Math.ceil(dist / 5) - 1)] || 0) },
 };
 function paceRows(race, mode) {
   const dist = race.distance_m / 1000;
   const per = race.goal_time_s / dist;
-  const f = (PACE_PLANS[mode] || PACE_PLANS.even).f(per, dist);
+  const f = (PACE_PLANS[mode] || PACE_PLANS.even).f(per, dist, raceInfoOf(race).pace_adj);
   // 1km ずつ積み上げ、最後の端数 (0.195km) も足して、ゴールが目標タイムになるよう微調整
   let t = 0;
   const at = new Map();
@@ -237,25 +267,46 @@ function paceRows(race, mode) {
   for (const k of [...marks, dist]) {
     const tt = raw(k) * scale;
     const lapPace = (tt - prevT) / (k - prevK);
-    rows.push({ k, t: tt, lap: lapPace, half: Math.abs(k - dist / 2) < 0.01 && dist > 40, fin: k === dist });
+    rows.push({ k, t: tt, lap: lapPace, seg: Math.min(Math.floor((k - 0.001) / 5), Math.ceil(dist / 5) - 1), half: Math.abs(k - dist / 2) < 0.01 && dist > 40, fin: k === dist });
     prevT = tt; prevK = k;
   }
   return rows;
 }
+/** "8:20" → 秒 */
+const clockS = (v) => { const m = String(v || '').match(/(\d{1,2})[:：](\d{2})/); return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 : null; };
+const clockTxt = (s) => `${Math.floor(s / 3600) % 24}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}`;
+/** 距離 (km) の地点を通過する時間 (ネット・秒)。ペース表と同じ計算 */
+function timeAt(race, mode, km) {
+  const dist = race.distance_m / 1000, per = race.goal_time_s / dist;
+  const f = (PACE_PLANS[mode] || PACE_PLANS.even).f(per, dist, raceInfoOf(race).pace_adj);
+  const raw = (to) => { let tt = 0; for (let k = 0; k < to; ) { const step = Math.min(1, to - k); tt += f(k + step / 2, dist) * step; k += step; } return tt; };
+  return raw(Math.min(km, dist)) * (race.goal_time_s / raw(dist));
+}
+/** スタート時刻 (自分のブロック) + スタートロス = 自分がスタートラインを越える時刻 (秒)。分からなければ null */
+function myStartClock(race) {
+  const inf = raceInfoOf(race);
+  const blk = (inf.blocks || []).find((b) => inf.my_block && b.name.replace(/ブロック/, '') === String(inf.my_block).replace(/ブロック/, ''));
+  const st = clockS(blk?.start || inf.start_time);
+  return st == null ? null : st + (inf.start_loss_s || 0);
+}
 function splitTable(race, mode = 'even') {
   if (!race.goal_time_s) return '<p class="muted">目標タイムを設定すると、ペース表が出ます。</p>';
   const rows = paceRows(race, mode);
+  const sc = myStartClock(race);
+  const loss = raceInfoOf(race).start_loss_s || 0;
   const paces = rows.map((r) => r.lap);
   const fast = Math.min(...paces), slow = Math.max(...paces);
   const w = (p) => (slow - fast < 1 ? 78 : 62 + ((slow - p) / (slow - fast)) * 38);
   return `<div class="ptable">
-    <div class="ph"><span>地点</span><span>通過</span><span>この区間のペース</span></div>
+    <div class="ph"><span>地点</span><span>通過${loss ? ' (ネット)' : ''}</span><span>この区間のペース</span></div>
     ${rows.map((r) => `<div class="pr ${r.half ? 'half' : ''} ${r.fin ? 'fin' : ''}">
       <span class="pk">${r.fin ? 'ゴール' : r.half ? 'ハーフ' : `${Math.round(r.k)}km`}</span>
-      <b class="num">${dur(r.t)}</b>
-      <span class="pbar"><i style="width:${w(r.lap)}%"></i><em class="num">${pace(r.lap)}</em></span>
+      <b class="num">${dur(r.t)}${sc != null ? `<small class="pclock">${clockTxt(sc + r.t)}</small>` : ''}</b>
+      ${mode === 'custom' && !r.half ? `<button type="button" class="pbar pbtn" data-seg="${r.seg}"><i style="width:${w(r.lap)}%"></i><em class="num">${pace(r.lap)}</em></button>` : `<span class="pbar"><i style="width:${w(r.lap)}%"></i><em class="num">${pace(r.lap)}</em></span>`}
     </div>`).join('')}
-  </div>`;
+  </div>
+  ${loss ? `<p class="muted an-note">スタートロス ${mmss(loss)} を見込んだグロス (号砲から) のゴールは ${dur(race.goal_time_s + loss)}。</p>` : ''}
+  ${sc != null ? '<p class="muted an-note">時刻は、自分のブロックのスタート時刻 + スタートロスからの見込み。</p>' : ''}`;
 }
 
 /** 今月の目標距離。目標が未設定なら、計画の合計を提案する */
@@ -574,7 +625,7 @@ async function loadInsights() {
 function shoeLine(p, calendar) {
   if (!calendar || p.type === 'rest' || p.activity_id) return '';
   const r = recommendShoe(p.type);
-  return r ? `<div class="shoe-rec">おすすめ: ${esc(r.shoe.name)} <span class="muted">${Math.round(r.shoe.total_km)}km</span><div class="muted why">${esc(r.why)}</div></div>` : '';
+  return r ? `<div class="shoe-rec">おすすめ: ${esc(shoeName(r.shoe))} <span class="muted">${Math.round(r.shoe.total_km)}km</span><div class="muted why">${esc(r.why)}</div></div>` : '';
 }
 
 /** 同じ日・同じ内容の計画が重なっていたら 1 つにまとめる (走った実績が付いている方を残す) */
@@ -709,6 +760,7 @@ async function plansView(params) {
     loadWx(),
   ]);
   SHOES = shoes;
+  if (!SHOE_FIT) SHOE_FIT = await api('/shoes/compare').catch(() => ({}));
   dedupeIfNeeded(plansRaw);
   const plans = uniqPlans(plansRaw);
   /** 同じ日に走ったワークアウトは 1 つのメニューとして見せる。アップ・メイン・ダウンの内訳つき */
@@ -2055,7 +2107,7 @@ async function activityDetailView(id) {
       const sheet = document.createElement('div');
       sheet.className = 'sheet';
       sheet.innerHTML = `<div class="sheet-bg"></div><div class="sheet-body"><h2>マイ シューズ</h2>
-        <div class="sheet-row">${list.map((x) => `<button type="button" class="sh-card ${a.shoe_id === x.id ? 'on' : ''}" data-sh="${x.id}"><div class="shoe-img big">${x.image ? `<img src="${x.image}" alt="">` : '<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div><b>${esc(x.name)}</b><span class="muted num">${Math.round(x.total_km)}km</span></button>`).join('')}
+        <div class="sheet-row">${list.map((x) => `<button type="button" class="sh-card ${a.shoe_id === x.id ? 'on' : ''}" data-sh="${x.id}"><div class="shoe-img big">${x.image ? `<img src="${x.image}" alt="">` : '<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div><b>${esc(shoeName(x))}</b><span class="muted num">${Math.round(x.total_km)}km</span></button>`).join('')}
         <button type="button" class="sh-card ${a.shoe_id == null ? 'on' : ''}" data-sh=""><div class="shoe-img big muted">なし</div><b>選ばない</b></button></div>
         <button type="button" class="sheet-close">閉じる</button></div>`;
       document.body.appendChild(sheet);
@@ -2225,6 +2277,58 @@ const CHECK_ITEMS = [
   ['morning', 'm4', '軽いジョグ・ストレッチ'],
 ];
 
+/** レースの結果: 目標との差・前半/後半・失速した地点・次の目標の目安 */
+async function loadRaceResult(r) {
+  const box = document.getElementById('race-result');
+  if (!box) return;
+  const res = await api(`/races/${r.id}/result`).catch(() => null);
+  const ask = async (manual) => {
+    let body = {};
+    if (manual) { const v = await openDialog(`<h2>結果タイム</h2><input name="t" placeholder="3:08:30" value="${r.result_time_s ? dur(r.result_time_s) : ''}" required><p class="muted" style="font-size:12.5px">記録証のタイム (グロスかネット、どちらでも)。</p>`); if (!v) return; body = { result_time_s: parseDur(v.t) }; }
+    try { await api(`/races/${r.id}/result`, { method: 'POST', body }); route(); } catch (e) { alert(e.message); }
+  };
+  if (!res) {
+    box.innerHTML = `<div class="card"><h2>結果</h2><p class="muted">その日の実績から、レースのランを見つけて結果を登録します。</p><div class="row"><button type="button" class="primary" data-res="auto">実績から登録</button><button type="button" data-res="man">タイムを入力</button></div></div>`;
+    box.querySelector('[data-res="auto"]').onclick = () => ask(false);
+    box.querySelector('[data-res="man"]').onclick = () => ask(true);
+    return;
+  }
+  const d = res.diff_s;
+  const km = r.distance_m / 1000;
+  box.innerHTML = `<div class="card rres"><div class="row spread"><h2>結果</h2><button type="button" class="chip" data-res="man">修正</button></div>
+    <div class="apt-pred num" style="--n:3"><div><small>結果</small><b>${dur(res.result_s)}</b></div><div><small>目標</small><b>${res.goal_s ? dur(res.goal_s) : '-'}</b></div><div><small>目標との差</small><b class="${d != null && d <= 0 ? 'g' : 'b'}">${d == null ? '-' : `${d <= 0 ? '−' : '+'}${dur(Math.abs(d))}`}</b></div></div>
+    ${res.first_pace ? `<p>前半 <b class="num">${pace(res.first_pace)}</b>/km → 後半 <b class="num">${pace(res.second_pace)}</b>/km (${res.second_pace - res.first_pace > 0 ? `${res.second_pace - res.first_pace} 秒/km 落ちた` : `${res.first_pace - res.second_pace} 秒/km 上げた`})。${res.fade_km ? `${res.fade_km}km から目標ペースより 10 秒/km 以上遅くなっている。` : res.goal_s ? '目標ペースから大きく落ちた区間はない。' : ''}</p>` : '<p class="muted">ラップが取れないので、ペース配分は分かりません。</p>'}
+    ${res.next_goal_s ? `<p class="muted">この結果の走力 (VDOT ${res.vdot}) から、次のフルの目標の目安は <b class="num">${dur(res.next_goal_s)}</b>${km < 40 ? ' (フル換算)' : ''}。${res.fade_km && km > 40 ? ' 後半の失速を減らすため、30km 以上のロング走と M ペース走を増やしたい。' : ''}</p>` : ''}
+    ${res.activity_id ? `<a class="btn" href="#/activities/${res.activity_id}">このレースの実績を見る ›</a>` : ''}</div>`;
+  box.querySelector('[data-res="man"]').onclick = () => ask(true);
+}
+
+/** 関門との余裕・補給計画 (ペース表と同じ計算で、通過予定の時刻を出す) */
+function racePlanExtras(r, mode) {
+  if (!r.goal_time_s) return '';
+  const inf = raceInfoOf(r);
+  const sc = myStartClock(r), gun = clockS(inf.start_time), loss = inf.start_loss_s || 0;
+  let h = '';
+  const cut = (inf.cutoffs || []).filter((x) => x.km <= r.distance_m / 1000);
+  if (cut.length) {
+    h += `<div class="card"><h2>関門との余裕</h2>${sc == null ? '<p class="muted">スタート時刻が分からないので、号砲からの時間で比べます。</p>' : ''}<table class="an-cmp num"><tr><th>関門</th><th>閉鎖</th><th>通過予定</th><th>余裕</th></tr>${cut.map((x) => {
+      const tAt = timeAt(r, mode, x.km);
+      const closeC = clockS(x.time);
+      // 閉鎖が時刻なら時刻同士、"2:35後" のように号砲からの時間ならグロスで比べる
+      const passC = sc != null ? sc + tAt : null;
+      const margin = closeC != null && passC != null && !/後/.test(x.time) ? closeC - passC : /後/.test(x.time) && closeC != null ? closeC - (tAt + loss) : null;
+      return `<tr><td>${x.km}km${x.place ? ` <small class="muted">${esc(x.place)}</small>` : ''}</td><td>${esc(x.time)}</td><td>${passC != null ? clockTxt(passC) : `号砲+${dur(tAt + loss)}`}</td><td class="${margin != null && margin < 900 ? 'warn-t' : ''}">${margin != null ? `${Math.round(margin / 60)}分` : '-'}</td></tr>`;
+    }).join('')}</table></div>`;
+  }
+  const fuel = [...(inf.fuel || [])].sort((a, b) => a.km - b.km);
+  inf.fuel = fuel;
+  h += `<div class="card"><div class="row spread"><h2>補給計画</h2><button type="button" class="chip" data-fuel="add">＋ 追加</button></div>
+    ${fuel.length ? `<div class="fuel-l">${fuel.map((x, k) => { const tt = timeAt(r, mode, x.km); return `<button type="button" class="fuel-r" data-fuel-edit="${k}"><b class="num">${x.km}km</b><span>${esc(x.item)}</span><span class="num muted">${dur(tt)}${sc != null ? ` (${clockTxt(sc + tt)})` : ''}</span></button>`; }).join('')}</div>
+      <p class="muted an-note">通過予定はペース表 (${PACE_PLANS[mode].label}) と同じ計算。ペースの作り方を変えると時刻も変わります。タップで編集・削除。</p>`
+    : `<p class="muted">ジェル・給水の地点を決めておくと、通過予定の時刻と、持ち物のジェルの数が出ます。</p><button type="button" class="wide" data-fuel="std">標準の補給を入れる (フル: 10・17.5・25・32・37km でジェル)</button>`}</div>`;
+  return h;
+}
+
 async function raceDetailView(id) {
   const [races, state, weather] = await Promise.all([
     api('/races'),
@@ -2237,7 +2341,7 @@ async function raceDetailView(id) {
   let editing = false;
   const r = races.find((x) => x.id === Number(id));
   if (!r) return '<div class="card error">レースが見つかりません</div>';
-  let mode = 'even';
+  let mode = raceInfoOf(r).pace_mode || 'even';
   const t = today();
   const items = [...tmpl, ...(state.custom || [])];
   const rebuild = () => items.splice(0, items.length, ...tmpl, ...(state.custom || []));
@@ -2256,6 +2360,8 @@ async function raceDetailView(id) {
           ? `<div class="ck ck-ed"><input class="ck-in" data-ed="${x.id}" value="${esc(x.text)}" maxlength="60"><button type="button" class="ck-del" data-del="${x.id}" aria-label="削除">×</button></div>`
           : `<label class="ck ${state.checked.includes(x.id) ? 'on' : ''}"><input type="checkbox" data-ck="${x.id}" ${state.checked.includes(x.id) ? 'checked' : ''}><span class="box"></span><span class="ck-text">${esc(x.text)}</span></label>`).join('')}</div>`;
     }).join('');
+    const gels = (raceInfoOf(r).fuel || []).filter((x) => /ジェル|gel/i.test(x.item)).length;
+    if (gels) box.insertAdjacentHTML('afterbegin', `<p class="ck-fuel">補給計画より: ジェル <b>${gels + 1}</b> 個 (予備 1 個を含む)${(raceInfoOf(r).fuel || []).some((x) => /塩/.test(x.item)) ? '・塩タブレット' : ''}</p>`);
     view.querySelector('#ck-add').classList.toggle('hidden', !editing);
     view.querySelector('#ck-edit').textContent = editing ? '完了' : '編集';
     view.querySelector('#ck-prog').textContent = `${done()} / ${items.length}`;
@@ -2263,12 +2369,47 @@ async function raceDetailView(id) {
   };
   setTimeout(() => {
     if (upcoming) wireChecks();
+    const saveInfo = async (patch) => { const info = { ...raceInfoOf(r), ...patch }; r.info = JSON.stringify(info); await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, info, no_auto: true } }).catch((e) => alert(e.message)); };
+    const redraw = () => { view.querySelector('#pace-out').innerHTML = splitTable(r, mode); view.querySelector('#rp-extra').innerHTML = racePlanExtras(r, mode); if (upcoming) drawChecks(); };
     view.querySelectorAll('[data-pm]').forEach((b) => (b.onclick = () => {
       mode = b.dataset.pm;
       view.querySelectorAll('[data-pm]').forEach((x) => x.classList.toggle('on', x === b));
-      view.querySelector('#pace-out').innerHTML = splitTable(r, mode);
       view.querySelector('#pace-note').textContent = PACE_PLANS[mode].note;
+      redraw();
+      saveInfo({ pace_mode: mode });
     }));
+    view.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-seg],[data-rp],[data-fuel]');
+      if (!b) return;
+      const inf = raceInfoOf(r);
+      if (b.dataset.seg != null) {
+        const n = Math.ceil(r.distance_m / 5000), adj = Array.from({ length: n }, (_, k) => (inf.pace_adj || [])[k] || 0), k = Number(b.dataset.seg);
+        const v = await wheelPick(`${k * 5}〜${Math.min(k * 5 + 5, r.distance_m / 1000).toFixed(0)}km のペース調整`, [{ items: range(-20, 20, (x) => `${x > 0 ? '+' : ''}${x} 秒/km`), value: adj[k] }]);
+        if (v) { adj[k] = v[0]; await saveInfo({ pace_adj: adj }); redraw(); }
+      } else if (b.dataset.rp === 'loss') {
+        const v = await wheelPick('スタートロス (号砲からスタートラインまで)', [{ items: range(0, 40, (x) => `${Math.floor(x * 15 / 60)}:${String((x * 15) % 60).padStart(2, '0')}`), value: Math.round((inf.start_loss_s || 0) / 15) }]);
+        if (v) { await saveInfo({ start_loss_s: v[0] * 15 }); route(); }
+      } else if (b.dataset.rp === 'start') {
+        const cur = clockS(inf.start_time) ?? 9 * 3600;
+        const v = await wheelPick('スタート時刻', [{ items: range(5, 14), value: Math.floor(cur / 3600), unit: ':' }, { items: range(0, 59, (x) => String(x).padStart(2, '0')), value: Math.floor((cur % 3600) / 60) }]);
+        if (v) { await saveInfo({ start_time: `${v[0]}:${String(v[1]).padStart(2, '0')}` }); route(); }
+      } else if (b.dataset.fuel === 'std') {
+        const dist = r.distance_m / 1000;
+        const pts = dist >= 40 ? [10, 17.5, 25, 32, 37] : dist >= 20 ? [8, 15] : [];
+        await saveInfo({ fuel: pts.map((km) => ({ km, item: 'ジェル' })) }); redraw();
+      } else if (b.dataset.fuel === 'add' || b.dataset.fuelEdit != null) {
+        const list = [...(inf.fuel || [])], k = b.dataset.fuelEdit != null ? Number(b.dataset.fuelEdit) : -1, cur = k >= 0 ? list[k] : { km: 10, item: 'ジェル' };
+        const v = await openDialog(`<h2>${k >= 0 ? '補給を編集' : '補給を追加'}</h2><div class="grid2"><label>地点 (km)<input name="km" inputmode="decimal" value="${cur.km}" required></label><label>内容<input name="item" value="${esc(cur.item)}" list="fuel-items" required></label></div>
+          <datalist id="fuel-items"><option value="ジェル"><option value="ジェル (カフェイン)"><option value="塩タブレット"><option value="給水"><option value="スポーツドリンク"></datalist>`, k >= 0 ? { onDelete: async () => { list.splice(k, 1); await saveInfo({ fuel: list }); redraw(); } } : {});
+        if (!v) return;
+        const km = Math.max(0, Math.min(r.distance_m / 1000, Number(v.km)));
+        if (!Number.isFinite(km)) return;
+        const item = { km: Math.round(km * 10) / 10, item: String(v.item).slice(0, 30) };
+        if (k >= 0) list[k] = item; else list.push(item);
+        list.sort((a, b2) => a.km - b2.km);
+        await saveInfo({ fuel: list }); redraw();
+      }
+    });
     // 目標タイムかペースのどちらかをホイールで選ぶと、もう一方とペース表が変わる (レースの目標として保存)
     view.querySelectorAll('[data-gp]').forEach((b) => (b.onclick = async () => {
       const km = r.distance_m / 1000;
@@ -2282,6 +2423,7 @@ async function raceDetailView(id) {
     }));
     view.querySelector('#edit-race').onclick = async () => { await editRace(r); };
     view.querySelector('#st-race').onclick = () => manageRace(r);
+    if (r.date <= t) loadRaceResult(r);
     view.querySelector('#del-race').onclick = async () => { if (await deleteRace(r)) location.hash = '#/races'; };
     wireRaceInfo(view, r);
   });
@@ -2344,6 +2486,7 @@ async function raceDetailView(id) {
         <div class="muted num">${md(r.date)}・${km(r.distance_m)}km${r.goal_time_s ? `<br>目標 ${dur(r.goal_time_s)} (${pace(r.goal_time_s / (r.distance_m / 1000))}/km)` : ''}</div>
       </div>
     </div>
+    ${r.date <= t ? '<div id="race-result"></div>' : ''}
     ${raceInfoCard(r)}
     ${weather && weather.race === r.name ? weatherCard(weather) : ''}
     <div class="card"><h2>ペース表</h2>
@@ -2352,10 +2495,12 @@ async function raceDetailView(id) {
         <button type="button" class="gp-t" data-gp="pace"><small>平均ペース</small><b class="num">${r.goal_time_s ? `${pace(r.goal_time_s / (r.distance_m / 1000))}<span>/km</span>` : '-'}</b></button>
       </div>
       <p class="muted hint" style="margin:0 0 12px">タップして選ぶと、ペース表も変わります。</p>
-      ${r.goal_time_s ? `<div class="chips pm3" style="margin-bottom:10px">${Object.entries(PACE_PLANS).map(([k, v]) => `<button type="button" class="chip ${k === 'even' ? 'on' : ''}" data-pm="${k}">${v.label}</button>`).join('')}</div>
-      <p class="muted" id="pace-note" style="margin-top:0">${PACE_PLANS.even.note}</p>` : ''}
-      <div id="pace-out">${splitTable(r, 'even')}</div>
+      ${r.goal_time_s ? `<div class="chips pm3" style="margin-bottom:10px">${Object.entries(PACE_PLANS).map(([k, v]) => `<button type="button" class="chip ${k === mode ? 'on' : ''}" data-pm="${k}">${v.label}</button>`).join('')}</div>
+      <p class="muted" id="pace-note" style="margin-top:0">${PACE_PLANS[mode].note}</p>` : ''}
+      ${r.goal_time_s ? `<div class="rp-tiles"><button type="button" class="ri-tile" data-rp="loss"><small>スタートロス</small><b class="num">${mmss(raceInfoOf(r).start_loss_s || 0)}</b></button><button type="button" class="ri-tile" data-rp="start"><small>スタート時刻</small><b class="num">${myStartClock(r) != null ? clockTxt(myStartClock(r) - (raceInfoOf(r).start_loss_s || 0)) : '未設定'}</b></button></div>` : ''}
+      <div id="pace-out">${splitTable(r, mode)}</div>
     </div>
+    <div id="rp-extra">${racePlanExtras(r, mode)}</div>
     ${upcoming ? `<div class="card"><div class="row spread"><h2>持ち物</h2><div class="row" style="gap:8px;align-items:center"><b class="num" id="ck-prog"></b><button type="button" class="chip" id="ck-edit">編集</button></div></div>
       <div class="bar" style="margin:6px 0 10px"><div id="ck-bar" style="width:0"></div></div>
       <div id="checks"></div>
@@ -2525,6 +2670,9 @@ function raceInfoCard(r) {
     ['手荷物', inf.baggage && esc(inf.baggage)],
     ['給水・給食', inf.aid && esc(inf.aid)],
     ['アクセス', inf.access && esc(inf.access)],
+  ].filter(([, v]) => v);
+  // エントリー期間・参加料は当日には要らないので折りたたむ
+  const entryRows = [
     ['エントリー', inf.entry_open || inf.entry_close ? `${fmtD(inf.entry_open)}〜${fmtD(inf.entry_close)}` : null],
     ['抽選発表', inf.lottery_result && fmtD(inf.lottery_result)],
     ['参加料', inf.fee && esc(inf.fee)],
@@ -2539,6 +2687,7 @@ function raceInfoCard(r) {
       <button type="button" class="ri-tile" data-ri="bib"><small>ゼッケン</small><b class="num">${inf.bib ? esc(inf.bib) : '未設定'}</b></button>
     </div>
     ${has ? `<dl class="ri-dl">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>` : '<p class="muted" style="margin:10px 0">公式サイトから、スタート時刻・整列締め切り・関門・受付などを取り込めます。</p>'}
+    ${entryRows.length ? `<details class="ri-more"><summary>エントリー情報</summary><dl class="ri-dl" style="margin-top:8px">${entryRows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></details>` : ''}
     ${blocks.length > 1 ? `<details class="ri-more"><summary>ブロックごとのスタート (${blocks.length})</summary><table class="ri-t num"><tr><th>ブロック</th><th>スタート</th><th>整列締切</th></tr>${blocks.map((b) => `<tr class="${blk === b ? 'me' : ''}"><td>${esc(b.name)}</td><td>${esc(b.start || '-')}</td><td>${esc(b.close || '-')}</td></tr>`).join('')}</table></details>` : ''}
     ${cut.length ? `<details class="ri-more" ${r.date >= today() ? 'open' : ''}><summary>関門 (${cut.length})</summary><table class="ri-t num"><tr><th>距離</th><th>閉鎖</th><th>場所</th></tr>${cut.map((x) => `<tr><td>${x.km}km</td><td>${esc(x.time)}</td><td>${esc(x.place || '')}</td></tr>`).join('')}</table></details>` : ''}
     <div class="ri-acts">
@@ -2885,7 +3034,7 @@ function shoeAdvice(shoes, race) {
   const out = [];
   const daysTo = race ? Math.round((new Date(race.date) - new Date(today())) / 86400000) : null;
   const over = live.filter((x) => x.total_km >= x.limit_km);
-  if (over.length) out.push({ tone: 'bad', text: `交換目安を超えています: ${over.map((x) => esc(x.name)).join('、')}。引退にするか、入れ替えを。` });
+  if (over.length) out.push({ tone: 'bad', text: `交換目安を超えています: ${over.map((x) => esc(shoeName(x))).join("、")}。目安なので、使用感に問題がなければ続けても大丈夫。底のすり減りや脚の違和感が出たら入れ替えを。` });
   const raceShoe = live.find((x) => purposesOf(x.purpose).includes('race'));
   if (race && daysTo != null && daysTo >= 0 && daysTo <= 56) {
     if (!raceShoe) out.push({ tone: 'warn', text: `本番用がありません。${esc(race.name)}まで${daysTo}日。` });
@@ -2981,7 +3130,7 @@ async function shoesView() {
       <div class="shoe-fg">
       <div class="shoe-row">
         <div class="shoe-img">${s.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div>
-        <div class="shoe-body"><b class="shoe-name">${esc(s.name)}</b>
+        <div class="shoe-body"><b class="shoe-name">${esc(shoeName(s))}</b>
         <div class="shoe-km num">${s.total_km.toFixed(1)}<small> / ${s.limit_km}KM</small></div>
         <div class="bar ${ratio >= 1 ? 'over' : ratio >= 0.9 ? 'warn' : ''}"><div style="width:${Math.min(100, ratio * 100)}%"></div></div>
         <div class="muted tiny">${purposeText(s)}</div>
@@ -3093,6 +3242,11 @@ async function editShoe(s) {
       <label>走行距離 (km)<input name="total_km" inputmode="decimal" value="${s.id ? Math.round((s.total_km ?? s.initial_km) * 10) / 10 : (s.initial_km || 0)}"></label>
       <label>Strava gear ID<input name="strava_gear_id" placeholder="g12345" value="${esc(s.strava_gear_id)}"></label>
     </div>
+    <label>色・呼び名 (同じモデルが複数あるとき)<input name="f_label" maxlength="20" placeholder="例: 白・2足目" value="${esc(s.feel?.label || '')}"></label>
+    <details class="field shoe-feel" ${s.feel && Object.keys(s.feel).some((k) => SHOE_FEEL.some(([f]) => f === k)) ? 'open' : ''}><summary class="lbl">走った感覚 (任意・0〜10)</summary>
+      <div class="sf-grid">${SHOE_FEEL.map(([k, l]) => `<label>${l}<select name="f_${k}"><option value="">-</option>${Array.from({ length: 11 }, (_, v) => `<option ${s.feel?.[k] === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>`).join('')}</div>
+      <p class="muted hint">「総合的な走りやすさ」が 3 以下だと、おすすめに出にくくなります。</p>
+    </details>
     <div class="field"><span class="lbl">状態</span>
       <div class="chips" id="st-chips">${STATUS.map(([v, l]) => `<button type="button" class="chip ${(s.retired || 0) === v ? 'on' : ''}" data-stv="${v}">${l}</button>`).join('')}</div>
       <input type="hidden" name="retired" value="${s.retired || 0}">
@@ -3119,7 +3273,13 @@ async function editShoe(s) {
   const total = Number(values.total_km);
   values.initial_km = Number.isFinite(total) && String(values.total_km).trim() !== '' ? Math.round((total - imported) * 10) / 10 : s.initial_km || 0;
   delete values.total_km;
-  await api(s.id ? `/shoes/${s.id}` : '/shoes', { method: s.id ? 'PUT' : 'POST', body: { ...values, retired: Number(values.retired) || 0 } });
+  const feel = { label: values.f_label || '' };
+  for (const [k] of SHOE_FEEL) if (values[`f_${k}`] !== '' && values[`f_${k}`] != null) feel[k] = Number(values[`f_${k}`]);
+  for (const k of Object.keys(values)) if (k.startsWith('f_')) delete values[k];
+  const saved = await api(s.id ? `/shoes/${s.id}` : '/shoes', { method: s.id ? 'PUT' : 'POST', body: { ...values, retired: Number(values.retired) || 0 } });
+  const sid = s.id || saved?.id;
+  if (sid) await api(`/shoes/${sid}/feel`, { method: 'PUT', body: feel }).catch(() => null);
+  SHOE_FIT = null;
   route();
 }
 

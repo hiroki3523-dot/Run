@@ -16,7 +16,7 @@ import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
 import { autoFillRace, cleanRaceInfo, entryHistory, extractRaceInfo } from './raceinfo';
 import { findOfficialSite } from './sitefind';
 import { corosDisconnect, getAuth as getCorosAuth, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
-import { buildInsights, predictFromRuns } from './insights';
+import { buildInsights, predictFromRuns, timeForVdot } from './insights';
 import { buildAptitude } from './aptitude';
 import { applyDerived } from './derive-apply';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
@@ -150,6 +150,50 @@ api.put('/races/:id', async (c) => {
   // 公式サイトを新しく入れた・変えたときは、裏で読み取る
   if (row?.url && row.url !== before?.url && !body.no_auto) c.executionCtx.waitUntil(autoFillRace(c.env, row.id).catch(() => null));
   return row ? c.json(row) : c.notFound();
+});
+
+/** レースの結果: その日の実績からいちばん近い距離のランを結び付け、目標との差・前半/後半のペース・次の目標の目安を出す */
+api.post('/races/:id/result', async (c) => {
+  const race = await c.env.DB.prepare('SELECT * FROM races WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!race) return c.notFound();
+  const b = await c.req.json<{ activity_id?: number; result_time_s?: number }>().catch(() => ({} as any));
+  let act: any = null;
+  if (b.activity_id) act = await c.env.DB.prepare('SELECT * FROM activities WHERE id = ?').bind(b.activity_id).first();
+  else {
+    const { results } = await c.env.DB.prepare("SELECT * FROM activities WHERE date = ? AND sport_type LIKE '%Run%'").bind(race.date).all<any>();
+    act = results.sort((x, y) => Math.abs(x.distance_m - race.distance_m) - Math.abs(y.distance_m - race.distance_m))[0] ?? null;
+    if (act && Math.abs(act.distance_m - race.distance_m) > race.distance_m * 0.15) act = null;
+  }
+  const result = Number(b.result_time_s) > 0 ? Math.round(Number(b.result_time_s)) : act ? act.elapsed_time_s ?? act.moving_time_s : null;
+  if (!result) return c.json({ error: 'その日にレースの距離に近いランが見つかりません。結果タイムを入力してください' }, 400);
+  await c.env.DB.prepare('UPDATE races SET result_time_s = ?, activity_id = ? WHERE id = ?').bind(result, act?.id ?? race.activity_id ?? null, race.id).run();
+  return c.json({ ok: true, result_time_s: result, activity_id: act?.id ?? null });
+});
+api.get('/races/:id/result', async (c) => {
+  const race = await c.env.DB.prepare('SELECT * FROM races WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!race || !race.result_time_s) return c.json(null);
+  const km = race.distance_m / 1000;
+  const out: any = { goal_s: race.goal_time_s, result_s: race.result_time_s, diff_s: race.goal_time_s ? race.result_time_s - race.goal_time_s : null, activity_id: race.activity_id };
+  if (race.activity_id) {
+    try {
+      const a: any = await getActivity(c.env, race.activity_id);
+      const sp = (a.splits_metric ?? []).filter((x: any) => x.distance > 900);
+      if (sp.length >= 6) {
+        const h = Math.floor(sp.length / 2);
+        const pc = (xs: any[]) => xs.reduce((t: number, x: any) => t + x.moving_time, 0) / (xs.reduce((t: number, x: any) => t + x.distance, 0) / 1000);
+        out.first_pace = Math.round(pc(sp.slice(0, h))); out.second_pace = Math.round(pc(sp.slice(h)));
+        const paces = sp.map((x: any) => (x.moving_time / x.distance) * 1000);
+        const goalP = race.goal_time_s ? race.goal_time_s / km : null;
+        out.km_paces = paces.map((p: number) => Math.round(p));
+        if (goalP) { const k = paces.findIndex((p: number, i: number) => i >= 5 && p > goalP + 10); out.fade_km = k >= 0 ? k + 1 : null; }
+      }
+    } catch { /* ラップが取れなくても結果は出す */ }
+  }
+  // 次の目標の目安: 結果から同じ力の目安 (VDOT)。フルは 2〜3% の改善を次の目標に
+  const vd = vdotOf(km * 1000, race.result_time_s);
+  out.next_goal_s = vd ? Math.round(timeForVdot(vd, 42195) * 0.98) : null;
+  out.vdot = vd ? Math.round(vd * 10) / 10 : null;
+  return c.json(out);
 });
 
 /** 大会を探す画面の詳細: 一覧の大会の公式サイトを読む (保存しない。同じ URL は 1 週間覚えておく) */
@@ -435,6 +479,15 @@ api.get('/activities/:id/review', async (c) => {
   return c.json({ ...review, fb });
 });
 
+/** 距離とタイムから VDOT (Daniels) */
+function vdotOf(distM: number, timeS: number): number | null {
+  if (!distM || !timeS) return null;
+  const min = timeS / 60, v = distM / min;
+  const vo2 = -4.6 + 0.182258 * v + 0.000104 * v * v;
+  const pct = 0.8 + 0.1894393 * Math.exp(-0.012778 * min) + 0.2989558 * Math.exp(-0.1932605 * min);
+  return vo2 / pct;
+}
+
 /** その日・その時間の気温 (Open-Meteo。直近は予報 API の過去分、古い日は過去データ API) */
 async function runTemp(place: { lat: number; lon: number }, startLocal: string): Promise<number | null> {
   const d = startLocal.slice(0, 10), h = Number(startLocal.slice(11, 13));
@@ -587,7 +640,7 @@ api.post('/plans/generate', async (c) => {
       `SELECT (SELECT COALESCE(SUM(distance_m), 0) FROM activities WHERE date BETWEEN ?1 AND ?2) AS done,
               (SELECT COALESCE(SUM(distance_m), 0) FROM plans WHERE date BETWEEN ?1 AND ?2 AND type != 'rest') AS planned`,
     ).bind(addDays(start, -7), addDays(start, -1)).first<{ done: number; planned: number }>(),
-    c.env.DB.prepare("SELECT date FROM races WHERE date < ? AND date >= ? AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date DESC LIMIT 1").bind(start, addDays(start, -10)).first<{ date: string }>(),
+    c.env.DB.prepare("SELECT date FROM races WHERE date < ? AND date >= ? AND COALESCE(status, 'confirmed') != 'candidate' AND (priority IN ('A', 'B') OR distance_m >= 30000) ORDER BY date DESC LIMIT 1").bind(start, addDays(start, -10)).first<{ date: string }>(),
     getSettings(c.env),
   ]);
   const weekly = recent && recent.m > 0 ? recent.m / 1000 / 4 : null;
@@ -1073,8 +1126,20 @@ api.get('/summary', async (c) => {
 // ---------------------------------------------------------------- shoes
 
 api.get('/shoes', async (c) => {
-  const { results } = await c.env.DB.prepare(`${SHOE_TOTAL_SQL} ORDER BY s.retired, s.id`).all();
-  return c.json(results);
+  const { results } = await c.env.DB.prepare(`${SHOE_TOTAL_SQL} ORDER BY s.retired, s.id`).all<any>();
+  // 走った感覚の評価 (クッション・軽さ・反発・安定・自然さ・脚への負担・走りやすさ) と呼び名
+  const { results: feels } = await c.env.DB.prepare("SELECT key, value FROM kv WHERE key LIKE 'shoefeel:%'").all<{ key: string; value: string }>();
+  const fm = new Map(feels.map((f) => { try { return [Number(f.key.slice(9)), JSON.parse(f.value)] as const; } catch { return [0, null] as const; } }));
+  return c.json(results.map((r) => ({ ...r, feel: fm.get(r.id) ?? null })));
+});
+api.put('/shoes/:id/feel', async (c) => {
+  const b = await c.req.json<Record<string, unknown>>();
+  const v: Record<string, unknown> = {};
+  for (const k of ['cushion', 'light', 'rebound', 'stable', 'natural', 'load', 'overall']) { const x = n10(b[k]); if (x != null) v[k] = x; }
+  v.label = String(b.label ?? '').slice(0, 20);
+  v.memo = String(b.memo ?? '').slice(0, 200);
+  await kvSet(c.env, `shoefeel:${c.req.param('id')}`, JSON.stringify(v));
+  return c.json(v);
 });
 
 function shoeValues(b: Record<string, unknown>) {
