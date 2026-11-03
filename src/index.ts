@@ -107,7 +107,7 @@ app.get('/cal/:sig/sub3.ics', async (c) => {
   if (!safeEqual(c.req.param('sig'), await calendarSig(c.env))) return c.text('not found', 404);
   const [plans, races] = await Promise.all([
     c.env.DB.prepare('SELECT * FROM plans ORDER BY date, id').all<Plan>(),
-    c.env.DB.prepare('SELECT * FROM races ORDER BY date').all<CalRace>(),
+    c.env.DB.prepare("SELECT * FROM races WHERE COALESCE(status, 'confirmed') != 'candidate' ORDER BY date").all<CalRace>(),
   ]);
   return new Response(buildIcs(plans.results, races.results), {
     headers: { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-cache' },

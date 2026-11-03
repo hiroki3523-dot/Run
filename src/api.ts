@@ -11,6 +11,7 @@ import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
 import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
+import { cleanRaceInfo, extractRaceInfo } from './raceinfo';
 import { corosDisconnect, getAuth as getCorosAuth, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns } from './insights';
 import { applyDerived } from './derive-apply';
@@ -105,12 +106,15 @@ api.get('/races', async (c) => {
 
 function raceValues(b: Record<string, unknown>) {
   if (!b.name || !isDate(b.date) || !num(b.distance_m)) throw new Error('name, date, distance_m は必須です');
-  return [b.name, b.date, num(b.distance_m), num(b.goal_time_s), b.priority ?? 'A', num(b.result_time_s), b.notes ?? null];
+  const status = ['candidate', 'entered', 'confirmed'].includes(String(b.status)) ? String(b.status) : 'confirmed';
+  const url = typeof b.url === 'string' && /^https?:\/\//.test(b.url.trim()) ? b.url.trim().slice(0, 500) : null;
+  const info = b.info == null || b.info === '' ? null : JSON.stringify(cleanRaceInfo(typeof b.info === 'string' ? JSON.parse(b.info) : b.info));
+  return [b.name, b.date, num(b.distance_m), num(b.goal_time_s), b.priority ?? 'A', num(b.result_time_s), b.notes ?? null, status, url, info];
 }
 
 api.post('/races', async (c) => {
   const row = await c.env.DB.prepare(
-    'INSERT INTO races (name, date, distance_m, goal_time_s, priority, result_time_s, notes) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *',
+    'INSERT INTO races (name, date, distance_m, goal_time_s, priority, result_time_s, notes, status, url, info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *',
   )
     .bind(...raceValues(await c.req.json()))
     .first();
@@ -120,13 +124,26 @@ api.post('/races', async (c) => {
 
 api.put('/races/:id', async (c) => {
   const row = await c.env.DB.prepare(
-    `UPDATE races SET name = ?, date = ?, distance_m = ?, goal_time_s = ?, priority = ?, result_time_s = ?, notes = ?
+    `UPDATE races SET name = ?, date = ?, distance_m = ?, goal_time_s = ?, priority = ?, result_time_s = ?, notes = ?, status = ?, url = ?, info = ?
      WHERE id = ? RETURNING *`,
   )
     .bind(...raceValues(await c.req.json()), c.req.param('id'))
     .first();
   await applyDerived(c.env, false).catch(() => null);
   return row ? c.json(row) : c.notFound();
+});
+
+/** 公式サイト (または貼り付けた文章) から大会情報を読み取る。保存はしない (画面で確かめてから) */
+api.post('/races/:id/extract', async (c) => {
+  const race = await c.env.DB.prepare('SELECT * FROM races WHERE id = ?').bind(c.req.param('id')).first<any>();
+  if (!race) return c.notFound();
+  const { url, text } = await c.req.json<{ url?: string; text?: string }>();
+  try {
+    return c.json(await extractRaceInfo(c.env, { name: race.name, date: race.date }, { url: url || race.url || undefined, text }));
+  } catch (e) {
+    const m = (e as Error).message;
+    return c.json({ error: /neuron|quota|4006/i.test(m) ? 'AI の 1 日の無料枠を使い切りました。明日 9:00 に戻ります' : m }, 500);
+  }
 });
 
 api.delete('/races/:id', async (c) => {
@@ -350,7 +367,7 @@ api.get('/activities/:id/review', async (c) => {
     `SELECT distance_m, moving_time_s, avg_hr, json_extract(evaluation, '$.role') AS role FROM activities WHERE date = ? ORDER BY start_date_local`,
   ).bind(row.date).all<{ distance_m: number; moving_time_s: number; avg_hr: number | null; role: string | null }>();
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
-  const race = await c.env.DB.prepare(`SELECT name, date, goal_time_s, distance_m FROM races WHERE date >= ? AND priority IN ('A','B') ORDER BY date LIMIT 1`).bind(today).first<any>();
+  const race = await c.env.DB.prepare(`SELECT name, date, goal_time_s, distance_m FROM races WHERE date >= ? AND priority IN ('A','B') AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date LIMIT 1`).bind(today).first<any>();
   let raw: any = {};
   try { raw = JSON.parse((await kvGet(c.env, `fb:${id}`)) ?? '{}'); } catch { /* 無視 */ }
   if (raw.v !== 2 && !raw.rpe) { const old = await kvGet(c.env, `rpe:${id}`); if (old) raw.rpe = Number(old); }
@@ -442,18 +459,18 @@ api.post('/plans/generate', async (c) => {
   const start = isDate(b.from) ? b.from : today;
   const race = b.race_id
     ? await c.env.DB.prepare('SELECT * FROM races WHERE id = ?').bind(b.race_id).first<PlannerRace & { id: number }>()
-    : await c.env.DB.prepare("SELECT * FROM races WHERE date > ? AND priority IN ('A','B') ORDER BY date LIMIT 1").bind(start).first<PlannerRace & { id: number }>();
+    : await c.env.DB.prepare("SELECT * FROM races WHERE date > ? AND priority IN ('A','B') AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date LIMIT 1").bind(start).first<PlannerRace & { id: number }>();
   if (!race) return c.json({ error: '対象のレースがありません。レースを登録してください' }, 400);
   if (race.date < start) return c.json({ error: 'レースの日付が過ぎています' }, 400);
 
   const [{ results: others }, recent, lastWeek, lastRace, settings] = await Promise.all([
-    c.env.DB.prepare('SELECT * FROM races WHERE date >= ? AND date < ? ORDER BY date').bind(start, race.date).all<PlannerRace>(),
+    c.env.DB.prepare("SELECT * FROM races WHERE date >= ? AND date < ? AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date").bind(start, race.date).all<PlannerRace>(),
     c.env.DB.prepare('SELECT COALESCE(SUM(distance_m), 0) AS m FROM activities WHERE date BETWEEN ? AND ?').bind(addDays(start, -28), addDays(start, -1)).first<{ m: number }>(),
     c.env.DB.prepare(
       `SELECT (SELECT COALESCE(SUM(distance_m), 0) FROM activities WHERE date BETWEEN ?1 AND ?2) AS done,
               (SELECT COALESCE(SUM(distance_m), 0) FROM plans WHERE date BETWEEN ?1 AND ?2 AND type != 'rest') AS planned`,
     ).bind(addDays(start, -7), addDays(start, -1)).first<{ done: number; planned: number }>(),
-    c.env.DB.prepare('SELECT date FROM races WHERE date < ? AND date >= ? ORDER BY date DESC LIMIT 1').bind(start, addDays(start, -10)).first<{ date: string }>(),
+    c.env.DB.prepare("SELECT date FROM races WHERE date < ? AND date >= ? AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date DESC LIMIT 1").bind(start, addDays(start, -10)).first<{ date: string }>(),
     getSettings(c.env),
   ]);
   const weekly = recent && recent.m > 0 ? recent.m / 1000 / 4 : null;
@@ -669,7 +686,7 @@ api.get('/insights', async (c) => {
          json_extract(a.evaluation, '$.role') AS role, json_extract(a.evaluation, '$.hr.details.drift_pct') AS drift_pct
        FROM activities a LEFT JOIN plans p ON p.id = a.plan_id WHERE a.date BETWEEN ? AND ?`,
     ).bind(addDays(today, -56), today).all<any>(),
-    c.env.DB.prepare('SELECT name, date, distance_m, goal_time_s FROM races WHERE date >= ? ORDER BY goal_time_s IS NULL, date LIMIT 1').bind(today).first<any>(),
+    c.env.DB.prepare("SELECT name, date, distance_m, goal_time_s FROM races WHERE date >= ? AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY goal_time_s IS NULL, date LIMIT 1").bind(today).first<any>(),
   ]);
   // 予測タイム: 入力した値 (COROS など) か、Strava の記録 (ペースと心拍) からの推定
   const src = st.predict?.source ?? 'auto';
@@ -692,7 +709,7 @@ api.get('/news', async (c) => {
 
 api.get('/race-weather', async (c) => {
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
-  const race = await c.env.DB.prepare('SELECT name, date FROM races WHERE date >= ? ORDER BY date LIMIT 1')
+  const race = await c.env.DB.prepare("SELECT name, date FROM races WHERE date >= ? AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date LIMIT 1")
     .bind(today)
     .first<{ name: string; date: string }>();
   if (!race) return c.json(null);
