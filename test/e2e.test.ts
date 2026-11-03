@@ -128,6 +128,10 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect(await day.locator('.hl-run').count()).toBe(3);
     expect(await day.locator('.hl-run.main').count()).toBe(1);
     expect(await day.locator('.hl-dh').textContent()).toContain('18.14km');
+    // 絞り込みのボタン 5 つが、横にはみ出さずに画面に収まる
+    const chips = await page.$eval('.hl-chips', (el: HTMLElement) => ({ sw: el.scrollWidth, cw: el.clientWidth, right: Math.max(...[...el.children].map((c) => c.getBoundingClientRect().right)) }));
+    expect(chips.sw).toBeLessThanOrEqual(chips.cw);
+    expect(chips.right).toBeLessThanOrEqual(390);
     await open('#/activities?f=point');
     const txt = await page.textContent('#view');
     expect(txt).toContain('11/1');
