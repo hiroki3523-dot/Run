@@ -7,9 +7,10 @@ import { normalizeFb } from './runreview';
 import { getSettings, kvGet } from './settings';
 import { PLAN_LABELS, PLAN_TYPES, type Env, type PlanType } from './types';
 
-export const COACH_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+/** 先に試すモデル (考える力が高い) → だめなら次 */
+export const COACH_MODELS = ['@cf/openai/gpt-oss-120b', '@cf/meta/llama-3.3-70b-instruct-fp8-fast'];
 
-export interface CoachMsg { role: 'user' | 'assistant'; content: string }
+export interface CoachMsg { role: 'user' | 'assistant'; content: string; changes?: CoachChange[] }
 export interface CoachChange { date: string; type: PlanType; distance_km: number | null; pace: string | null; notes: string }
 export interface CoachReply { reply: string; changes: CoachChange[] }
 
@@ -20,7 +21,7 @@ const hms = (s: number) => `${Math.floor(s / 3600)}:${String(Math.floor((s % 360
 const jstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
 
 /** AI に渡す、いまの状況 (計画・実績・ふりかえり・レース・ペース) */
-export async function coachContext(env: Env): Promise<string> {
+export async function coachContext(env: Env): Promise<{ text: string; races: { name: string; date: string; priority: string }[] }> {
   const t = jstToday();
   const s = await getSettings(env);
   const [plans, acts, races] = await Promise.all([
@@ -37,11 +38,18 @@ export async function coachContext(env: Env): Promise<string> {
   L.push('ペース帯 (/km): ' + (['easy', 'jog', 'long', 'm', 'lt', 'interval'] as const).map((k) => `${PLAN_LABELS[k]} ${mmss(s.paces[k].min)}-${mmss(s.paces[k].max)}`).join('、'));
   if (s.coros?.updated) L.push(`COROS: ランニングレベル ${s.coros.running_level}・閾値ペース ${s.coros.lt_pace_s ? mmss(s.coros.lt_pace_s) : '-'}/km・フル予測 ${s.coros.predicted_s?.full ? hms(s.coros.predicted_s.full) : '-'}`);
   L.push(`最大心拍 ${s.max_hr}・閾値心拍 ${s.lthr}`);
-  L.push('', '計画 (先週〜3週間後):');
-  for (const p of plans.results) {
-    L.push(`- ${p.date}(${dow(p.date)}) ${PLAN_LABELS[p.type as PlanType] ?? p.type}${p.distance_m ? ` ${(p.distance_m / 1000).toFixed(1)}km` : ''}${p.pace_min_s ? ` ${mmss(p.pace_min_s)}-${mmss(p.pace_max_s)}/km` : ''}${p.notes ? ` (${String(p.notes).slice(0, 40)})` : ''}`);
+  // 日ごとのカレンダー (曜日とレースまでの日数を書いておく。AI は日付の計算を間違えやすいため)
+  const race0 = races.results[0];
+  L.push('', '日ごとの計画 (日付・曜日・レースまでの日数・その日の計画・実績):');
+  for (let i = -3; i <= 20; i++) {
+    const d = addDays(t, i);
+    const ps = plans.results.filter((p: any) => p.date === d);
+    const done = acts.results.filter((a: any) => a.date === d).reduce((x: number, a: any) => x + a.distance_m, 0);
+    const left = race0 ? Math.round((Date.parse(race0.date) - Date.parse(d)) / 86400_000) : null;
+    const tag = [i === 0 ? '今日' : i === 1 ? '明日' : i < 0 ? '過去' : '', left === 0 ? `★${race0.name}当日` : left != null && left > 0 && left <= 21 ? `レース${left}日前` : left != null && left < 0 && left >= -7 ? `レース${-left}日後` : ''].filter(Boolean).join('・');
+    const plan = ps.length ? ps.map((p: any) => `${PLAN_LABELS[p.type as PlanType] ?? p.type}${p.distance_m ? ` ${(p.distance_m / 1000).toFixed(1)}km` : ''}${p.pace_min_s ? ` ${mmss(p.pace_min_s)}-${mmss(p.pace_max_s)}/km` : ''}${p.notes ? ` (${String(p.notes).slice(0, 30)})` : ''}`).join(' + ') : '計画なし';
+    L.push(`- ${d}(${dow(d)})${tag ? ` [${tag}]` : ''} 計画: ${plan}${i <= 0 && done ? ` / 実績 ${(done / 1000).toFixed(1)}km` : ''}`);
   }
-  if (!plans.results.length) L.push('- なし');
   L.push('', '実績 (直近3週間):');
   for (const a of acts.results) {
     const fb = fbOf.get(a.id);
@@ -51,7 +59,7 @@ export async function coachContext(env: Env): Promise<string> {
   if (!acts.results.length) L.push('- なし');
   const wk = (from: number) => acts.results.filter((a: any) => a.date > addDays(t, -from - 7) && a.date <= addDays(t, -from)).reduce((x: number, a: any) => x + a.distance_m, 0) / 1000;
   L.push(`直近7日 ${wk(0).toFixed(0)}km・その前の7日 ${wk(7).toFixed(0)}km`);
-  return L.join('\n');
+  return { text: L.join('\n'), races: races.results };
 }
 
 const SYSTEM = `あなたはマラソンのランニングコーチです。日本語で、ランナー本人に話しかけます。
@@ -63,13 +71,20 @@ const SYSTEM = `あなたはマラソンのランニングコーチです。日�
 - 疲れ: ポイント練を後ろへずらすか Easy/Jog に落とす。疲れが強ければ休養
 - 走り足りない: 週の距離が先週の 1.1 倍を超えない範囲で Easy を延ばす。レース 2 週間前からは増やさない
 - 今日走れない: その週のポイント練とロング走を優先して残し、Easy を削るか移す。ポイント練を連日にしない
-- レースが近い (14 日以内) ときは疲労を抜くことを優先する
+- レースが近いときの決まり (必ず守る):
+  - レース 14〜8 日前: ロング走は 25km まで。ポイント練は週 1〜2 回
+  - レース 7〜4 日前: ポイント練は 1 回だけ、短く (M ペース か LT で 3〜5km まで)。それ以外は Jog/Easy 8km まで
+  - レース 3〜1 日前: Jog/Easy 5km までか休養だけ。ポイント練・ロング走は入れない
+- 予定を動かすときは、「日ごとの計画」の [レース○日前] を必ず見て、上の決まりに合う日へ動かす。合う日が無ければ、そのポイント練はやめる (無理に詰めない)
+- 日付と曜日は「日ごとの計画」の表記をそのまま使う。計画の中身 (種類・距離) も表のとおりに読む
 
 変更案 (changes):
 - 今日以降の日付だけ。変える日だけを書く (変えない日は書かない)。最大 14 日
 - type は easy / jog / long / m / lt / interval / rest のどれか。休みにする日は rest
 - distance_km は数字 (rest は null)。pace は "4:30-4:40" の形か null。notes は 30 字以内のメニュー説明
 - 相談が質問だけで計画を変える必要がなければ changes は空の配列
+- reply に書く日付・内容は changes とまったく同じにする (reply では「○日(曜)を△△に」と変更点を書く)
+- 前の返事に指摘や質問が来たら、まずその指摘に答え、必要なら案を作り直す (前と同じ案をくり返さない)
 
 必ず次の JSON だけを返す: {"reply": "返事の文章", "changes": [{"date": "YYYY-MM-DD", "type": "easy", "distance_km": 8, "pace": "5:20-5:40", "notes": "..."}]}`;
 
@@ -121,19 +136,80 @@ export function parseCoach(raw: unknown, today: string): CoachReply {
   return { reply: String(o?.reply ?? '').trim() || '変更案を作りました。', changes: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)) };
 }
 
+const HARD: PlanType[] = ['m', 'lt', 'interval', 'long'];
+/** レース前の決まりに合わない変更を探す (A/B レースだけ) */
+export function taperIssues(changes: CoachChange[], races: { name: string; date: string; priority: string }[]): string[] {
+  const out: string[] = [];
+  for (const c of changes) {
+    for (const r of races.filter((x) => x.priority !== 'C')) {
+      const left = Math.round((Date.parse(r.date) - Date.parse(c.date)) / 86400_000);
+      const lab = `${c.date}(${dow(c.date)}) は${r.name}の${left}日前`;
+      if (left >= 1 && left <= 3 && (HARD.includes(c.type) || (c.distance_km ?? 0) > 6)) out.push(`${lab}なので、Jog/Easy 5km までか休養だけ`);
+      else if (left >= 4 && left <= 7 && ((HARD.includes(c.type) && (c.type === 'long' || c.type === 'interval' || (c.distance_km ?? 0) > 6)) || (c.distance_km ?? 0) > 10)) out.push(`${lab}なので、ポイント練は 3〜5km まで・Jog/Easy は 8km まで`);
+    }
+  }
+  return [...new Set(out)];
+}
+
+/** Workers AI の返事から文章を取り出す (モデルによって形が違う) */
+function outText(out: any): unknown {
+  if (out == null) return '';
+  if (typeof out.response === 'object' && out.response) return out.response;
+  if (typeof out.response === 'string') return out.response;
+  const ch = out.choices?.[0]?.message?.content;
+  if (ch) return ch;
+  if (Array.isArray(out.output)) {
+    const t = out.output.flatMap((o: any) => (o.content ?? []).map((c: any) => c.text ?? '')).join('');
+    if (t) return t;
+  }
+  return typeof out === 'string' ? out : '';
+}
+
+const fmtChanges = (cs: CoachChange[]) => cs.map((c) => `${c.date}(${dow(c.date)}) → ${PLAN_LABELS[c.type]}${c.distance_km ? ` ${c.distance_km}km` : ''}${c.pace ? ` ${c.pace}` : ''}`).join('、');
+
+async function runModel(env: Env, msgs: { role: string; content: string }[]): Promise<unknown> {
+  let last: unknown = null;
+  for (const model of COACH_MODELS) {
+    try {
+      const gpt = model.includes('gpt-oss');
+      const out: any = await env.AI!.run(model as any, (gpt
+        ? { messages: msgs, max_tokens: 4000, reasoning: { effort: 'medium' } }
+        : { messages: msgs, response_format: { type: 'json_schema', json_schema: SCHEMA }, max_tokens: 1200, temperature: 0.3 }) as any);
+      const t = outText(out);
+      if (t && (typeof t !== 'string' || t.includes('{'))) return t;
+      last = t;
+    } catch (e) {
+      last = e;
+      if (/neuron|quota|4006/i.test(String((e as Error)?.message))) throw e;
+    }
+  }
+  if (last instanceof Error) throw last;
+  return last ?? '';
+}
+
 export async function askCoach(env: Env, messages: CoachMsg[]): Promise<CoachReply> {
   if (!env.AI) throw new Error('AI が使えません。wrangler.toml に [ai] の設定が必要です');
+  const t = jstToday();
   const ctx = await coachContext(env);
+  // 前の返事には、そのとき出した変更案も付けておく (同じ案のくり返しを防ぐ)
   const hist = messages.filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string').slice(-8)
-    .map((m) => ({ role: m.role, content: m.content.slice(0, 1500) }));
+    .map((m) => ({ role: m.role, content: (m.role === 'assistant' && m.changes?.length ? `${m.content}\n[このとき出した変更案: ${fmtChanges(m.changes)}]` : m.content).slice(0, 1800) }));
   if (!hist.length || hist[hist.length - 1].role !== 'user') throw new Error('相談の内容が空です');
-  const out: any = await env.AI.run(COACH_MODEL as any, {
-    messages: [{ role: 'system', content: `${SYSTEM}\n\n# 状況\n${ctx}` }, ...hist],
-    response_format: { type: 'json_schema', json_schema: SCHEMA },
-    max_tokens: 1200,
-    temperature: 0.4,
-  } as any);
-  return parseCoach(out?.response ?? out, jstToday());
+  const msgs = [{ role: 'system', content: `${SYSTEM}\n\n# 状況\n${ctx.text}` }, ...hist];
+  let r = parseCoach(await runModel(env, msgs), t);
+  let issues = taperIssues(r.changes, ctx.races);
+  if (issues.length) {
+    // 決まりに合わなければ、理由を伝えて 1 回だけ作り直してもらう
+    r = parseCoach(await runModel(env, [...msgs, { role: 'assistant', content: JSON.stringify(r) }, { role: 'user', content: `この案はレース前の決まりに合いません: ${issues.join(' / ')}。決まりに合うように案と返事を作り直してください。` }]), t);
+    issues = taperIssues(r.changes, ctx.races);
+  }
+  if (issues.length) {
+    // それでも合わない日は案から外す
+    const bad = new Set(issues.map((x) => x.slice(0, 10)));
+    r.changes = r.changes.filter((c) => !bad.has(c.date));
+    r.reply += `\n\n(注意: レース直前に強い練習が入る案だったため、${[...bad].map((d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`).join('・')} の変更は外しました)`;
+  }
+  return r;
 }
 
 const paceS = (s: string) => { const [m, ss] = s.split(':').map(Number); return m * 60 + ss; };
