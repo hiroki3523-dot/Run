@@ -37,7 +37,11 @@ function recommendShoe(type) {
   const prefs = SHOE_PREF[type] ?? ['easy'];
   const g = GROUP_OF_TYPE[type] || 'easy';
   const fit = (SHOE_FIT && SHOE_FIT[g]) || [];
-  const cands = SHOES.filter((x) => !x.retired && purposesOf(x.purpose).some((p) => prefs.includes(p))).map((x) => {
+  // 使用中の靴から選ぶ。合う靴が無いときだけ予備から (引退は選ばない)
+  const ok = (x) => purposesOf(x.purpose).some((p) => prefs.includes(p));
+  const act = SHOES.filter((x) => !x.retired && ok(x));
+  const spare = !act.length;
+  const cands = (spare ? SHOES.filter((x) => x.retired === 2 && ok(x)) : act).map((x) => {
     const rank = Math.min(...purposesOf(x.purpose).map((p) => prefs.indexOf(p)).filter((k) => k >= 0));
     let sc = 30 - rank * 10;
     const why = [];
@@ -61,7 +65,7 @@ function recommendShoe(type) {
   }).sort((a, b) => b.sc - a.sc);
   const top = cands[0];
   if (!top) return null;
-  const head = `${PURPOSE_LABELS[top.pu]}用`;
+  const head = `${PURPOSE_LABELS[top.pu]}用${spare ? ' (予備から)' : ''}`;
   return { shoe: top.shoe, why: [head, ...top.why.slice(0, 2)].join('・') };
 }
 const shoeName = (s) => `${s.name}${s.feel?.label ? ` (${s.feel.label})` : ''}`;
@@ -3733,7 +3737,7 @@ async function shoesView(params) {
   const row = (s) => {
     const rt = (s.retired || 0) === 0 ? '予備にする' : '使用中に戻す';
     const pu = purposesOf(s.purpose);
-    return `<li data-shoe="${s.id}" class="shoe-item ${s.retired ? 'off' : ''}">
+    return `<li data-shoe="${s.id}" class="shoe-item ${s.retired === 1 ? 'off' : ''}">
       <div class="shoe-bg"><span class="bg-r">${rt}</span><span class="bg-l">${(s.retired || 0) === 1 ? '' : '役目を終える'}</span></div>
       <div class="shoe-fg">
       <div class="shoe-row">
@@ -3874,7 +3878,7 @@ async function loadShoeCompare() {
   const keys = Object.keys(GROUP_LABEL).filter((k) => data[k]?.length);
   if (!keys.length) { box.innerHTML = '<p class="muted">シューズを付けたランが、同じ種類で 2 本以上あるシューズが出てくると比べられます。</p>'; return; }
   let cur = keys.find((k) => data[k].length >= 2) || keys[0];
-  let crit = 'natural', all = false, order = 'crit'; // order: crit = 選んだ観点の良い順 / n = 使用回数の多い順
+  let crit = 'natural', all = false, order = 'crit', showRet = false; // order: crit = 選んだ観点の良い順 / n = 使用回数の多い順
   const f = (v, u = '') => (v == null ? '-' : `${v}${u}`);
   const img = (id) => { const s = SHOES.find((x) => x.id === id); return s?.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'; };
   const draw = () => {
@@ -3884,13 +3888,17 @@ async function loadShoeCompare() {
     // 用途がこの練習に合わない靴 (例: レース用をジョグで使った記録) は、表には出すが、おすすめ・緑の印の対象から外して後ろに並べる
     const purp = (r) => purposesOf(SHOES.find((x) => x.id === r.shoe_id)?.purpose);
     const fits = (r) => { const p = purp(r); return !p.length || p.some((x) => GROUP_PURPOSE[cur].includes(x)); };
-    const offTag = (r) => (fits(r) ? '' : `<span class="sc-off">${esc(purp(r).map((x) => PURPOSE_LABELS[x]).join('・'))}用</span>`);
+    const offTag = (r) => (isRet(r) ? '<span class="sc-off">引退</span>' : fits(r) ? '' : `<span class="sc-off">${esc(purp(r).map((x) => PURPOSE_LABELS[x]).join('・'))}用</span>`);
     const sorter = order === 'crit' ? byCrit : (a, b) => b.n - a.n;
-    const rowsAll = [...data[cur]].sort((a, b) => (fits(b) - fits(a)) || sorter(a, b));
-    const fitRows = rowsAll.filter(fits);
+    // 引退した靴は比較・おすすめに入れない (記録は残す)。「引退したシューズも表示」で表の右端に出せる
+    const isRet = (r) => (SHOES.find((x) => x.id === r.shoe_id)?.retired ?? r.retired) === 1;
+    const retN = data[cur].filter(isRet).length;
+    const rank = (r) => (isRet(r) ? 0 : fits(r) ? 2 : 1);
+    const rowsAll = data[cur].filter((r) => showRet || !isRet(r)).sort((a, b) => (rank(b) - rank(a)) || sorter(a, b));
+    const fitRows = rowsAll.filter((r) => fits(r) && !isRet(r));
     const rows = all ? rowsAll : rowsAll.slice(0, 3);
     const best = (k, low) => { const v = fitRows.map((r) => r[k]).filter((x) => x != null); return v.length >= 2 ? (low ? Math.min(...v) : Math.max(...v)) : null; };
-    const mark = (r, k, low) => (fits(r) && r[k] != null && r[k] === best(k, low) ? ' class="sc-best"' : '');
+    const mark = (r, k, low) => (fits(r) && !isRet(r) && r[k] != null && r[k] === best(k, low) ? ' class="sc-best"' : '');
     // おすすめ: 選んだ観点でいちばん良いシューズ (2 足以上に値があるときだけ)
     const vals = fitRows.filter((r) => C[3](r) != null);
     const top = vals.length >= 2 ? [...vals].sort((a, b) => (C[4] ? C[3](a) - C[3](b) : C[3](b) - C[3](a)))[0] : null;
@@ -3919,12 +3927,14 @@ async function loadShoeCompare() {
       ${tr('呼吸', rows.map((r) => `<td${mark(r, 'breath', true)}>${f(r.breath, '/10')}</td>`).join(''))}
       ${tr('翌朝の脚', rows.map((r) => `<td${mark(r, 'next_leg', true)}>${f(r.next_leg, '/10')}</td>`).join(''))}
       ${tr('痛み (3以上)', rows.map((r) => `<td>${r.pain_n}回</td>`).join(''))}</table></div></details>
+      ${retN ? `<label class="sc-ret"><input type="checkbox" data-scret ${showRet ? 'checked' : ''}> 引退したシューズも表示 (${retN}足・おすすめには入れません)</label>` : ''}
       ${rowsAll.length > 3 ? `<button type="button" class="linkbtn sc-all" data-scall>${all ? '上の 3 足だけにする' : `ほかの ${rowsAll.length - 3} 足も表示`}</button>` : ''}
-      <p class="muted an-note">同じ種類のランだけで比べています。速さより「自然に走れるか (走りやすさ)」「疲れが少ないか (脚・翌朝の脚)」を重く見てください。緑はその項目でいちばん良いシューズ。主観は、ふりかえりと毎朝の体調から。用途がこの練習に合わない靴 (「〜用」の印) は、おすすめと緑の印の対象から外しています。用途はシューズの編集で変えられます。</p>`;
+      <p class="muted an-note">同じ種類のランだけで比べています。速さより「自然に走れるか (走りやすさ)」「疲れが少ないか (脚・翌朝の脚)」を重く見てください。ピッチは記録の平均歩数、ストライドは距離÷歩数。緑はその項目でいちばん良いシューズ。主観は、ふりかえりと毎朝の体調から。用途がこの練習に合わない靴 (「〜用」の印) は、おすすめと緑の印の対象から外しています。用途はシューズの編集で変えられます。</p>`;
     box.querySelectorAll('[data-sg]').forEach((a) => (a.onclick = () => { cur = a.dataset.sg; draw(); }));
     box.querySelectorAll('[data-crit]').forEach((b) => (b.onclick = () => { crit = b.dataset.crit; draw(); }));
     box.querySelectorAll('[data-ord]').forEach((b) => (b.onclick = () => { order = b.dataset.ord; draw(); }));
     box.querySelector('[data-scall]')?.addEventListener('click', () => { all = !all; draw(); });
+    box.querySelector('[data-scret]')?.addEventListener('change', (e) => { showRet = e.target.checked; if (showRet) all = true; draw(); });
   };
   draw();
 }

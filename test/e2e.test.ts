@@ -456,6 +456,7 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       { shoe_id: 1003, name: 'Nike ズームフライ 6', n: 26, km: 376, pace: 312, hr: 157.1, cad: 177.3, stride: null, form: null, leg: null, next_leg: null, breath: null, gct: null, pain_n: 1 },
       { shoe_id: 1004, name: 'テストシューズA', n: 4, km: 30, pace: 330, hr: 150, cad: 176, stride: null, form: null, leg: null, next_leg: null, breath: null, gct: null, pain_n: 0 },
       // レース用に設定した靴をジョグで使った記録 (いちばん速い) → おすすめにしない・後ろに並べる
+      { shoe_id: 1005, name: '引退した靴', retired: 1, n: 30, km: 300, pace: 290, hr: 140, cad: 180, stride: null, form: 10, leg: 1, next_leg: null, breath: null, gct: null, pain_n: 0 },
       { shoe_id: near.id, name: 'Nike Pegasus 41', n: 3, km: 20, pace: 300, hr: 140, cad: 180, stride: null, form: 9, leg: 2, next_leg: null, breath: null, gct: null, pain_n: 0 },
     ] };
     await page.route('**/api/shoes/compare', (r: any) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(cmp) }));
@@ -495,6 +496,12 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       expect(await page.$eval('#shoe-cmp > .sc-scroll > table.sc-fix th:last-child .sc-off', (e: Element) => e.textContent)).toBe('レース本番用');
       // 用途外の靴には緑の印を付けない (ペース 5:00 がいちばん速いが、緑はズームフライの 5:12)
       expect(await page.$eval('#shoe-cmp > .sc-scroll > table.sc-fix tr:nth-child(2) .sc-best', (e: Element) => e.textContent)).toBe('5:12');
+      // 引退した靴は出さない (いちばん速く・走りやすくても)。チェックを入れると右端に「引退」の印で出す
+      expect(await page.textContent('#shoe-cmp')).not.toContain('引退した靴');
+      await page.check('[data-scret]');
+      expect(await page.$eval('#shoe-cmp > .sc-scroll > table.sc-fix th:last-child', (e: Element) => e.textContent)).toContain('引退した靴');
+      expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('Nike ズームフライ 6');
+      await page.uncheck('[data-scret]');
       await page.click('[data-ord="n"]');
       expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6', 'テストシューズA', 'Nike Pegasus 41']);
     } finally {

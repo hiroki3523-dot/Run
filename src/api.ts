@@ -384,7 +384,8 @@ api.get('/review', async (c) => {
   };
   const span = daysSpan(from, to);
   const prevTo = addDays(from, -1);
-  const prevFrom = addDays(prevTo, -(span - 1));
+  // 月は「前の月 (1 日〜末日)」と比べる。日数で戻すと 31 日の月で 1 日ずれる (11 月の前月が 10/2〜10/31 になっていた)
+  const prevFrom = k === 'month' ? `${prevTo.slice(0, 7)}-01` : addDays(prevTo, -(span - 1));
   const [cur, prv] = await Promise.all([load(from, to), k === 'day' ? null : load(prevFrom, prevTo)]);
   const prev = prv ? { runs: prv.list.length, km: prv.list.reduce((a, r) => a + r.distance_m, 0) / 1000 } : null;
   // 前の期間の平均 (先週・先月からの変化の表示用)
@@ -984,6 +985,16 @@ api.get('/shoes/compare', async (c) => {
     const g = groupOf(r.type, pace, st.paces.easy.min);
     (groups[g] ??= []).push({ ...r, pace, f: fb.get(r.id), s: snap.get(r.id), next: cond.get(addDays(r.date, 1)) });
   }
+  // ピッチ: ランの記録の値 (両足の歩数/分) を使う。分析の要約 (snap) は古い版で 2 倍になっているものがあるため、記録に値が無いときだけ使う。
+  // 人のランとしてありえない値 (120 未満・230 超) は平均に入れない
+  const okCad = (v: unknown) => (typeof v === 'number' && v >= 120 && v <= 230 ? v : null);
+  const cadOf = (r: any) => okCad(r.avg_cadence_spm) ?? okCad(r.s?.cad);
+  // ストライド: 距離 ÷ 歩数 (同じピッチから計算するので、表のピッチ・ペースと食い違わない)。無ければ要約の値
+  const strideOf = (r: any) => {
+    const cad = cadOf(r);
+    const v = cad && r.moving_time_s > 0 ? (r.distance_m / (r.moving_time_s / 60) / cad) * 100 : r.s?.stride;
+    return typeof v === 'number' && v >= 50 && v <= 220 ? Math.round(v * 10) / 10 : null;
+  };
   const out: Record<string, any[]> = {};
   for (const [g, list] of Object.entries(groups)) {
     const by = new Map<number, any[]>();
@@ -991,8 +1002,8 @@ api.get('/shoes/compare', async (c) => {
     const rowsG = [...by.entries()].filter(([, xs]) => xs.length >= 2).map(([sid, xs]) => ({
       shoe_id: sid, name: shoes.find((x) => x.id === sid)?.name ?? '?', retired: shoes.find((x) => x.id === sid)?.retired ?? 0, n: xs.length,
       km: Math.round(xs.reduce((a, r) => a + r.distance_m, 0) / 1000),
-      pace: avg(xs.map((r) => r.pace)), hr: avg(xs.map((r) => r.avg_hr)), cad: avg(xs.map((r) => r.s?.cad ?? (r.avg_cadence_spm ? r.avg_cadence_spm : null))),
-      stride: avg(xs.map((r) => r.s?.stride)), gct: avg(xs.map((r) => r.s?.gct)),
+      pace: avg(xs.map((r) => r.pace)), hr: avg(xs.map((r) => r.avg_hr)), cad: avg(xs.map(cadOf)),
+      stride: avg(xs.map(strideOf)), gct: avg(xs.map((r) => r.s?.gct)),
       form: avg(xs.map((r) => r.f?.form)), breath: avg(xs.map((r) => r.f?.breath)), leg: avg(xs.map((r) => r.f?.leg)),
       pain_n: xs.filter((r) => (r.f?.pain ?? 0) >= 3).length, next_leg: avg(xs.map((r) => r.next?.leg)),
     }));

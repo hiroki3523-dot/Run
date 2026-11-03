@@ -27,6 +27,34 @@ describe('K-01 ピッチを 2 倍しない', () => {
   });
 });
 
+describe('シューズの相性のピッチ・ストライド (2026-11-04 ユーザー報告)', () => {
+  it('古い分析の要約 (snap) に 2 倍のピッチが残っていても、ランの記録の値を使う。ストライドは距離÷歩数', async () => {
+    await call(env, 'POST', '/shoes', { name: 'B', strava_gear_id: 'gb' });
+    const ids: number[] = [];
+    for (let i = 0; i < 3; i++) ids.push(await addRun(env, { date: `2026-10-0${i + 1}`, km: 10, segs: [{ km: 10, pace: 300, spm: 180 }], gear_id: 'gb' }));
+    // 古い版で保存された要約: ピッチ 2 倍・ストライド半分
+    for (const id of ids.slice(0, 2)) await env.DB.prepare('INSERT INTO kv (key, value) VALUES (?, ?)').bind(`snap:${id}`, JSON.stringify({ cad: 360, stride: 55.6 })).run();
+    const r = (await call(env, 'GET', '/shoes/compare')).json;
+    const row = Object.values(r).flat().find((x: any) => x.name === 'B') as any;
+    expect(row.cad).toBe(180);
+    expect(row.stride).toBeCloseTo(111.1, 1); // 10km / 50分 = 200m/分 ÷ 180歩
+  });
+});
+
+describe('月の評価の「前月」は前の月の 1 日〜末日 (2026-11-04 ユーザー報告)', () => {
+  it('11 月の前月に 10/1 を含む・10 月の前月に 8/31 を含まない', async () => {
+    await addRun(env, { date: '2026-08-31', km: 3, segs: [{ km: 3, pace: 330, spm: 178 }] });
+    await addRun(env, { date: '2026-09-30', km: 5, segs: [{ km: 5, pace: 330, spm: 178 }] });
+    await addRun(env, { date: '2026-10-01', km: 15, segs: [{ km: 15, pace: 330, spm: 178 }] });
+    await addRun(env, { date: '2026-10-31', km: 10, segs: [{ km: 10, pace: 330, spm: 178 }] });
+    const nov = (await call(env, 'GET', '/review?from=2026-11-01&to=2026-11-30&kind=month')).json;
+    expect(nov.prev_detail.km).toBe(25);
+    const oct = (await call(env, 'GET', '/review?from=2026-10-01&to=2026-10-31&kind=month')).json;
+    expect(oct.prev_detail.km).toBe(5);
+    expect(oct.delta_km_pct).toBe(400); // 25km / 5km - 1
+  });
+});
+
 describe('K-02 ペースの表示が 4:60 にならない', () => {
   it('299.6 秒/km は 5:00 と表示する', () => {
     const an = analyzeRun({ id: 1, date: '2026-10-01', distance_m: 10000, moving_time_s: 2996, avg_hr: 160, avg_cad_spm: 180, elev_gain: null,
