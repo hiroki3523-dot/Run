@@ -923,8 +923,10 @@ function wireCoach(root) {
     const before = (d) => cur.filter((p) => p.date === d).map((p) => `${PLAN_LABELS[p.type]}${p.distance_m ? ` ${km(p.distance_m)}km` : ''}`).join('・') || 'なし';
     log.innerHTML = COACH_LOG.length ? COACH_LOG.map((m, i) => m.hidden ? '' : m.role === 'user'
       ? `<div class="cm me">${esc(m.content)}</div>`
-      : `<div class="cm ai">${m.brief ? '<span class="cm-tag">今週の見立て</span>' : ''}${esc(m.content).replace(/\n/g, '<br>')}${m.changes?.length ? `<div class="cchg">
-          <b>変更案</b>${m.changes.map((c) => `<div class="cchg-r"><span class="num">${md(c.date)}(${dow(c.date)})</span><span class="muted">${esc(m.applied ? '' : before(c.date))}</span><span>→ <b>${esc(fmtChange(c))}</b>${c.notes ? `<small class="muted">${esc(c.notes)}</small>` : ''}</span></div>`).join('')}
+      : `<div class="cm ai">${m.brief ? '<span class="cm-tag">今週の見立て</span>' : ''}${m.conclusion
+        ? `<p class="cm-concl">${esc(m.conclusion)}</p>${m.reasons?.length ? `<details class="cm-why"><summary>理由 (${m.reasons.length})</summary><ul>${m.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}${m.keep?.length ? `<div class="cm-keep"><b>変えない練習</b>${m.keep.map((x) => `<p>${esc(x)}</p>`).join('')}</div>` : ''}`
+        : esc(m.content).replace(/\n/g, '<br>')}${m.changes?.length ? `<div class="cchg">
+          <b>変更する練習</b>${m.changes.map((c) => `<div class="cchg-r"><span class="num">${md(c.date)}(${dow(c.date)})</span><span class="muted">${esc(m.applied ? '' : before(c.date))}</span><span>→ <b>${esc(fmtChange(c))}</b>${c.notes ? `<small class="muted">${esc(c.notes)}</small>` : ''}</span></div>`).join('')}
           ${m.applied ? '<p class="muted" style="margin:8px 0 0">反映しました</p>' : `<button type="button" class="primary wide" data-capply="${i}">この内容で予定に反映</button>`}</div>` : ''}</div>`).join('')
       : '<p class="muted coach-empty">体の状態や都合を書くと、計画の組み直しを提案します。反映するかはあとで選べます。</p>';
     const lastModel = [...COACH_LOG].reverse().find((m) => m.model)?.model;
@@ -947,7 +949,7 @@ function wireCoach(root) {
     const btn = root.querySelector('#coach-send'); btn.disabled = true;
     try {
       const r = await api('/coach', { method: 'POST', body: { messages: COACH_LOG.map((m) => ({ role: m.role, content: m.content, changes: m.changes })) } });
-      COACH_LOG.push({ role: 'assistant', content: r.reply, changes: r.changes || [], model: r.model });
+      COACH_LOG.push({ role: 'assistant', content: r.reply, conclusion: r.conclusion, reasons: r.reasons, keep: r.keep, changes: r.changes || [], model: r.model });
     } catch (e) {
       COACH_LOG.push({ role: 'assistant', content: `エラー: ${e.message}` });
     }
@@ -965,7 +967,7 @@ function wireCoach(root) {
     try {
       const r = await api('/coach/brief', { method: 'POST', body: {} });
       if (COACH_LOG.length) return;
-      COACH_LOG.push({ role: 'user', content: r.q || '今週の見立てをください', hidden: true }, { role: 'assistant', content: r.reply, changes: r.changes || [], brief: true, model: r.model });
+      COACH_LOG.push({ role: 'user', content: r.q || '今週の見立てをください', hidden: true }, { role: 'assistant', content: r.reply, conclusion: r.conclusion, reasons: r.reasons, keep: r.keep, changes: r.changes || [], brief: true, model: r.model });
       saveCoach();
     } catch (e) { log.innerHTML = `<p class="muted coach-empty">今週の見立てを出せませんでした (${esc(e.message)})。下に書いて相談できます。</p>`; return; }
     draw();
@@ -1875,12 +1877,15 @@ function analysisHtml(an) {
   const TR = { up: ['改善', 'good'], same: ['維持', 'ok'], down: ['低下', 'bad'], hold: ['保留', 'hold'] };
   let h = `<div class="card an"><h2>この走りの評価</h2>
     <div class="an-tiles">${tile('練習達成度', an.achievement, '計画どおりにできたか')}${tile('走力評価', an.fitness, '余裕・後半の維持・効率')}</div>
-    ${an.good.length || an.issues.length ? `<div class="an-gi">${an.good.length ? `<div><b class="g">良かった点</b>${an.good.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}${an.issues.length ? `<div><b class="b">課題</b>${an.issues.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}</div>` : ''}`;
+    ${an.summary ? `<p class="an-sum"><b>総評</b>${esc(an.summary)}</p>` : ''}
+    ${an.good.length || an.issues.length ? `<div class="an-gi">${an.good.length ? `<div><b class="g">良かった点</b>${an.good.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}${an.issues.length ? `<div><b class="b">課題</b>${an.issues.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}</div>` : ''}
+    ${an.next?.length ? `<div class="an-next"><b>次に活かすこと</b>${an.next.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}`;
+  if (an.subj?.length) h += acc('主観と数値の照らし合わせ', an.subj.map((x) => `<div class="an-it"><span class="an-j j-${x.kind === 'gap' ? 'bad' : x.kind === 'match' ? 'good' : 'ok'}">${x.kind === 'gap' ? 'ずれ' : x.kind === 'match' ? '一致' : '事実'}</span><div><span>${esc(x.text)}</span></div></div>`).join('') + '<p class="muted an-note">主観を点数に足すのではなく、数値と合っているか・ずれているかを見ます。「推測」と書いたものは可能性です。</p>');
   h += acc('評価の根拠', `<h4>練習達成度${an.achievement.score != null ? ` ${an.achievement.score}点` : ''}</h4>${an.achievement.hold_reason ? `<p class="muted">${esc(an.achievement.hold_reason)}</p>` : ''}${items(an.achievement.items)}
     <h4>走力評価${an.fitness.score != null ? ` ${an.fitness.score}点` : ''}</h4>${an.fitness.hold_reason ? `<p class="muted">${esc(an.fitness.hold_reason)}</p>` : ''}${items(an.fitness.items)}
     <p class="muted an-note">練習達成度は計画 (種類・ペース帯・距離) に対しての点数。走力評価は計画とは別に、余裕を持って最後まで走れたかを見ます。データが足りない項目は数値にせず保留にしています。</p>`);
   if (an.compare) h += acc(`過去との比較 (似たラン ${an.compare.n} 本)`, `<table class="an-cmp num"><tr><th></th><th>今回</th><th>過去</th><th>差</th><th></th></tr>${an.compare.metrics.map((m) => `<tr><td>${esc(m.label)}</td><td>${esc(m.now)}</td><td class="muted">${esc(m.past)}</td><td>${esc(m.diff)}</td><td><span class="an-j j-${TR[m.trend][1]}">${TR[m.trend][0]}</span></td></tr>`).join('')}</table>
-    <p class="muted an-note">比べたラン: ${an.compare.runs.map((r) => `<a href="#/activities/${r.id}">${md(r.date)} ${r.km}km ${pace(r.pace)}</a>`).join('・')}</p>${an.compare.notes.map((t) => `<p class="muted an-note">${esc(t)}</p>`).join('')}`);
+    <p class="muted an-note">比べたラン: ${an.compare.runs.map((r) => `<a href="#/activities/${r.id}">${md(r.date)} ${r.km}km ${pace(r.pace)}${r.temp != null ? ` ${Math.round(r.temp)}℃` : ''}</a>`).join('・')}</p>${an.compare.notes.map((t) => `<p class="muted an-note">${esc(t)}</p>`).join('')}`);
   else h += acc('過去との比較', '<p class="muted">距離・ペース・種類が近い過去のランがまだ 2 本未満のため比較できません。ランが増えると自動で比べます。</p>');
   if (an.hrpace) h += acc('ペースと心拍', `${hrPaceChart(an.chart, an.hrpace.steady)}${an.hrpace.text.map((t) => `<p>${esc(t)}</p>`).join('')}`);
   if (an.form && an.form.rows.length) h += acc('フォームの前半・後半', `<table class="an-cmp num"><tr><th></th><th>前半</th><th>後半</th><th>差</th></tr>${an.form.rows.map((r) => `<tr class="${r.flag ? 'flag' : ''}"><td>${r.label}</td><td>${r.first}</td><td>${r.second}</td><td>${r.diff}</td></tr>`).join('')}</table>${an.form.text.map((t) => `<p>${esc(t)}</p>`).join('')}`);

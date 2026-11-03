@@ -12,7 +12,7 @@ export const COACH_MODELS = ['@cf/openai/gpt-oss-120b', '@cf/meta/llama-3.3-70b-
 
 export interface CoachMsg { role: 'user' | 'assistant'; content: string; changes?: CoachChange[] }
 export interface CoachChange { date: string; type: PlanType; distance_km: number | null; pace: string | null; notes: string }
-export interface CoachReply { reply: string; changes: CoachChange[]; model?: string }
+export interface CoachReply { reply: string; changes: CoachChange[]; model?: string; conclusion?: string; reasons?: string[]; keep?: string[] }
 
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 const dow = (d: string) => DOW[new Date(`${d}T00:00:00Z`).getUTCDay()];
@@ -31,6 +31,9 @@ export async function coachContext(env: Env): Promise<{ text: string; races: { n
   ]);
   const fbs = await Promise.all(acts.results.slice(-10).map(async (a: any) => [a.id, await kvGet(env, `fb:${a.id}`)] as const));
   const fbOf = new Map(fbs.filter(([, v]) => v).map(([id, v]) => [id, normalizeFb(JSON.parse(v!))]));
+  // 実績の分析 (心拍ドリフト・後半の失速・気温) を、次の練習の判断材料に
+  const snaps = await Promise.all(acts.results.slice(-10).map(async (a: any) => [a.id, await kvGet(env, `snap:${a.id}`)] as const));
+  const snapOf = new Map(snaps.filter(([, v]) => v).map(([id, v]) => { try { return [id, JSON.parse(v!)] as const; } catch { return [id, null] as const; } }));
 
   const L: string[] = [];
   L.push(`今日: ${t}(${dow(t)})`);
@@ -38,6 +41,14 @@ export async function coachContext(env: Env): Promise<{ text: string; races: { n
   L.push('ペース帯 (/km): ' + (['easy', 'jog', 'long', 'm', 'lt', 'interval'] as const).map((k) => `${PLAN_LABELS[k]} ${mmss(s.paces[k].min)}-${mmss(s.paces[k].max)}`).join('、'));
   if (s.coros?.updated) L.push(`COROS: ランニングレベル ${s.coros.running_level}・閾値ペース ${s.coros.lt_pace_s ? mmss(s.coros.lt_pace_s) : '-'}/km・フル予測 ${s.coros.predicted_s?.full ? hms(s.coros.predicted_s.full) : '-'}`);
   L.push(`最大心拍 ${s.max_hr}・閾値心拍 ${s.lthr}`);
+  // 毎朝の体調 (直近 7 日)
+  const { results: conds } = await env.DB.prepare("SELECT key, value FROM kv WHERE key >= ? AND key <= ? AND key LIKE 'cond:%' ORDER BY key").bind(`cond:${addDays(t, -6)}`, `cond:${t}`).all<{ key: string; value: string }>();
+  if (conds.length) {
+    L.push('', '毎朝の体調 (0〜10。睡眠は 10 がよく眠れた、それ以外は 10 が最もつらい):');
+    for (const c of conds) {
+      try { const v = JSON.parse(c.value); const d = c.key.slice(5); L.push(`- ${d}(${dow(d)})${d === t ? ' [今日]' : ''} 脚${v.leg ?? '-'}・張り${v.tight ?? '-'}・全身${v.fatigue ?? '-'}・睡眠${v.sleep ?? '-'}・痛み${v.pain ?? '-'}${v.pain_part?.length ? `(${v.pain_part.join('・')})` : ''}`); } catch { /* 無視 */ }
+    }
+  } else L.push('毎朝の体調: 記録なし');
   // 日ごとのカレンダー (曜日とレースまでの日数を書いておく。AI は日付の計算を間違えやすいため)
   const race0 = races.results[0];
   L.push('', '日ごとの計画 (日付・曜日・レースまでの日数・その日の計画・実績):');
@@ -54,7 +65,9 @@ export async function coachContext(env: Env): Promise<{ text: string; races: { n
   for (const a of acts.results) {
     const fb = fbOf.get(a.id);
     const fbt = fb ? ` ふりかえり[脚の重さ${fb.leg ?? '-'}/10・痛み${fb.pain ?? '-'}/10・きつさ${fb.rpe ?? '-'}/10${fb.memo ? `・メモ「${fb.memo.slice(0, 60)}」` : ''}]` : '';
-    L.push(`- ${a.date}(${dow(a.date)}) ${(a.distance_m / 1000).toFixed(1)}km ${mmss(a.moving_time_s / (a.distance_m / 1000))}/km${a.avg_hr ? ` 心拍${Math.round(a.avg_hr)}` : ''}${fbt}`);
+    const sn: any = snapOf.get(a.id);
+    const ant = sn ? ` 分析[${sn.drift != null ? `心拍ドリフト${sn.drift}%` : ''}${sn.half_diff != null ? `・後半${sn.half_diff > 0 ? `${sn.half_diff}秒/km失速` : `${-sn.half_diff}秒/km上げ`}` : ''}${sn.temp != null ? `・気温${Math.round(sn.temp)}℃` : ''}]` : '';
+    L.push(`- ${a.date}(${dow(a.date)}) ${(a.distance_m / 1000).toFixed(1)}km ${mmss(a.moving_time_s / (a.distance_m / 1000))}/km${a.avg_hr ? ` 心拍${Math.round(a.avg_hr)}` : ''}${fbt}${ant}`);
   }
   if (!acts.results.length) L.push('- なし');
   const wk = (from: number) => acts.results.filter((a: any) => a.date > addDays(t, -from - 7) && a.date <= addDays(t, -from)).reduce((x: number, a: any) => x + a.distance_m, 0) / 1000;
@@ -73,8 +86,11 @@ const SYSTEM = `あなたはマラソンのランニングコーチです。日�
 - 今週のポイント: レースまでの狙いから、今週いちばん大事な練習 (外さないでほしいもの) と、削っても困らない練習を言う
 - 聞かれていなくても、気になることがあれば一言そえる (例: ピッチが落ちている、ロング走が足りない、急に距離が増えている)
 
-答え方:
-- 1 文目に結論。そのあと理由を、状況の数字を 1〜2 個引いて書く。最後に「今週のポイント」を 1 文。全体で 4〜8 文
+答え方 (短く、分けて書く):
+- conclusion: 結論を 1〜2 文 (例:「今日は Jog 5km に落とし、M ペースは 11/5(木) に 3km だけ」)
+- reasons: 判断した理由を 2〜4 個。それぞれ 1 文で、状況の数字を引く (例:「直近 7 日の脚の疲労 平均 6.5/10」)。分かったこと (数字) と推測は分け、推測には「〜の可能性」と書く
+- keep: 変えない練習と、その理由を 0〜3 個 (例:「11/8(日) のレースは予定どおり」「11/6(金) の Jog 5km はそのまま」)
+- reply: 上をまとめた 3〜5 文 (古い画面用)
 - 日付は「11/4(水)」の形で書く (年は書かない)。前置きや決まり文句の励ましはいらない
 - 痛み: 鋭い痛み・腫れ・走ると悪化する痛みは休養を優先し、数日続くなら整形外科やスポーツ外来の受診をすすめる。違和感程度なら距離と強度を落とす
 - 疲れ: ポイント練を後ろへずらすか Easy/Jog に落とす。疲れが強ければ休養でよいと言い切る
@@ -96,11 +112,14 @@ const SYSTEM = `あなたはマラソンのランニングコーチです。日�
 - 見立てやアドバイスだけで十分なときは、無理に変更案を作らない
 - 前の返事に指摘や質問が来たら、まずその指摘に答え、必要なら案を作り直す (前と同じ案をくり返さない)
 
-必ず次の JSON だけを返す: {"reply": "返事の文章", "changes": [{"date": "YYYY-MM-DD", "type": "easy", "distance_km": 8, "pace": "5:20-5:40", "notes": "..."}]}`;
+必ず次の JSON だけを返す: {"conclusion": "結論", "reasons": ["理由"], "keep": ["変えない練習"], "reply": "返事の文章", "changes": [{"date": "YYYY-MM-DD", "type": "easy", "distance_km": 8, "pace": "5:20-5:40", "notes": "..."}]}`;
 
 const SCHEMA = {
   type: 'object',
   properties: {
+    conclusion: { type: 'string' },
+    reasons: { type: 'array', items: { type: 'string' } },
+    keep: { type: 'array', items: { type: 'string' } },
     reply: { type: 'string' },
     changes: {
       type: 'array',
@@ -117,7 +136,7 @@ const SCHEMA = {
       },
     },
   },
-  required: ['reply', 'changes'],
+  required: ['conclusion', 'reasons', 'reply', 'changes'],
 };
 
 /** AI の返事から JSON を取り出す (文字列でもオブジェクトでも) */
@@ -143,7 +162,10 @@ export function parseCoach(raw: unknown, today: string): CoachReply {
     });
   // 同じ日が 2 回あれば後のほう
   const byDate = new Map(changes.map((c) => [c.date, c]));
-  return { reply: String(o?.reply ?? '').trim() || '変更案を作りました。', changes: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)) };
+  const strs = (v: unknown, n: number) => (Array.isArray(v) ? v.map((x) => String(x ?? '').trim()).filter(Boolean).slice(0, n).map((x) => x.slice(0, 160)) : []);
+  const conclusion = String(o?.conclusion ?? '').trim().slice(0, 240);
+  const reply = String(o?.reply ?? '').trim() || conclusion || '変更案を作りました。';
+  return { reply, conclusion: conclusion || undefined, reasons: strs(o?.reasons, 5), keep: strs(o?.keep, 4), changes: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)) };
 }
 
 const HARD: PlanType[] = ['m', 'lt', 'interval', 'long'];
@@ -249,8 +271,9 @@ export async function coachBrief(env: Env, force = false): Promise<CoachReply & 
   const t = jstToday();
   const sig = await env.DB.prepare(
     `SELECT (SELECT COALESCE(MAX(id), 0) || ':' || COUNT(*) FROM activities WHERE date >= ?) || '|' ||
-            (SELECT COALESCE(GROUP_CONCAT(date || type || COALESCE(distance_m, 0), ','), '') FROM plans WHERE date BETWEEN ? AND ?) AS s`,
-  ).bind(addDays(t, -7), t, addDays(t, 13)).first<{ s: string }>();
+            (SELECT COALESCE(GROUP_CONCAT(date || type || COALESCE(distance_m, 0), ','), '') FROM plans WHERE date BETWEEN ? AND ?) || '|' ||
+            (SELECT COALESCE(MAX(value), '') FROM kv WHERE key = ?) AS s`,
+  ).bind(addDays(t, -7), t, addDays(t, 13), `cond:${t}`).first<{ s: string }>();
   const key = `${t}|${sig?.s ?? ''}`;
   if (!force) {
     const c = await kvGet(env, 'coach_brief');

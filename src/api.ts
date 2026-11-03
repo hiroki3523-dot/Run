@@ -435,6 +435,20 @@ api.get('/activities/:id/review', async (c) => {
   return c.json({ ...review, fb });
 });
 
+/** その日・その時間の気温 (Open-Meteo。直近は予報 API の過去分、古い日は過去データ API) */
+async function runTemp(place: { lat: number; lon: number }, startLocal: string): Promise<number | null> {
+  const d = startLocal.slice(0, 10), h = Number(startLocal.slice(11, 13));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const ago = (Date.now() - Date.parse(`${d}T00:00:00Z`)) / 86400_000;
+  const base = ago < 80 ? 'https://api.open-meteo.com/v1/forecast' : 'https://archive-api.open-meteo.com/v1/archive';
+  const q = new URLSearchParams({ latitude: String(place.lat), longitude: String(place.lon), start_date: d, end_date: d, hourly: 'temperature_2m', timezone: 'Asia/Tokyo' });
+  const res = await fetch(`${base}?${q}`, { cf: { cacheTtl: 86400, cacheEverything: true } } as RequestInit);
+  if (!res.ok) return null;
+  const j: any = await res.json();
+  const v = j?.hourly?.temperature_2m?.[Math.max(0, Math.min(23, h))];
+  return typeof v === 'number' ? Math.round(v * 10) / 10 : null;
+}
+
 /** 過去 180 日のランの要約 (比較用)。DB の値に、分析したときに保存した詳しい要約 (snap:) を重ねる */
 async function pastSnapshots(env: Env, beforeDate: string, easyMin: number): Promise<Snapshot[]> {
   const from = addDays(beforeDate, -180);
@@ -467,10 +481,31 @@ api.get('/activities/:id/analysis', async (c) => {
   const lthr = st.coros?.lthr ?? st.lthr;
   const series = await getSeries(c.env, id, paceBoundsOf(st), [0.8, 0.9, 0.95, 1.017, 1.057].map((r) => Math.round(lthr * r)), 240).catch(() => null);
   const past = await pastSnapshots(c.env, row.date, st.paces.easy.min);
-  const a = analyzeRun({
-    id, date: row.date, distance_m: row.distance_m, moving_time_s: row.moving_time_s, avg_hr: row.avg_hr, avg_cad_spm: row.avg_cadence_spm,
+  // 走った時間の気温 (比較の条件をそろえるため)。一度調べたら要約に保存して、次からは調べない
+  let temp: number | null = null;
+  try { const old = JSON.parse((await kvGet(c.env, `snap:${id}`)) || '{}'); if (typeof old.temp === 'number') temp = old.temp; } catch { /* 無視 */ }
+  if (temp == null) temp = await runTemp(st.weather_place ?? DEFAULT_PLACE, String(row.start_date_local)).catch(() => null);
+  const input = {
+    temp, id, date: row.date, distance_m: row.distance_m, moving_time_s: row.moving_time_s, avg_hr: row.avg_hr, avg_cad_spm: row.avg_cadence_spm,
     elev_gain: series?.elev_gain ?? null, ev, plan_type: plan?.type ?? null, has_plan: !!plan, fb, series, easy_min: st.paces.easy.min, lthr, past,
-  });
+  };
+  let a = analyzeRun(input);
+  // 比べたランの気温が分からなければ調べて保存し、もう一度比べる (気温の近いランを優先するため)
+  const noTemp = (a.compare?.runs ?? []).filter((r: any) => r.temp == null).slice(0, 6);
+  if (noTemp.length) {
+    const rows2 = await Promise.all(noTemp.map((r) => c.env.DB.prepare('SELECT start_date_local FROM activities WHERE id = ?').bind(r.id).first<{ start_date_local: string }>()));
+    const temps = await Promise.all(rows2.map((r) => (r ? runTemp(st.weather_place ?? DEFAULT_PLACE, r.start_date_local).catch(() => null) : null)));
+    let changed = false;
+    for (let k = 0; k < noTemp.length; k++) {
+      if (temps[k] == null) continue;
+      const pr = past.find((x) => x.id === noTemp[k].id);
+      if (pr) { pr.temp = temps[k]; changed = true; }
+      const old = JSON.parse((await kvGet(c.env, `snap:${noTemp[k].id}`)) || 'null');
+      if (old) await kvSet(c.env, `snap:${noTemp[k].id}`, JSON.stringify({ ...old, temp: temps[k] })).catch(() => null);
+      else if (pr) { const { id: _a, date: _b, ...rest } = pr; await kvSet(c.env, `snap:${noTemp[k].id}`, JSON.stringify(rest)).catch(() => null); }
+    }
+    if (changed) a = analyzeRun(input);
+  }
   // 次から比較に使えるよう、この走りの要約を保存
   const { id: _i, date: _d, ...snap } = a.snapshot;
   await kvSet(c.env, `snap:${id}`, JSON.stringify(snap)).catch(() => null);
