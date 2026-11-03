@@ -474,6 +474,22 @@ const LV_COLOR = { ok: 'var(--good)', warn: 'var(--mid)', bad: 'var(--bad)' };
 function goalCard() {
   return `<div class="card ins"><h2>目標への現在地</h2><div id="insights"><p class="muted">読み込み中…</p></div></div>`;
 }
+/** マラソン適性 (6 つの能力) と予測の根拠 */
+function aptitudeHtml(a) {
+  const LV = { good: ['良い', 'var(--good)'], ok: ['普通', 'var(--accent)'], bad: ['課題', 'var(--mid)'], hold: ['保留', 'var(--muted)'] };
+  const p = a.prediction;
+  const bars = a.abilities.map((x) => `<div class="apt-r"><span class="apt-l">${esc(x.label)}</span><span class="apt-b">${x.score != null ? `<i style="width:${x.score}%;background:${LV[x.level][1]}"></i>` : ''}</span><b style="color:${LV[x.level][1]}">${x.score != null ? x.score : '保留'}</b></div>
+    <p class="apt-why"><b class="num">${esc(x.value)}</b> ${esc(x.reason)}</p>`).join('');
+  return `<details class="ins-all apt"><summary>マラソン適性 (6 つの能力)</summary><div class="apt-list">${bars}</div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">直近 12 週のランから。ロング走とレースを重く見ます。データが足りない能力は保留にしています。</p></details>
+    ${p.raw_s ? `<details class="ins-all apt"><summary>予測の根拠 <span class="apt-conf c-${p.confidence}">信頼度 ${p.confidence}</span></summary>
+      <div class="apt-pred num"><div><small>予測 (元の値)</small><b>${dur(p.raw_s)}</b></div><div><small>持久力を考慮</small><b>${dur(p.adjusted_s)}</b></div>${p.goal_s ? `<div><small>目標との差</small><b class="${p.gap_s <= 0 ? 'g' : 'b'}">${Math.abs(p.gap_s) < 60 ? `${Math.abs(p.gap_s)}秒${p.gap_s <= 0 ? '余裕' : '不足'}` : `${p.gap_s <= 0 ? '−' : '+'}${dur(Math.abs(p.gap_s))}`}</b></div>` : ''}</div>
+      <h4>根拠</h4>${p.basis.map((t) => `<p>${esc(t)}</p>`).join('')}
+      <h4>使ったデータ</h4>${p.data.map((t) => `<p>${esc(t)}</p>`).join('')}
+      ${p.missing.length ? `<h4>足りないデータ</h4>${p.missing.map((t) => `<p>${esc(t)}</p>`).join('')}` : ''}
+      <p class="muted" style="font-size:12px">目標タイムは「出したいタイム」、予測は「今の力で出せそうなタイム」です。短い距離のペース走だけでは楽観的になりやすいので、30km 以上のロング走が無いときは上乗せしています。</p></details>` : ''}`;
+}
+
 async function loadInsights() {
   const box = document.getElementById('insights');
   if (!box) return;
@@ -490,6 +506,7 @@ async function loadInsights() {
     box.innerHTML = `${head}
       ${issues.length ? `<div class="ins-sub">課題</div><div class="ins-list">${issues.map(row).join('')}</div>` : '<p class="ins-okmsg">大きな課題はありません。今の練習を続けましょう。</p>'}
       ${r.actions[0] ? `<div class="ins-next"><b>次の練習</b><span>${esc(r.actions[0])}</span></div>` : ''}
+      ${r.aptitude ? aptitudeHtml(r.aptitude) : ''}
       <details class="ins-all"><summary>すべての項目</summary><div class="ins-list">${r.items.map(row).join('')}</div></details>`;
   } catch { box.innerHTML = '<p class="muted">読み込めませんでした。</p>'; }
 }

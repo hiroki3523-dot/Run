@@ -16,6 +16,7 @@ import { autoFillRace, cleanRaceInfo, entryHistory, extractRaceInfo } from './ra
 import { findOfficialSite } from './sitefind';
 import { corosDisconnect, getAuth as getCorosAuth, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns } from './insights';
+import { buildAptitude } from './aptitude';
 import { applyDerived } from './derive-apply';
 import { getSettings, kvGet, kvSet, saveSettings } from './settings';
 import { DEFAULT_SETTINGS } from './types';
@@ -778,12 +779,29 @@ api.get('/insights', async (c) => {
   const manual = src === 'manual', fromCoros = src === 'coros';
   const auto = manual || fromCoros ? null : predictFromRuns(runs.results, st.max_hr || 190, today);
   const predicted = manual ? st.predict?.full_s ?? null : fromCoros ? st.coros?.predicted_s?.full ?? null : auto?.full_s ?? null;
-  return c.json(buildInsights({
+  const ins = buildInsights({
     today, runs: runs.results, race: race ?? null,
     predicted_full_s: predicted,
     predicted_label: manual ? '予測 (入力)' : fromCoros ? '予測 (COROS)' : auto ? '予測 (Strava から)' : '予測',
     target_cadence: st.target_cadence ?? 180,
-  }));
+  });
+  // マラソン適性 (6 つの能力) と予測の根拠・信頼度
+  const { results: rs } = await c.env.DB.prepare(
+    `SELECT a.id, a.date, a.distance_m, a.moving_time_s, a.avg_hr, COALESCE(p.type, json_extract(a.evaluation, '$.type')) AS type, json_extract(a.evaluation, '$.role') AS role,
+       json_extract(a.evaluation, '$.hr.details.drift_pct') AS drift, json_extract(a.evaluation, '$.pace.details.half_diff_s') AS half_diff, json_extract(a.evaluation, '$.form.score') AS form_score
+     FROM activities a LEFT JOIN plans p ON p.id = a.plan_id WHERE a.date BETWEEN ? AND ? AND a.sport_type LIKE '%Run%'`,
+  ).bind(addDays(today, -90), today).all<any>();
+  const { results: kvs } = await c.env.DB.prepare(`SELECT key, value FROM kv WHERE key LIKE 'fb:%' OR key LIKE 'cond:%'`).all<{ key: string; value: string }>();
+  const fbOf = new Map<number, any>(), condOf = new Map<string, any>();
+  for (const k of kvs) { try { if (k.key.startsWith('fb:')) fbOf.set(Number(k.key.slice(3)), normalizeFb(JSON.parse(k.value))); else condOf.set(k.key.slice(5), JSON.parse(k.value)); } catch { /* 無視 */ } }
+  const apt = buildAptitude({
+    today,
+    runs: rs.map((r) => { const f = fbOf.get(r.id); return { ...r, leg: f?.leg ?? null, rpe: f?.rpe ?? null, pain: f?.pain ?? null, reserve: f?.reserve ?? null, leg_next: condOf.get(addDays(r.date, 1))?.leg ?? null }; }),
+    goal_s: race?.goal_time_s ?? null, race_km: race ? race.distance_m / 1000 : 42.195,
+    predicted_s: predicted, source: manual ? '時計 (COROS など) の予測を手で入力した値' : fromCoros ? 'COROS のレース予測 (体力評価)' : auto ? `Strava の記録 ${auto.n} 本 (心拍の高い 5km 以上のラン) のペースと心拍から推定 (VDOT)` : '予測なし',
+    lt_pace_s: st.coros?.lt_pace_s ?? null, vo2max: st.coros?.vo2max ?? null, lthr: st.coros?.lthr ?? st.lthr,
+  });
+  return c.json({ ...ins, aptitude: apt });
 });
 
 /** ランニングのニュース (シューズ・大会・レース)。1 時間キャッシュ */
