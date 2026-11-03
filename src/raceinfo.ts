@@ -3,6 +3,7 @@
  * 公式サイトのページ (または貼り付けた文章) を AI に読ませて取り出す。保存は画面で確かめてから。
  */
 import { runModel } from './coach';
+import { kvGet, kvSet } from './settings';
 import type { Env } from './types';
 
 export interface RaceBlock { name: string; start: string | null; close: string | null }
@@ -21,6 +22,8 @@ export interface RaceInfo {
   entry_open?: string | null;     // エントリー開始 (YYYY-MM-DD)
   entry_close?: string | null;    // エントリー締め切り
   lottery_result?: string | null; // 抽選発表
+  entry_last_open?: string | null;  // 前回大会のエントリー開始 (今回分がまだ出ていないとき)
+  entry_last_close?: string | null;
   fee?: string | null;            // 参加料
   my_block?: string | null;       // 自分のブロック
   bib?: string | null;            // ゼッケン番号
@@ -44,7 +47,7 @@ export function cleanRaceInfo(o: any): RaceInfo {
       .filter((x: RaceCutoff) => Number.isFinite(x.km) && x.km > 0 && x.km <= 100 && x.time)
       .sort((a: RaceCutoff, b: RaceCutoff) => a.km - b.km),
     reception: str(o.reception, 200), baggage: str(o.baggage, 200), aid: str(o.aid, 200), access: str(o.access, 200),
-    entry_open: date(o.entry_open), entry_close: date(o.entry_close), lottery_result: date(o.lottery_result), fee: str(o.fee, 60),
+    entry_open: date(o.entry_open), entry_close: date(o.entry_close), entry_last_open: date(o.entry_last_open), entry_last_close: date(o.entry_last_close), lottery_result: date(o.lottery_result), fee: str(o.fee, 60),
     race_date: typeof o.race_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.race_date.trim()) ? o.race_date.trim() : null,
     date_estimated: o.date_estimated === true ? true : undefined,
     my_block: str(o.my_block, 20), bib: str(o.bib, 20), source: str(o.source, 500), updated: str(o.updated, 20),
@@ -71,9 +74,11 @@ const SYSTEM = `マラソン大会の公式ページの文章から、出場す�
 - 時刻は "8:30" の形。日付は "YYYY-MM-DD" (年が書いていなければ大会日の年から判断)
 - blocks: スタートブロックごとにスタート時刻や整列締め切りが違うときだけ (name は "A" など)
 - cutoffs: 関門。km は数字、time は "11:05" の形 (スタートからの時間しか無ければ "2:35後" のように)、place は地名
+- entry_open / entry_close: 次の大会のエントリー期間。まだ発表されていなければ null
+- entry_last_open / entry_last_close: ページに前回 (過去) 大会のエントリー期間しか無いときは、その日付をここに入れる
 - 各項目は短く (1〜2 行)
 次の JSON だけを返す:
-{"race_date":null,"venue":null,"start_time":null,"line_close":null,"blocks":[],"time_limit":null,"cutoffs":[],"reception":null,"baggage":null,"aid":null,"access":null,"entry_open":null,"entry_close":null,"lottery_result":null,"fee":null}`;
+{"race_date":null,"venue":null,"start_time":null,"line_close":null,"blocks":[],"time_limit":null,"cutoffs":[],"reception":null,"baggage":null,"aid":null,"access":null,"entry_open":null,"entry_close":null,"entry_last_open":null,"entry_last_close":null,"lottery_result":null,"fee":null}`;
 
 const SCHEMA = {
   type: 'object',
@@ -83,7 +88,7 @@ const SCHEMA = {
     time_limit: { type: ['string', 'null'] },
     cutoffs: { type: 'array', items: { type: 'object', properties: { km: { type: 'number' }, time: { type: 'string' }, place: { type: ['string', 'null'] } } } },
     reception: { type: ['string', 'null'] }, baggage: { type: ['string', 'null'] }, aid: { type: ['string', 'null'] }, access: { type: ['string', 'null'] },
-    entry_open: { type: ['string', 'null'] }, entry_close: { type: ['string', 'null'] }, lottery_result: { type: ['string', 'null'] }, fee: { type: ['string', 'null'] },
+    entry_open: { type: ['string', 'null'] }, entry_close: { type: ['string', 'null'] }, entry_last_open: { type: ['string', 'null'] }, entry_last_close: { type: ['string', 'null'] }, lottery_result: { type: ['string', 'null'] }, fee: { type: ['string', 'null'] },
   },
 };
 
@@ -112,25 +117,57 @@ export async function extractRaceInfo(env: Env, race: { name: string; date: stri
   return { ...info, source: src.text ? null : src.url ?? null, chars: body.length };
 }
 
-/** 毎朝 1 件: 公式サイトを登録した今後のレースの大会情報を、2 週間ごとに読み直す (日付の確定・エントリー期間など) */
-export async function refreshRaceInfo(env: Env): Promise<void> {
+/** 1 大会の公式サイトを読んで大会情報を更新する (日付が仮なら確定・エントリー期間・例年の時期を覚える) */
+export async function autoFillRace(env: Env, id: number): Promise<void> {
   const t = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
-  const { results } = await env.DB.prepare("SELECT * FROM races WHERE date >= ? AND url IS NOT NULL ORDER BY date").bind(t).all<any>();
-  const old = new Date(Date.parse(t) - 14 * 86400_000).toISOString().slice(0, 10);
-  const r = results.find((x) => { try { const i = JSON.parse(x.info || '{}'); return !i.updated || i.updated <= old; } catch { return true; } });
-  if (!r) return;
+  const r = await env.DB.prepare('SELECT * FROM races WHERE id = ?').bind(id).first<any>();
+  if (!r?.url) return;
   const cur = cleanRaceInfo(JSON.parse(r.info || '{}'));
   try {
     const got = await extractRaceInfo(env, { name: r.name, date: r.date }, { url: r.url });
     const next = mergeRaceInfo(cur, got, t);
     const date = cur.date_estimated && got.race_date && got.race_date >= t ? got.race_date : r.date;
-    if (date !== r.date) next.date_estimated = undefined;
+    if (date !== r.date || (got.race_date && got.race_date === r.date)) delete next.date_estimated;
+    delete (next as any).race_date;
     await env.DB.prepare('UPDATE races SET info = ?, date = ? WHERE id = ?').bind(JSON.stringify(next), date, r.id).run();
+    await rememberEntry(env, r.name, next);
   } catch (e) {
     // 読めなかったときも日付を進めて、毎日同じ大会でつまらないように
     await env.DB.prepare('UPDATE races SET info = ? WHERE id = ?').bind(JSON.stringify({ ...cur, updated: t }), r.id).run();
     console.warn('race info refresh failed', r.name, (e as Error).message);
   }
+}
+
+/** 大会ごとの「例年のエントリー時期」を覚えておく (次の年の目安に使う) */
+const baseKey = (n: string) => n.replace(/\s*\(.*?\)\s*/g, '').replace(/20\d\d|第\d+回|[\s・]/g, '');
+async function rememberEntry(env: Env, name: string, info: RaceInfo): Promise<void> {
+  const open = /^\d{4}-\d{2}-\d{2}$/.test(info.entry_open ?? '') ? info.entry_open : /^\d{4}-\d{2}-\d{2}$/.test(info.entry_last_open ?? '') ? info.entry_last_open : null;
+  if (!open) return;
+  const close = open === info.entry_open ? info.entry_close : info.entry_last_close;
+  const key = `entry_hist:${baseKey(name)}`;
+  const hist = JSON.parse((await kvGet(env, key)) || '[]') as { open: string; close: string | null }[];
+  if (!hist.some((h) => h.open === open)) { hist.push({ open, close: close ?? null }); await kvSet(env, key, JSON.stringify(hist.slice(-5))); }
+}
+export async function entryHistory(env: Env): Promise<Record<string, { open: string; close: string | null }[]>> {
+  const { results } = await env.DB.prepare("SELECT key, value FROM kv WHERE key LIKE 'entry_hist:%'").all<{ key: string; value: string }>();
+  return Object.fromEntries(results.map((r) => [r.key.slice(11), JSON.parse(r.value)]));
+}
+
+/**
+ * 毎朝: 公式サイトを登録した今後のレースの大会情報を読み直す (最大 3 大会)。
+ * エントリー候補・エントリー済みでエントリー期間がまだ分からない大会は 7 日ごと、それ以外は 14 日ごと
+ */
+export async function refreshRaceInfo(env: Env): Promise<void> {
+  const t = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const { results } = await env.DB.prepare('SELECT id, status, info FROM races WHERE date >= ? AND url IS NOT NULL ORDER BY date').bind(t).all<any>();
+  const ago = (n: number) => new Date(Date.parse(t) - n * 86400_000).toISOString().slice(0, 10);
+  const due = results.filter((x) => {
+    let i: any = {};
+    try { i = JSON.parse(x.info || '{}'); } catch {}
+    const waiting = x.status !== 'confirmed' && !i.entry_close;
+    return !i.updated || i.updated <= ago(waiting ? 7 : 14);
+  });
+  for (const r of due.slice(0, 3)) await autoFillRace(env, r.id);
 }
 
 /** 読み取った情報を今の情報に重ねる (空の項目・自分のブロック・ゼッケンは上書きしない) */

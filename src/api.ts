@@ -11,7 +11,7 @@ import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { runningNews } from './news';
 import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
-import { cleanRaceInfo, extractRaceInfo } from './raceinfo';
+import { autoFillRace, cleanRaceInfo, entryHistory, extractRaceInfo } from './raceinfo';
 import { corosDisconnect, getAuth as getCorosAuth, corosStatus, corosTool, enqueueCoros, processCorosQueue, removeCorosDuplicates, startCorosFullScan, syncCorosFitness } from './coros';
 import { buildInsights, predictFromRuns } from './insights';
 import { applyDerived } from './derive-apply';
@@ -103,6 +103,8 @@ api.get('/races', async (c) => {
   const { results } = await c.env.DB.prepare('SELECT * FROM races ORDER BY date').all();
   return c.json(results);
 });
+/** 大会ごとの例年のエントリー時期 (公式サイトを読んだときに覚えたもの) */
+api.get('/races/entry-history', async (c) => c.json(await entryHistory(c.env)));
 
 function raceValues(b: Record<string, unknown>) {
   if (!b.name || !isDate(b.date) || !num(b.distance_m)) throw new Error('name, date, distance_m は必須です');
@@ -113,23 +115,30 @@ function raceValues(b: Record<string, unknown>) {
 }
 
 api.post('/races', async (c) => {
+  const body = await c.req.json<any>();
   const row = await c.env.DB.prepare(
     'INSERT INTO races (name, date, distance_m, goal_time_s, priority, result_time_s, notes, status, url, info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *',
   )
-    .bind(...raceValues(await c.req.json()))
-    .first();
+    .bind(...raceValues(body))
+    .first<any>();
   await applyDerived(c.env, false).catch(() => null); // M ペース・レースのペース帯は目標タイムから
+  // 公式サイトがあれば、裏で大会情報 (日付・エントリー期間など) を読み取っておく
+  if (row?.url && !body.no_auto) c.executionCtx.waitUntil(autoFillRace(c.env, row.id).catch(() => null));
   return c.json(row, 201);
 });
 
 api.put('/races/:id', async (c) => {
+  const body = await c.req.json<any>();
+  const before = await c.env.DB.prepare('SELECT url FROM races WHERE id = ?').bind(c.req.param('id')).first<{ url: string | null }>();
   const row = await c.env.DB.prepare(
     `UPDATE races SET name = ?, date = ?, distance_m = ?, goal_time_s = ?, priority = ?, result_time_s = ?, notes = ?, status = ?, url = ?, info = ?
      WHERE id = ? RETURNING *`,
   )
-    .bind(...raceValues(await c.req.json()), c.req.param('id'))
-    .first();
+    .bind(...raceValues(body), c.req.param('id'))
+    .first<any>();
   await applyDerived(c.env, false).catch(() => null);
+  // 公式サイトを新しく入れた・変えたときは、裏で読み取る
+  if (row?.url && row.url !== before?.url && !body.no_auto) c.executionCtx.waitUntil(autoFillRace(c.env, row.id).catch(() => null));
   return row ? c.json(row) : c.notFound();
 });
 
