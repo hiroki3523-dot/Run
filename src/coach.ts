@@ -142,13 +142,76 @@ const SCHEMA = {
   required: ['conclusion', 'reasons', 'reply', 'changes'],
 };
 
+/** 少し崩れた JSON を直して読む。AI が「」」で文字列を閉じる・配列を閉じ忘れる・末尾にカンマ、などがある */
+export function repairJson(src: string): string {
+  const s = src.replace(/[“”]/g, '"');
+  let out = '', inStr = false, st = 0;
+  const stack: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (ch === '\\') { out += ch + (s[i + 1] ?? ''); i++; continue; }
+      if (ch === '"') { inStr = false; out += ch; continue; }
+      // 」 のあとに区切りが続くなら、そこで文字列が終わったとみなす
+      if ((ch === '」' || ch === '』') && /^\s*(,\s*"|\]|\}|$)/.test(s.slice(i + 1))) {
+        // 対になる「 が無ければ 」 は閉じのつもりなので消す
+        const open = ch === '」' ? '「' : '『';
+        out += (out.slice(st).includes(open) ? ch : '') + '"'; inStr = false; continue;
+      }
+      if (ch === '\n') { out += '\\n'; continue; }
+      out += ch; continue;
+    }
+    if (ch === '"') { inStr = true; out += ch; st = out.length; continue; }
+    if (ch === '{' || ch === '[') { stack.push(ch); out += ch; continue; }
+    if (ch === '}' || ch === ']') {
+      // 閉じ忘れた配列・オブジェクトを先に閉じる
+      const want = ch === '}' ? '{' : '[';
+      while (stack.length && stack[stack.length - 1] !== want) out += stack.pop() === '[' ? ']' : '}';
+      stack.pop();
+      out = out.replace(/,\s*$/, '') + ch; continue;
+    }
+    if (ch === ',' && stack[stack.length - 1] === '[' && /^\s*"\w+"\s*:/.test(s.slice(i + 1))) {
+      // 配列の中に "キー": が来た → 配列の閉じ忘れ
+      stack.pop(); out += '],'; continue;
+    }
+    out += ch;
+  }
+  if (inStr) out += '"';
+  out = out.replace(/,\s*$/, '');
+  while (stack.length) out += stack.pop() === '[' ? ']' : '}';
+  return out;
+}
+function looseJson(raw: string): any {
+  const m = raw.match(/\{[\s\S]*\}/);
+  const i0 = raw.indexOf('{');
+  const body = m ? m[0] : i0 >= 0 ? raw.slice(i0) : '';
+  if (!body) return null;
+  for (const t of [body, repairJson(body)]) {
+    try { const o = JSON.parse(t); if (o && typeof o === 'object') return o; } catch { /* 次へ */ }
+  }
+  // それでも読めなければ、項目ごとに拾う
+  const str = (k: string) => { const r = body.match(new RegExp(`"${k}"\\s*:\\s*"([\\s\\S]*?)(?:"|」)\\s*(?=,\\s*"\\w+"\\s*:|\\})`)); return r ? r[1] : undefined; };
+  const arr = (k: string) => {
+    const r = body.match(new RegExp(`"${k}"\\s*:\\s*\\[([\\s\\S]*?)\\]\\s*(?=,\\s*"\\w+"\\s*:|\\})`));
+    if (!r) return undefined;
+    return r[1].split(/["」]\s*,\s*"/).map((x) => x.replace(/^\s*"|["」]\s*$/g, '').trim()).filter(Boolean);
+  };
+  const o = { conclusion: str('conclusion'), reasons: arr('reasons'), keep: arr('keep'), reply: str('reply'), changes: [] };
+  return o.conclusion || o.reply || o.reasons?.length ? o : null;
+}
+/** JSON のように見える文字列をそのまま見せない */
+function plainText(raw: string): string {
+  const t = raw.trim();
+  if (!/^\{|^\[|"\w+"\s*:/.test(t)) return t;
+  return t.replace(/"\w+"\s*:/g, '').replace(/[{}\[\]"]/g, '').replace(/\s*,\s*/g, '\n').replace(/\n{2,}/g, '\n').trim();
+}
+
 /** AI の返事から JSON を取り出す (文字列でもオブジェクトでも) */
 export function parseCoach(raw: unknown, today: string): CoachReply {
   let o: any = raw;
   if (typeof raw === 'string') {
-    const m = raw.match(/\{[\s\S]*\}/);
-    try { o = m ? JSON.parse(m[0]) : null; } catch { o = null; }
-    if (!o) return { reply: raw.trim() || 'うまく答えられませんでした。もう一度送ってください。', changes: [] };
+    o = looseJson(raw);
+    if (!o) return { reply: plainText(raw) || 'うまく答えられませんでした。もう一度送ってください。', changes: [] };
   }
   const changes: CoachChange[] = (Array.isArray(o?.changes) ? o.changes : [])
     .filter((c: any) => /^\d{4}-\d{2}-\d{2}$/.test(c?.date) && c.date >= today && c.date <= addDays(today, 30) && PLAN_TYPES.includes(c.type) && c.type !== 'race')
@@ -269,6 +332,7 @@ export async function applyCoach(env: Env, changes: CoachChange[]): Promise<numb
 }
 
 /** 計画画面を開いたときの「今週の見立て」。同じ日・同じ計画と実績なら作り直さない (無料枠の節約) */
+const isRawJson = (r: any) => typeof r?.reply === 'string' && !r.conclusion && /^\s*\{[\s\S]*"(conclusion|reply)"/.test(r.reply);
 export const BRIEF_Q = '今週の見立てをください。直近の疲れ具合、今週いちばん大事な練習 (外さないでほしいもの)、削ってもいい練習、体で気をつけること。変える必要があるときだけ変更案も。';
 export async function coachBrief(env: Env, force = false): Promise<CoachReply & { cached?: boolean }> {
   const t = jstToday();
@@ -280,7 +344,13 @@ export async function coachBrief(env: Env, force = false): Promise<CoachReply & 
   const key = `${t}|${sig?.s ?? ''}`;
   if (!force) {
     const c = await kvGet(env, 'coach_brief');
-    if (c) { try { const o = JSON.parse(c); if (o.key === key) return { ...o.r, cached: true }; } catch {} }
+    if (c) {
+      try {
+        const o = JSON.parse(c);
+        // 前に読み取れずに JSON のまま保存された見立ては、読み直して返す
+        if (o.key === key) return { ...(isRawJson(o.r) ? { ...parseCoach(o.r.reply, t), model: o.r.model } : o.r), cached: true };
+      } catch { /* 作り直す */ }
+    }
   }
   const r = await askCoach(env, [{ role: 'user', content: BRIEF_Q }]);
   await kvSet(env, 'coach_brief', JSON.stringify({ key, r }));

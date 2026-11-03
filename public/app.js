@@ -1029,6 +1029,8 @@ function wireCopy(root, ws) {
 
 // ---- 予定の相談 (AI)。会話はこの画面を開いている間だけ残す
 let COACH_LOG = (() => { try { return JSON.parse(sessionStorage.getItem('coach') || '[]'); } catch { return []; } })();
+// 前に読み取れずに JSON のまま残った「今週の見立て」は捨てて、開き直したときに取り直す
+if (COACH_LOG.some((m) => m.brief && !m.conclusion && /^\s*\{/.test(m.content || ''))) COACH_LOG = [];
 const saveCoach = () => { try { sessionStorage.setItem('coach', JSON.stringify(COACH_LOG.slice(-20))); } catch {} };
 function coachPane() {
   return `<div class="coach">
