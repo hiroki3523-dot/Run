@@ -107,8 +107,15 @@ export function buildAptitude(i: {
   if (!runs.some((r) => r.type === 'race')) missing.push('直近 12 週にレースの記録が無い (レース結果があると精度が上がる)');
   const raw = i.predicted_s;
   const adjusted = raw ? Math.round(raw * (1 + add)) : null;
-  const confidence: Aptitude['prediction']['confidence'] = !raw ? '-' : longest >= 30 && holdN <= 1 ? '高' : longest >= 25 && holdN <= 2 ? '中' : '低';
-  if (raw) basis.push(confidence === '低' ? 'ロング走や比べるデータが少ないので、幅を持って見てください。' : '複数の練習から見ても大きな矛盾はありません。');
+  // 信頼度: レースの実績 (12 週以内)・30km 以上のロング走・目標ペース付近の練習・データの新しさ
+  const hasRace = runs.some((r) => r.type === 'race' && r.distance_m >= 20000);
+  const gpRuns = goalPace ? runs.filter((r) => r.distance_m >= 8000 && Math.abs(pace(r) - goalPace) <= 10).length : 0;
+  const fresh = runs.some((r) => t - day(r.date) <= 10);
+  let pts = (hasRace ? 2 : 0) + (longest >= 30 ? 1 : 0) + (gpRuns >= 3 ? 1 : 0) + (fresh ? 1 : 0) - (holdN >= 2 ? 1 : 0);
+  if (!hasRace) pts = Math.min(pts, 3); // レース実績が無いときは「高」にしない
+  const confidence: Aptitude['prediction']['confidence'] = !raw ? '-' : pts >= 4 ? '高' : pts >= 2 ? '中' : '低';
+  if (raw) data.push(`信頼度の根拠: レース実績 ${hasRace ? 'あり' : 'なし'}・30km 以上 ${longest >= 30 ? 'あり' : 'なし'}・目標ペース付近の練習 ${gpRuns} 本・直近 10 日の記録 ${fresh ? 'あり' : 'なし'}`);
+  if (raw) basis.push(confidence === '高' ? '複数の練習とレース実績から見ても大きな矛盾はありません。' : confidence === '中' ? (hasRace ? '練習からは大きな矛盾はありませんが、足りないデータがあります。' : 'レース実績が無いので、練習からの推定です。幅を持って見てください。') : 'ロング走や比べるデータが少ないので、幅を持って見てください。');
   return {
     abilities: ab,
     prediction: { goal_s: i.goal_s, raw_s: raw, adjusted_s: adjusted, source: i.source, basis, data, missing, confidence, gap_s: adjusted && i.goal_s ? adjusted - i.goal_s : null },

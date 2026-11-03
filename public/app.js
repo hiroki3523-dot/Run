@@ -190,8 +190,7 @@ async function homeView() {
       <div class="row spread"><h2>今日 ${md(t)}(${dow(t)})</h2><a href="#/plans" class="muted">計画を編集</a></div>
       ${todays.length === 0 ? '<p class="muted">メニュー未登録</p>' : todays.map((p, i) => planLine(p, false, i === 0 ? markHtml(dayJudge(t, todays, acts.filter((x) => x.date === t), settings)) : '')).join('')}
     </div>
-    <div class="card cond" id="cond"></div>
-    ${wxWeek ? weekWxCard(t, wxWeek.place) : ''}
+    <div class="card cond" id="cond" data-plan="${esc(JSON.stringify(todays.map((p) => ({ type: p.type, km: p.distance_m ? Math.round(p.distance_m / 100) / 10 : null }))))}"></div>
     ${next ? `
     <div class="card hero">
       <div class="row spread"><h2>${esc(next.name)}まで</h2><span class="badge">${esc(next.priority)}</span></div>
@@ -208,6 +207,7 @@ async function homeView() {
       <h2>週間距離</h2>
       ${weeklyChart(summary)}
     </div>
+    ${wxWeek ? weekWxCard(t, wxWeek.place) : ''}
     <div class="card news"><h2>ランニングニュース</h2><div id="news-list"><p class="muted">読み込み中…</p></div></div>`;
 }
 
@@ -293,13 +293,15 @@ async function monthGoalCard(t) {
   }
   const ratio = goal.km ? Math.min(1, actual / goal.km) : 0;
   const left = Math.max(0, goal.km - actual);
-  // 月の経過に対して、どれだけ進んでいるか
-  const expected = goal.km * ((Number(t.slice(8)) - 1) / lastD);
+  // ここまでに走っておきたい距離: 計画があれば計画の積み上げ (調整期・回復期の少ない週も反映)、無ければ日割り
+  const plannedDue = uniqPlans(plans).filter((p) => p.type !== 'rest' && p.date < t).reduce((a, p) => a + (p.distance_m || 0), 0) / 1000;
+  const expected = planned > 0 ? goal.km * (plannedDue / planned) : goal.km * ((Number(t.slice(8)) - 1) / lastD);
   const ahead = actual - expected;
   return `<div class="card"><div class="row spread"><h2>${Number(month.slice(5))}月の目標</h2><button type="button" class="mg-btn" data-mg-edit><b class="num">${goal.km}km</b><small>${fromPlan ? '計画から' : '変更'} ›</small></button></div>
     <div class="row spread num" style="margin:6px 0"><span><b>${actual.toFixed(1)}</b> km 走った</span><span class="muted">残り ${left.toFixed(0)}km</span></div>
     <div class="bar mg"><div style="width:${ratio * 100}%"></div><i style="left:${Math.min(100, (expected / goal.km) * 100)}%"></i></div>
-    <p class="muted" style="margin:8px 0 0">${left <= 0 ? '目標を達成しました。' : `あと${daysLeft}日・1日平均 ${(left / daysLeft).toFixed(1)}km (目安より ${ahead >= 0 ? `${ahead.toFixed(0)}km 先行` : `${(-ahead).toFixed(0)}km 遅れ`})`}</p>
+    <p class="muted" style="margin:8px 0 0">${left <= 0 ? '目標を達成しました。' : `あと${daysLeft}日・1日平均 ${(left / daysLeft).toFixed(1)}km (${planned > 0 ? '計画の積み上げ' : '日割り'}より ${Math.abs(ahead) < 1 ? 'ほぼ予定どおり' : ahead >= 0 ? `${ahead.toFixed(0)}km 先行` : `${(-ahead).toFixed(0)}km 遅れ`})`}</p>
+    <p class="muted" style="margin:4px 0 0;font-size:11.5px">距離の目標の進み具合です。練習の良し悪しは実績の月間評価で見ます。</p>
 </div>`;
 }
 
@@ -513,8 +515,22 @@ async function loadCondition() {
     return;
   }
   const SH = { leg: '脚', tight: '張り', fatigue: '全身', sleep: '睡眠', pain: '痛み' };
+  // 今日の練習への影響 (提案だけ。計画は自動で変えない)
+  let todayPlan = [];
+  try { todayPlan = JSON.parse(box.dataset.plan || '[]'); } catch {}
+  const hard = todayPlan.some((p) => ['m', 'lt', 'interval', 'long', 'race'].includes(p.type));
+  const worst = Math.max(cur.leg ?? 0, cur.tight ?? 0, cur.fatigue ?? 0);
+  const pain = cur.pain ?? 0, sleep = cur.sleep;
+  let impact = '', tone = 'ok';
+  if (!todayPlan.length || todayPlan.every((p) => p.type === 'rest')) impact = worst >= 6 ? '今日は休養日。回復に専念できます。' : '';
+  else if (pain >= 5) { impact = `痛み ${pain}/10。今日の練習は休み、痛みが続くなら受診を。`; tone = 'bad'; }
+  else if (pain >= 3) { impact = `痛み ${pain}/10${(cur.pain_part || []).length ? ` (${cur.pain_part.join('・')})` : ''}。${hard ? 'ポイント練は避けて Jog に下げるのがおすすめ。' : '距離を短めに、痛みが強まったら中止。'}`; tone = 'warn'; }
+  else if (worst >= 7) { impact = `疲労が強め (${worst}/10)。${hard ? '強度を下げるか、ポイント練を 1 日ずらすのがおすすめ。' : '予定より短く、ゆっくりで。'}`; tone = 'warn'; }
+  else if (worst >= 5 || (sleep != null && sleep <= 3)) { impact = `${worst >= 5 ? `疲労がやや残っている (${worst}/10)` : `睡眠が浅め (${sleep}/10)`}。${hard ? '予定どおりで良いが、序盤は抑えて体の反応を見ながら。' : '予定どおり、ゆっくりめで。'}`; }
+  else impact = `疲労は少なく、${hard ? 'ポイント練も' : ''}予定どおり実施できそう。`;
+  const impactHtml = impact ? `<p class="cd-impact ${tone}"><b>今日の練習への影響</b>${esc(impact)}${tone !== 'ok' && todayPlan.length ? ' <a href="#/plans">計画で相談 ›</a>' : ''}</p>` : '';
   box.innerHTML = `<div class="row spread"><h2>今朝の体調</h2><button type="button" class="chip" data-cd="edit">修正</button></div>
-    <div class="cd-sum">${COND.filter(([k]) => cur[k] != null).map(([k]) => `<div><small>${SH[k]}</small><b class="num">${cur[k]}</b></div>`).join('')}${(cur.pain_part || []).length ? `<div><small>痛む場所</small><b style="font-size:13px">${cur.pain_part.map(esc).join('・')}</b></div>` : ''}</div>${trend}${warn}`;
+    <div class="cd-sum">${COND.filter(([k]) => cur[k] != null).map(([k]) => `<div><small>${SH[k]}</small><b class="num">${cur[k]}</b></div>`).join('')}${(cur.pain_part || []).length ? `<div><small>痛む場所</small><b style="font-size:13px">${cur.pain_part.map(esc).join('・')}</b></div>` : ''}</div>${impactHtml}${trend}${warn}`;
   box.querySelector('[data-cd="edit"]').onclick = () => form({ ...cur });
 }
 
@@ -527,7 +543,7 @@ function aptitudeHtml(a) {
   return `<details class="ins-all apt"><summary>マラソン適性 (6 つの能力)</summary><div class="apt-list">${bars}</div>
     <p class="muted" style="font-size:12px;margin:8px 0 0">直近 12 週のランから。ロング走とレースを重く見ます。データが足りない能力は保留にしています。</p></details>
     ${p.raw_s ? `<details class="ins-all apt"><summary>予測の根拠 <span class="apt-conf c-${p.confidence}">信頼度 ${p.confidence}</span></summary>
-      <div class="apt-pred num"><div><small>予測 (元の値)</small><b>${dur(p.raw_s)}</b></div><div><small>持久力を考慮</small><b>${dur(p.adjusted_s)}</b></div>${p.goal_s ? `<div><small>目標との差</small><b class="${p.gap_s <= 0 ? 'g' : 'b'}">${Math.abs(p.gap_s) < 60 ? `${Math.abs(p.gap_s)}秒${p.gap_s <= 0 ? '余裕' : '不足'}` : `${p.gap_s <= 0 ? '−' : '+'}${dur(Math.abs(p.gap_s))}`}</b></div>` : ''}</div>
+      <div class="apt-pred num" style="--n:${p.adjusted_s !== p.raw_s ? 3 : 2}"><div><small>${esc(p.source.startsWith('COROS') ? 'COROS 予測' : '予測')}</small><b>${dur(p.raw_s)}</b></div>${p.adjusted_s !== p.raw_s ? `<div><small>STRIDE 補正 (持久力)</small><b>${dur(p.adjusted_s)}</b></div>` : ''}${p.goal_s ? `<div><small>目標との差</small><b class="${p.gap_s <= 0 ? 'g' : 'b'}">${Math.abs(p.gap_s) < 60 ? `${Math.abs(p.gap_s)}秒${p.gap_s <= 0 ? '余裕' : '不足'}` : `${p.gap_s <= 0 ? '−' : '+'}${dur(Math.abs(p.gap_s))}`}</b></div>` : ''}</div>
       <h4>根拠</h4>${p.basis.map((t) => `<p>${esc(t)}</p>`).join('')}
       <h4>使ったデータ</h4>${p.data.map((t) => `<p>${esc(t)}</p>`).join('')}
       ${p.missing.length ? `<h4>足りないデータ</h4>${p.missing.map((t) => `<p>${esc(t)}</p>`).join('')}` : ''}
@@ -1675,9 +1691,12 @@ async function activitiesView(params) {
     </div>
     <div class="card">
       <div class="row spread"><h2>${kind === 'day' ? '日次' : kind === 'week' ? '週間' : '月間'}評価</h2>
-        ${r.grade ? `<span class="grade g${r.grade}">${r.grade}<small>${GRADE_NOTE[r.grade]}${r.grade_calc ? `・${r.grade_calc.pts}点` : ''}</small></span>` : ''}</div>
+        ${r.grade ? `<span class="grade g${r.grade}">${r.grade}<small>${r.in_progress ? '途中経過' : GRADE_NOTE[r.grade]}${r.grade_calc ? `・${r.grade_calc.pts}点` : ''}</small></span>` : r.runs ? '<span class="grade gH">保留<small>材料が少ない</small></span>' : ''}</div>
+      ${r.in_progress || r.phase_note ? `<p class="rv-phase">${r.in_progress ? `<b>途中経過</b> ${md(today())} までの計画と比べています。最終評価は期間が終わってから。` : ''}${r.phase_note ? `${r.in_progress ? '<br>' : ''}${esc(r.phase_note)}` : ''}</p>` : ''}
+      ${r.parts?.length ? `<details class="rv-acc rv-parts"><summary>評価の内訳</summary><div class="an-items">${r.parts.map((x) => `<div class="an-it"><span class="an-j j-${x.score == null ? 'hold' : x.score >= 80 ? 'good' : x.score >= 60 ? 'ok' : 'bad'}">${x.score == null ? '保留' : x.score}</span><div><b>${esc(x.label)} <small class="muted">(重み ${x.weight})</small></b><small class="muted">${esc(x.reason)}</small></div></div>`).join('')}</div>
+        <p class="muted an-note">${kind === 'day' ? '日次はその日のメイン練習の達成度。' : kind === 'week' ? '週次は練習の構成・ポイント練・負荷の増え方。' : '月次は練習の質・継続・負荷の変化。'}保留の項目は除いて、重みで平均しています。月の距離目標は評価に入れていません。</p></details>` : ''}
       <div class="grid3">
-        ${stat('距離', `${r.km}km`, r.planned_km ? `計画 ${r.planned_km}km${pct ? `・${pct}` : ''}` : '')}
+        ${stat('距離', `${r.km}km`, r.planned_km ? `${r.in_progress ? `今日まで ${r.due_km}km` : `計画 ${r.planned_km}km`}${pct ? `・${pct}` : ''}` : '')}
         ${stat('回数', `${r.runs}回`, `${r.run_days}日`)}
         ${stat('平均点', r.avg_score ?? '-', r.avg_hr ? `平均心拍 ${r.avg_hr}` : '')}
         ${stat('平均ペース', r.avg_pace_s ? `${pace(r.avg_pace_s)}` : '-', `/km`)}
@@ -2066,9 +2085,16 @@ async function activityDetailView(id) {
           fbox.querySelector('[data-fb-edit]').onclick = showForm;
         };
         const showForm = () => {
-          fbox.innerHTML = feedbackHtml(st, notes);
-          bindFeedback(fbox, st, async (body) => {
+          // 入力中は下書きに書き、保存できたときだけ確定する (保存しないで離れても、保存済みの評価は変わらない)
+          const draft = JSON.parse(JSON.stringify(st));
+          fbox.innerHTML = feedbackHtml(draft, notes);
+          if (hasFeedback(st)) {
+            fbox.querySelector('.fbx h3')?.insertAdjacentHTML('afterend', '<button type="button" class="chip" data-fb-cancel>取り消し</button>');
+            fbox.querySelector('[data-fb-cancel]').onclick = showSummary;
+          }
+          bindFeedback(fbox, draft, async (body) => {
             await api(`/activities/${id}/feedback`, { method: 'PUT', body });
+            Object.assign(st, JSON.parse(JSON.stringify(body)));
             api(`/activities/${id}/analysis`).then((an) => { const box = view.querySelector('#analysis'); if (box && an && !an.error) box.innerHTML = analysisHtml(an); }).catch(() => {});
             const r2 = await api(`/activities/${id}/review`).catch(() => null);
             if (r2 && !r2.error && r2.main_id === undefined) {

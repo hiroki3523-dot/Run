@@ -1156,7 +1156,7 @@ body::after {
 .c-高 { color: var(--good); background: color-mix(in srgb, var(--good) 15%, transparent); }
 .c-中 { color: var(--accent); background: var(--accent-soft); }
 .c-低 { color: var(--mid); background: color-mix(in srgb, var(--mid) 15%, transparent); }
-.apt-pred { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.apt-pred { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
 .apt-pred div { display: flex; flex-direction: column; padding: 8px 10px; border-radius: 12px; background: color-mix(in srgb, var(--text) 5%, transparent); }
 .apt-pred small { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .apt-pred b { font-size: 17px; }
@@ -1182,3 +1182,12 @@ body::after {
 .sc-t td { text-align: center; white-space: nowrap; }
 .sc-t td:first-child { text-align: left; color: var(--muted); font-size: 12px; }
 .sc-t td.sc-best { color: var(--good); font-weight: 700; }
+.rv-phase { margin: 8px 0 4px; padding: 8px 12px; border-radius: 12px; font-size: 12.5px; background: var(--accent-soft); color: var(--text); }
+.rv-phase b { color: var(--accent); margin-right: 4px; }
+.grade.gH { color: var(--muted); }
+.rv-parts { margin-top: 8px; }
+.cd-impact { margin: 10px 0 0; padding: 9px 12px; border-radius: 12px; font-size: 13.5px; background: color-mix(in srgb, var(--good) 12%, transparent); }
+.cd-impact b { display: block; font-size: 11.5px; color: var(--good); margin-bottom: 2px; }
+.cd-impact.warn { background: color-mix(in srgb, var(--mid) 12%, transparent); } .cd-impact.warn b { color: var(--mid); }
+.cd-impact.bad { background: color-mix(in srgb, var(--bad) 12%, transparent); } .cd-impact.bad b { color: var(--bad); }
+.cd-impact a { color: var(--accent); white-space: nowrap; }

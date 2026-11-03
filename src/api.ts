@@ -10,6 +10,7 @@ import { buildReview, trainingLoad, type ReviewPlan, type ReviewRun } from './re
 import { getActivity, getSeries } from './strava';
 import { buildRunReview, normalizeFb } from './runreview';
 import { analyzeRun, groupOf, type Snapshot } from './analysis';
+import { cleanText } from './evaluate';
 import { runningNews } from './news';
 import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
 import { autoFillRace, cleanRaceInfo, entryHistory, extractRaceInfo } from './raceinfo';
@@ -323,14 +324,14 @@ api.get('/review', async (c) => {
   const load = async (a: string, b: string) => {
     const [runs, plans] = await Promise.all([
       c.env.DB.prepare(
-        `SELECT id, date, name, distance_m, moving_time_s, avg_hr, score, plan_id, evaluation
+        `SELECT id, date, name, distance_m, moving_time_s, avg_hr, score, plan_id, evaluation, json_extract(evaluation, '$.role') AS role, COALESCE(json_extract(evaluation, '$.eff_type'), json_extract(evaluation, '$.type')) AS type
          FROM activities WHERE date BETWEEN ? AND ? ORDER BY start_date_local`,
       ).bind(a, b).all<Omit<ReviewRun, 'comments'> & { evaluation: string | null }>(),
       c.env.DB.prepare('SELECT id, date, type, distance_m FROM plans WHERE date BETWEEN ? AND ?').bind(a, b).all<ReviewPlan>(),
     ]);
     const list: ReviewRun[] = runs.results.map(({ evaluation, ...r }) => {
       let comments: string[] = [];
-      try { comments = evaluation ? (JSON.parse(evaluation).comments ?? []).slice(0, 3) : []; } catch { /* 古い形式は無視 */ }
+      try { comments = evaluation ? (JSON.parse(evaluation).comments ?? []).map(cleanText).filter(Boolean).slice(0, 3) : []; } catch { /* 古い形式は無視 */ }
       return { ...r, comments, tl: trainingLoad(r.moving_time_s, r.avg_hr, lthr) };
     });
     return { list, plans: plans.results };
@@ -340,7 +341,9 @@ api.get('/review', async (c) => {
   const prevFrom = addDays(prevTo, -(span - 1));
   const [cur, prv] = await Promise.all([load(from, to), k === 'day' ? null : load(prevFrom, prevTo)]);
   const prev = prv ? { runs: prv.list.length, km: prv.list.reduce((a, r) => a + r.distance_m, 0) / 1000 } : null;
-  return c.json(buildReview(from, to, cur.list, cur.plans, prev, k));
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const { results: races } = await c.env.DB.prepare("SELECT name, date, priority, distance_m FROM races WHERE date BETWEEN ? AND ? AND COALESCE(status, 'confirmed') != 'candidate'").bind(addDays(from, -8), addDays(to, 15)).all<any>();
+  return c.json(buildReview(from, to, cur.list, cur.plans, prev, k, { today, races }));
 });
 
 /** 直近 N 週間 (月曜始まり) の週ごとの距離と負荷。Strava の「過去12週間」グラフ用 */
@@ -436,7 +439,7 @@ api.get('/activities/:id/review', async (c) => {
 async function pastSnapshots(env: Env, beforeDate: string, easyMin: number): Promise<Snapshot[]> {
   const from = addDays(beforeDate, -180);
   const [{ results: rows }, { results: snaps }, { results: fbs }] = await Promise.all([
-    env.DB.prepare(`SELECT id, date, distance_m, moving_time_s, avg_hr, avg_cadence_spm, json_extract(evaluation, '$.type') AS type, json_extract(evaluation, '$.pace.details.half_diff_s') AS hd, json_extract(evaluation, '$.role') AS role
+    env.DB.prepare(`SELECT id, date, distance_m, moving_time_s, avg_hr, avg_cadence_spm, COALESCE(json_extract(evaluation, '$.eff_type'), json_extract(evaluation, '$.type')) AS type, json_extract(evaluation, '$.pace.details.half_diff_s') AS hd, json_extract(evaluation, '$.role') AS role
       FROM activities WHERE date BETWEEN ? AND ? AND sport_type LIKE '%Run%' AND distance_m >= 1500 ORDER BY date DESC LIMIT 400`).bind(from, beforeDate).all<any>(),
     env.DB.prepare(`SELECT key, value FROM kv WHERE key LIKE 'snap:%'`).all<{ key: string; value: string }>(),
     env.DB.prepare(`SELECT key, value FROM kv WHERE key LIKE 'fb:%'`).all<{ key: string; value: string }>(),
@@ -782,12 +785,12 @@ api.get('/insights', async (c) => {
   const ins = buildInsights({
     today, runs: runs.results, race: race ?? null,
     predicted_full_s: predicted,
-    predicted_label: manual ? '予測 (入力)' : fromCoros ? '予測 (COROS)' : auto ? '予測 (Strava から)' : '予測',
+    predicted_label: manual ? '予測 (入力)' : fromCoros ? 'COROS 予測' : auto ? '予測 (Strava から)' : '予測',
     target_cadence: st.target_cadence ?? 180,
   });
   // マラソン適性 (6 つの能力) と予測の根拠・信頼度
   const { results: rs } = await c.env.DB.prepare(
-    `SELECT a.id, a.date, a.distance_m, a.moving_time_s, a.avg_hr, COALESCE(p.type, json_extract(a.evaluation, '$.type')) AS type, json_extract(a.evaluation, '$.role') AS role,
+    `SELECT a.id, a.date, a.distance_m, a.moving_time_s, a.avg_hr, COALESCE(json_extract(a.evaluation, '$.eff_type'), p.type, json_extract(a.evaluation, '$.type')) AS type, json_extract(a.evaluation, '$.role') AS role,
        json_extract(a.evaluation, '$.hr.details.drift_pct') AS drift, json_extract(a.evaluation, '$.pace.details.half_diff_s') AS half_diff, json_extract(a.evaluation, '$.form.score') AS form_score
      FROM activities a LEFT JOIN plans p ON p.id = a.plan_id WHERE a.date BETWEEN ? AND ? AND a.sport_type LIKE '%Run%'`,
   ).bind(addDays(today, -90), today).all<any>();
@@ -954,7 +957,10 @@ api.get('/activities/:id', async (c) => {
   // COROS のデータがあれば、その記録 (labelId・種目) も返す (COROS へのリンク用)
   const ext = await c.env.DB.prepare(`SELECT ext_id, json_extract(data, '$.act.sport_type') AS st, json_extract(data, '$.act.coros_extra') AS ex FROM ext_activities WHERE id = ? AND data NOT LIKE '{"dup_of"%'`).bind(row.id).first<{ ext_id: string; st: string; ex: string | null }>();
   const coros = ext ? { label_id: ext.ext_id, sport_type: ext.st === 'TrailRun' ? 102 : ext.st === 'VirtualRun' ? 101 : 100, extra: ext.ex ? JSON.parse(ext.ex) : null } : null;
-  return c.json({ ...row, evaluation: row.evaluation ? JSON.parse(row.evaluation as string) : null, plan, siblings, coros });
+  // 古い評価に残っている「null%」などは、表示前に取り除く
+  const evx = row.evaluation ? JSON.parse(row.evaluation as string) : null;
+  if (evx) { evx.comments = (evx.comments ?? []).map(cleanText).filter(Boolean); if (evx.focus) evx.focus = evx.focus.map(cleanText).filter(Boolean); for (const k of ['pace', 'hr', 'cadence', 'volume', 'form']) if (evx[k]?.summary) evx[k].summary = cleanText(evx[k].summary) ?? ''; }
+  return c.json({ ...row, evaluation: evx, plan, siblings, coros });
 });
 
 /** 計画の付け替え・シューズ変更 (計画を変えたら再評価) */

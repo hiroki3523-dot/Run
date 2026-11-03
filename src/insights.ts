@@ -123,12 +123,18 @@ export function buildInsights(i: InsightIn): Insights {
   }
 
   // 5. ピッチ (直近 4 週の平均)
+  // ピッチは決まった理想値ではなく、自分の 5〜8 週前と比べる (同じくらいのペースで走っているとき)
   const cads = within(28).filter((r) => r.avg_cadence_spm);
-  if (cads.length) {
-    const c = cads.reduce((a, r) => a + r.avg_cadence_spm! * r.moving_time_s, 0) / cads.reduce((a, r) => a + r.moving_time_s, 0);
-    const lv: Level = c >= i.target_cadence - 3 ? 'ok' : c >= i.target_cadence - 8 ? 'warn' : 'bad';
-    items.push({ key: 'cadence', level: lv, label: 'ピッチ (4週平均)', value: `${Math.round(c)}spm`, target: `${i.target_cadence}spm` });
-    if (lv !== 'ok') actions.push(`ピッチが ${Math.round(c)}spm と低め。Easy の最後に流し 100m×4〜6 本、接地を体の真下に`);
+  const base = i.runs.filter((r) => r.avg_cadence_spm && t - day(r.date) >= 28 && t - day(r.date) < 56);
+  const wavg = (xs: InsightRun[]) => xs.reduce((a, r) => a + r.avg_cadence_spm! * r.moving_time_s, 0) / xs.reduce((a, r) => a + r.moving_time_s, 0);
+  const pav = (xs: InsightRun[]) => xs.reduce((a, r) => a + r.moving_time_s, 0) / (xs.reduce((a, r) => a + r.distance_m, 0) / 1000);
+  if (cads.length >= 3 && base.length >= 3) {
+    const c = wavg(cads), b = wavg(base);
+    const slower = pav(cads) - pav(base); // 正なら最近のほうが遅いペース (ピッチが下がって自然)
+    const d = c - b + Math.max(0, slower) * 0.15;
+    const lv: Level = d >= -2 ? 'ok' : d >= -5 ? 'warn' : 'bad';
+    items.push({ key: 'cadence', level: lv, label: 'ピッチ (4週平均・自分の前の4週と比較)', value: `${Math.round(c)}spm`, target: `${Math.round(b)}spm` });
+    if (lv !== 'ok') actions.push(`ピッチが前の 4 週 (${Math.round(b)}spm) より下がっている。疲労のサインのことも。Easy の最後に流し 100m×4〜6 本`);
   }
 
   // 6. 継続 (直近 4 週の走った日数)

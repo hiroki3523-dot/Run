@@ -39,7 +39,8 @@ const judgeOf = (s: number | null): Judge => (s == null ? 'hold' : s >= 80 ? 'go
 export function groupOf(type: string | null | undefined, pace: number, easyMin: number): string {
   if (type === 'interval') return 'interval';
   if (type === 'race') return 'race';
-  if (type === 'long') return 'long';
+  // ロング走の計画の中の M ペース区間など: 距離ではなくペースで見る (Easy より 10 秒以上速ければポイント練)
+  if (type === 'long') return pace < easyMin - 10 ? 'tempo' : 'long';
   if (type === 'm' || type === 'lt') return 'tempo';
   if (type === 'easy' || type === 'jog') return 'easy';
   return pace < easyMin - 10 ? 'tempo' : 'easy';
@@ -59,7 +60,7 @@ export interface AnalysisIn {
 export function analyzeRun(i: AnalysisIn): Analysis {
   const pace = i.moving_time_s / (i.distance_m / 1000);
   const km = i.distance_m / 1000;
-  const group = groupOf(i.ev?.type ?? i.plan_type, pace, i.easy_min);
+  const group = groupOf(i.ev?.eff_type ?? i.ev?.type ?? i.plan_type, pace, i.easy_min);
   const sr = i.series;
   const ev = i.ev;
 
@@ -93,8 +94,8 @@ export function analyzeRun(i: AnalysisIn): Analysis {
         return mean(idx.map((k) => sr.hr[k]! * (sr.pace[k]! / med))); // ペースの小さな違いを補正した心拍
       };
       const h1 = eff(s0, mid), h2 = eff(mid + 1, s1);
-      drift = Math.round(((h2 - h1) / h1) * 1000) / 10;
-      text.push(`${steady.from_km}〜${steady.to_km}km はペースが一定 (${mmss(med)}/km 前後)。この区間の心拍ドリフトは ${drift >= 0 ? '+' : ''}${drift}% (${Math.round(h1)} → ${Math.round(h2)}bpm 相当)。${drift <= 3 ? '心拍は安定していて、有酸素の持久力は十分。' : drift <= 5 ? 'やや上昇。長い距離では序盤を少し抑えたい。' : '後半の上昇が大きい。暑さ・補給・疲労、または持久力の不足が考えられる。'}`);
+      drift = Number.isFinite(h1) && Number.isFinite(h2) && h1 > 0 ? Math.round(((h2 - h1) / h1) * 1000) / 10 : null;
+      if (drift != null) text.push(`${steady.from_km}〜${steady.to_km}km はペースが一定 (${mmss(med)}/km 前後)。この区間の心拍ドリフトは ${drift >= 0 ? '+' : ''}${drift}% (${Math.round(h1)} → ${Math.round(h2)}bpm 相当)。${drift <= 3 ? '心拍は安定していて、有酸素の持久力は十分。' : drift <= 5 ? 'やや上昇。長い距離では序盤を少し抑えたい。' : '後半の上昇が大きい。暑さ・補給・疲労、または持久力の不足が考えられる。'}`);
     } else {
       text.push('ペースが一定の区間が短いため、心拍ドリフトは判断を保留します (意図的なペース変化と区別するため)。');
     }
@@ -109,8 +110,8 @@ export function analyzeRun(i: AnalysisIn): Analysis {
     if (usable.length >= 4 && Math.max(...usable.map((x) => x.p)) - Math.min(...usable.map((x) => x.p)) >= 10) {
       const mp = mean(usable.map((x) => x.p)), mh = mean(usable.map((x) => x.h));
       const cov = mean(usable.map((x) => (x.p - mp) * (x.h - mh))), vp = mean(usable.map((x) => (x.p - mp) ** 2));
-      response = Math.round((-cov / vp) * 10 * 10) / 10; // 10 秒/km 速くなったときの心拍の増え方
-      if (response > 0) text.push(`ペースを 10 秒/km 上げると、心拍は約 +${response}bpm (1km ごとのペースと心拍から)。${response <= 4 ? '速くしても心拍の上がり方が小さく、余裕がある。' : response <= 8 ? '標準的な反応。' : '速くすると心拍が大きく上がる。今の力ではペースを上げる余地が小さい。'}`);
+      response = vp > 0 ? Math.round((-cov / vp) * 10 * 10) / 10 : null; // 10 秒/km 速くなったときの心拍の増え方
+      if (response != null && Number.isFinite(response) && response > 0) text.push(`ペースを 10 秒/km 上げると、心拍は約 +${response}bpm (1km ごとのペースと心拍から)。${response <= 4 ? '速くしても心拍の上がり方が小さく、余裕がある。' : response <= 8 ? '標準的な反応。' : '速くすると心拍が大きく上がる。今の力ではペースを上げる余地が小さい。'}`);
     }
     hrpace = { steady, drift_pct: drift, response, text };
   }

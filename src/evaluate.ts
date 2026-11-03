@@ -120,15 +120,21 @@ function evalPace(type: EvalType, band: PaceBand | null, samples: Sample[], laps
   const dts = work.map((s) => s.dt);
   const avgPace = weightedMean(work.map((s) => s.pace), dts)!;
   const splits = kmSplits(work);
-  const splitCv = cv(splits);
-  // 1km ごとのばらつき。1% 以下で満点、3% で 50 点、5% で 0 点 (ジョグはもともと揺れやすいので少し緩め)
-  const slack = EASY_TYPES.includes(type) ? 0.025 : 0.01;
-  const consistency = splitCv == null ? null : clamp(100 - (splitCv - slack) * 2500);
+  let splitCv = cv(splits);
 
   const [first, second] = halves(work);
   const p1 = weightedMean(first.map((s) => s.pace), first.map((s) => s.dt));
   const p2 = weightedMean(second.map((s) => s.pace), second.map((s) => s.dt));
   const halfDiff = p1 && p2 ? p2 - p1 : null; // 正なら後半失速
+  // 後半に意図的にペースを上げた (ビルドアップ・ネガティブスプリット) ときは、前半と後半それぞれのばらつきで見る
+  if (halfDiff != null && halfDiff < -3 && splits.length >= 6) {
+    const h = Math.floor(splits.length / 2);
+    const c1 = cv(splits.slice(0, h)), c2 = cv(splits.slice(h));
+    if (c1 != null && c2 != null) splitCv = (c1 + c2) / 2;
+  }
+  // 1km ごとのばらつき。1% 以下で満点、3% で 50 点、5% で 0 点 (ジョグはもともと揺れやすいので少し緩め)
+  const slack = EASY_TYPES.includes(type) ? 0.025 : 0.01;
+  const consistency = splitCv == null ? null : clamp(100 - (splitCv - slack) * 2500);
 
   const details: MetricResult['details'] = {
     avg_pace: round(avgPace, 0),
@@ -344,13 +350,14 @@ function evalCadence(type: EvalType, samples: Sample[], laps: Lap[], settings: S
   // ゆっくり走る日はケイデンスが下がるのが自然なので目標を少し緩める
   const target = settings.target_cadence - (EASY_TYPES.includes(type) ? 6 : type === 'long' || type === 'free' ? 3 : 0);
   const deficit = target - avg;
-  // 目標より 1spm 低いごとに 8 点減。170spm を切るとほぼ 0 点に近づく
-  let score = deficit <= 0 ? 100 : 100 - deficit * 8;
+  // ピッチは人によって違うので、決まった値 (180 など) からの差では大きく減点しない。
+  // 主に「後半まで保てたか」を見て、目安より大きく低いときだけ少し減点する
+  let score = 100 - Math.max(0, deficit - 6) * 2;
   if (fadeSpm != null && fadeSpm > 2) score -= (fadeSpm - 2) * 8;
 
   return {
     score: round(clamp(score), 0),
-    summary: `平均 ${Math.round(avg)}spm (目標 ${target})${fadeSpm != null && fadeSpm > 3 ? `・後半 -${round(fadeSpm, 0)}` : ''}`,
+    summary: `平均 ${Math.round(avg)}spm (参考 ${target})${fadeSpm != null && fadeSpm > 3 ? `・後半 -${round(fadeSpm, 0)}` : ''}`,
     details: { avg_spm: round(avg, 0), target_spm: target, fade_spm: fadeSpm == null ? null : round(fadeSpm) },
   };
 }
@@ -536,7 +543,25 @@ function evalStepPace(parts: { win: StepWin; samples: Sample[] }[]): MetricResul
   };
 }
 
+/** 計算できなかった値 (null・NaN・undefined) が文章に出ないようにする。括弧の中なら括弧ごと、それ以外は文ごと除く */
+export function cleanText(t: string): string | null {
+  if (!/null|NaN|undefined|Infinity/.test(t)) return t;
+  const u = t.replace(/\s*[(（][^()（）]*(?:null|NaN|undefined|Infinity)[^()（）]*[)）]/g, '').replace(/[・、]?[^・、。]*(?:null|NaN|undefined|Infinity)[^・、。]*/g, '');
+  const v = u.replace(/^[・、\s]+/, "");
+  return /null|NaN|undefined|Infinity/.test(v) || v.trim().length < 4 ? null : v;
+}
+function cleanEval(e: Evaluation): Evaluation {
+  const fix = (m?: MetricResult) => { if (m) m.summary = cleanText(m.summary) ?? ''; };
+  fix(e.pace); fix(e.hr); fix(e.cadence); fix(e.volume); fix(e.form);
+  e.comments = e.comments.map(cleanText).filter((x): x is string => !!x);
+  if (e.focus) e.focus = e.focus.map(cleanText).filter((x): x is string => !!x);
+  return e;
+}
+
 export function evaluateRun(input: ActivityInput, plan: Plan | null, settings: Settings, ctx?: { offset_m?: number }): Evaluation {
+  return cleanEval(evaluateRunRaw(input, plan, settings, ctx));
+}
+function evaluateRunRaw(input: ActivityInput, plan: Plan | null, settings: Settings, ctx?: { offset_m?: number }): Evaluation {
   const resolved = resolveTargets(plan, settings);
   const { type } = resolved;
   let { band, hrRange } = resolved;
@@ -569,6 +594,7 @@ export function evaluateRun(input: ActivityInput, plan: Plan | null, settings: S
     const sectionKm = round(mainKm, 1);
     return {
       type,
+      eff_type: effT,
       score: total == null ? 0 : Math.round(total),
       weights: { pace: pct(0), hr: pct(1), cadence: pct(2), form: pct(4) },
       section_km: sectionKm,
@@ -613,6 +639,7 @@ export function evaluateRun(input: ActivityInput, plan: Plan | null, settings: S
 
   return {
     type,
+    eff_type: effType,
     score: total == null ? 0 : Math.round(total),
     weights: { pace: pct(0), hr: pct(1), cadence: pct(2), form: pct(4) },
     ...(sectionKm != null ? { section_km: sectionKm } : {}),
@@ -698,7 +725,7 @@ function buildComments(
     const avg = cad.details.avg_spm as number;
     const target = cad.details.target_spm as number;
     const diff = avg - target;
-    let line = `ピッチ ${avg}spm (目標 ${target}・${diff >= 0 ? '+' : ''}${diff})`;
+    let line = `ピッチ ${avg}spm (参考 ${target}・${diff >= 0 ? '+' : ''}${diff}。理想値は人それぞれなので、後半まで保てたかを重視)`;
     const fade = cad.details.fade_spm as number | null;
     if (fade != null && fade > 2) line += `。後半は前半より ${fade}spm 低下`;
     c.push(line);
@@ -724,18 +751,12 @@ function buildComments(
 function buildFocus(type: EvalType, pace: MetricResult, hr: MetricResult, cad: MetricResult, form: MetricResult, settings: Settings): string[] {
   const items: { loss: number; text: string }[] = [];
   const easyLike = EASY_TYPES.includes(type) || type === 'long';
-  const need = (SUB3_PACE_S ? 1000 / SUB3_PACE_S : 0) / (settings.target_cadence / 60); // サブ3 ペース・目標ピッチでの歩幅
 
   if (cad.score != null) {
     const avg = cad.details.avg_spm as number;
     const target = cad.details.target_spm as number;
     const fade = cad.details.fade_spm as number | null;
-    if (avg < target - 1) {
-      items.push({
-        loss: 100 - cad.score,
-        text: `ピッチを ${avg}→${target}spm へ。歩幅を伸ばすより、足を体の真下に着いて回転を上げる意識で (サブ3 のペースは歩幅 ${need.toFixed(2)}m × ${settings.target_cadence}spm で走れます)。`,
-      });
-    } else if (fade != null && fade > 2) {
+    if (fade != null && fade > 2) {
       items.push({ loss: 100 - cad.score, text: `後半にピッチが ${fade}spm 落ちています。残り 1/3 で腕振りをコンパクトに速くして、ピッチを保つ練習を。` });
     }
   }
