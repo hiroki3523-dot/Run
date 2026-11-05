@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeNews, newestFirst, parseRss, runningNews } from '../src/news';
+import { isOffTopic, mergeNews, newestFirst, parseRss, runningNews } from '../src/news';
 
 const RSS = `<rss><channel><item><title>ナイキが新作「ペガサス」を発表 - Runner's World</title><link>https://news.google.com/rss/articles/abc?oc=5</link><pubDate>Mon, 02 Nov 2026 03:00:00 GMT</pubDate><source url="https://example.com">Runner's World</source></item>
 <item><title><![CDATA[熊本城マラソン エントリー開始 &amp; 抽選 - 熊日]]></title><link>https://news.google.com/rss/articles/def</link><pubDate>Sun, 01 Nov 2026 10:00:00 GMT</pubDate><source url="https://k.example">熊日</source></item>
@@ -39,5 +39,20 @@ describe('news', () => {
       expect(urls.some((u) => u.includes('when:7d'))).toBe(true);
       expect(urls.some((u) => u.includes('when:14d'))).toBe(true);
     } finally { globalThis.fetch = orig; }
+  });
+  it('競馬・野球の記事は除く (ランニング・マラソンの記事は残す)', () => {
+    for (const t of ['【天皇賞】マラソンランナー級のスタミナ 有力馬の調教', 'JRA 菊花賞 出走馬確定', '阪神・近本 一塁ランナーで盗塁成功', 'G1 ジャパンカップ 枠順', 'ランニングフリー産駒が重賞初制覇']) expect(isOffTopic(t)).toBe(true);
+    for (const t of ['福岡マラソン 交通規制のお知らせ', 'ナイキ ペガサス 42 発売', '箱根駅伝 予選会の結果', '菊花マラソン 2026 ハーフで大会新', 'ランナー必見 冬のウェア']) expect(isOffTopic(t)).toBe(false);
+    const xml = `<rss><item><title>JRA 菊花賞 出走馬確定 - S</title><link>https://a.example/1</link><pubDate>Thu, 05 Nov 2026 01:00:00 GMT</pubDate><source>S</source></item><item><title>大阪マラソン 募集開始 - S</title><link>https://a.example/2</link><pubDate>Thu, 05 Nov 2026 01:00:00 GMT</pubDate><source>S</source></item></rss>`;
+    expect(parseRss(xml, '話題').map((x) => x.title)).toEqual(['大阪マラソン 募集開始']);
+  });
+  it('検索語から「ランナー」を外し、競馬・野球を除く語を付ける', async () => {
+    const urls: string[] = [];
+    const orig = globalThis.fetch;
+    globalThis.fetch = (async (u: string) => { urls.push(decodeURIComponent(String(u)).replace(/\+/g, ' ')); return new Response('<rss></rss>'); }) as any;
+    try { await runningNews(); } finally { globalThis.fetch = orig; }
+    const topic = urls.find((u) => u.includes('ジョギング'))!;
+    expect(topic).not.toContain('ランナー');
+    expect(urls.every((u) => u.includes('-競馬') && u.includes('-野球'))).toBe(true);
   });
 });
