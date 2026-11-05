@@ -158,6 +158,21 @@ async function apiFetch(path, opts = {}) {
 
 /** 入力欄のフォーカスを外す (キーボードを閉じる) */
 function noFocus() { const el = document.activeElement; if (el && el !== document.body && el.matches?.('input, textarea, select')) el.blur(); }
+/** キーボードが下がって画面の高さが戻るまで待つ (最大 600ms)。キーボードが出ていなければすぐ */
+function viewportSettled() {
+  const vv = window.visualViewport;
+  const ok = () => !vv || (vv.height >= window.innerHeight * 0.9 && vv.offsetTop < 2);
+  if (ok()) return Promise.resolve();
+  return new Promise((res) => {
+    const done = () => { vv.removeEventListener('resize', chk); clearTimeout(t); window.scrollTo(window.scrollX, window.scrollY); res(); };
+    const chk = () => { if (ok()) done(); };
+    const t = setTimeout(done, 600);
+    vv.addEventListener('resize', chk);
+  });
+}
+// 保存・キャンセルを押した時点で入力欄のフォーカスを外す (閉じる前にキーボードを下げる)
+dialogForm.addEventListener('pointerdown', (e) => { if (e.target.closest?.('.dlg-actions button')) noFocus(); });
+dialogForm.addEventListener('submit', () => noFocus());
 /** フォーム内容を dialog で表示し、送信値を返す (キャンセルは null) */
 function openDialog(html, { onDelete } = {}) {
   dialogForm.innerHTML = `${html}
@@ -170,6 +185,9 @@ function openDialog(html, { onDelete } = {}) {
   noFocus();
   return new Promise((resolve) => {
     dialog.onclose = async () => {
+      // iPhone: キーボードが出たまま閉じると、画面の位置がずれて固まったようになる。閉じたらキーボードを下げ、戻るのを待ってから次へ
+      noFocus();
+      await viewportSettled();
       if (dialog.returnValue === 'delete' && onDelete) {
         if (confirm('削除しますか？')) await onDelete();
         resolve(null);
@@ -3919,7 +3937,12 @@ async function loadShoeCompare() {
       ? `<a class="sc-rec" href="#/shoes/${top.shoe_id}"><span class="sc-rec-l">結論</span><div><small>おすすめ・${C[1]}</small><b>${esc((() => { const sh = SHOES.find((x) => x.id === top.shoe_id); return sh ? shoeName(sh) : top.name; })())}</b><span class="muted num">${C[5](top)} (${GROUP_LABEL[cur]}・${top.n}本)</span></div><span class="pm-chev">›</span></a>`
       : `<div class="sc-rec none"><span class="sc-rec-l">結論</span><div><small>${C[1]}</small><span class="muted">${tie ? '差がありません' : `この練習に合う用途の靴で、この観点の記録があるものが 2 足未満のため、比べられません`}</span></div></div>`;
     // ブランドは小さく別の行に (名前が短くなり、列からはみ出しにくい)
-    const cmpName = (r) => { const sh = SHOES.find((x) => x.id === r.shoe_id); return sh ? shoeNameHtml(sh) : esc(r.name); };
+    // 見出しの高さをそろえる: 1 行目 = ブランド・色/呼び名 (小さく)、2 行目以降 = モデル名 (2 行まで)。写真の位置がずれない
+    const cmpName = (r) => {
+      const sh = SHOES.find((x) => x.id === r.shoe_id);
+      const sub = sh ? [sh.brand, sh.feel?.label].filter(Boolean).join('・') : '';
+      return `<small class="sh-brand">${sub ? esc(sub) : '&nbsp;'}</small><span class="sc-md">${esc(sh ? sh.name : r.name)}</span>`;
+    };
     const wide = rows.length > 3; // 4 足以上は横にスライド (列の幅を固定して、名前・数字が重ならないように)
     const th = rows.map((r) => `<th><span class="sc-img">${img(r.shoe_id)}</span><span class="sc-nm">${cmpName(r)}</span><small>${r.n}本・${r.km}km</small>${offTag(r)}</th>`).join('');
     const tr = (label, cells) => `<tr><td>${label}</td>${cells}</tr>`;
@@ -4393,7 +4416,9 @@ async function settingsView() {
 
 // ---------------------------------------------------------------- router
 
+let ROUTE_SEQ = 0;
 async function route() {
+  const seq = ++ROUTE_SEQ; // 続けて呼ばれたときは、最後の 1 回だけ画面に出す (古い描画が後から上書きしない)
   const [path, query] = location.hash.slice(1).split('?');
   const params = new URLSearchParams(query);
   const parts = (path || '/').split('/').filter(Boolean);
@@ -4420,6 +4445,7 @@ async function route() {
       : tab === 'shoes' ? (parts[1] ? await shoeDetailView(parts[1]) : await shoesView(params))
       : tab === 'settings' ? await settingsView()
       : await homeView();
+    if (seq !== ROUTE_SEQ) return;
     view.innerHTML = html;
     setHeaderH();
     bindTrend(view);
@@ -4428,7 +4454,7 @@ async function route() {
     if (document.getElementById('shoe-cmp')) loadShoeCompare();
     if (document.getElementById('cond')) loadCondition();
   } catch (e) {
-    view.innerHTML = `<div class="card error">${esc(e.message)}</div>`;
+    if (seq === ROUTE_SEQ) view.innerHTML = `<div class="card error">${esc(e.message)}</div>`;
   }
 }
 
