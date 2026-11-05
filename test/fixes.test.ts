@@ -55,6 +55,28 @@ describe('月の評価の「前月」は前の月の 1 日〜末日 (2026-11-04 
   });
 });
 
+describe('ニュースの読み込み (2026-11-06 ユーザー報告: 遅くて更新されない)', () => {
+  it('結果を置いておき、20 分以内は Google を読まない。古ければ古い分をすぐ返して裏で読み直す。取れなければ前の結果を消さない', async () => {
+    let n = 0, fail = false;
+    const xml = (t: string) => `<rss><item><title>${t}</title><link>https://n.example/${n}</link><pubDate>${new Date().toUTCString()}</pubDate><source>S</source></item></rss>`;
+    (globalThis as any).fetch = async () => { n++; if (fail) throw new Error('down'); return new Response(xml(`記事${n}`)); };
+    const a = (await call(env, 'GET', '/news')).json;
+    const first = n;
+    expect(a.length).toBeGreaterThan(0);
+    expect((await call(env, 'GET', '/news')).json).toEqual(a);
+    expect(n).toBe(first); // 2 回目は読まない
+    // 古くする → すぐ前の結果を返し、裏で読み直す
+    const row = await env.DB.prepare("SELECT value FROM kv WHERE key = 'news_cache'").first();
+    const v = JSON.parse(row.value); v.at -= 30 * 60_000;
+    await env.DB.prepare("UPDATE kv SET value = ? WHERE key = 'news_cache'").bind(JSON.stringify(v)).run();
+    fail = true;
+    expect((await call(env, 'GET', '/news')).json).toEqual(a);
+    await new Promise((r) => setTimeout(r, 20));
+    expect((await call(env, 'GET', '/news')).json).toEqual(a); // 読み直しに失敗しても消えない
+    blockNetwork();
+  });
+});
+
 describe('K-02 ペースの表示が 4:60 にならない', () => {
   it('299.6 秒/km は 5:00 と表示する', () => {
     const an = analyzeRun({ id: 1, date: '2026-10-01', distance_m: 10000, moving_time_s: 2996, avg_hr: 160, avg_cad_spm: 180, elev_gain: null,
