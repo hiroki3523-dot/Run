@@ -4,7 +4,8 @@ export interface NewsItem { title: string; url: string; source: string; date: st
 
 /** [見出しの種類, 検索語]。直近 7 日 (少なければ 14 日) の記事 */
 const FEEDS: [string, string][] = [
-  ['話題', 'ランニング OR マラソン OR ランナー'],
+  // 「ランナー」は野球の走者・競走馬にも使われるので検索語に入れない
+  ['話題', 'ランニング OR マラソン OR ジョギング'],
   ['シューズ', 'ランニングシューズ 新作 OR 新モデル OR 発売'],
   ['大会', 'マラソン エントリー OR 募集開始 OR 抽選'],
   ['レース', 'マラソン 優勝 OR 日本記録 OR 自己ベスト'],
@@ -12,6 +13,11 @@ const FEEDS: [string, string][] = [
   ['セール', '(ナイキ OR アディダス OR On OR ニューバランス OR アシックス OR プーマ OR ホカ) ランニング (セール OR SALE OR 値下げ OR アウトレット)'],
   ['セール', '(ゼビオ OR ステップスポーツ OR アートスポーツ OR スポーツデポ OR アルペン) (セール OR SALE OR 初売り OR 割引) ランニング'],
 ];
+
+/** ランニングと関係ない記事 (競馬・野球など) を見出しで除く。検索語にも「-語」で付ける */
+const NG_WORDS = ['競馬', '馬券', '騎手', '競走馬', '厩舎', '調教', '重賞', 'ステークス', '牝馬', '牡馬', '菊花賞', '有馬記念', 'ダービー', '出走馬', 'JRA', '地方競馬', '競輪', '競艇', 'ボートレース', '野球', '走者', '盗塁', '本塁打', '打点', 'イニング', 'ホームラン', '一塁', '二塁', '三塁', 'プロ野球', '甲子園'];
+export const isOffTopic = (title: string) => NG_WORDS.some((w) => title.includes(w)) || /G[1-3Ⅰ-Ⅲ](\s|レース|馬|$)/.test(title);
+const EXCLUDE = ['競馬', '騎手', '競走馬', '野球'].map((w) => `-${w}`).join(' ');
 
 const decode = (s: string) => s
   .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
@@ -32,7 +38,7 @@ export function parseRss(xml: string, tag: string): NewsItem[] {
     if (source && title.endsWith(` - ${source}`)) title = title.slice(0, -(source.length + 3));
     const url = get('link');
     const t = Date.parse(get('pubDate'));
-    if (!title || !/^https?:\/\//.test(url) || !Number.isFinite(t)) continue;
+    if (!title || !/^https?:\/\//.test(url) || !Number.isFinite(t) || isOffTopic(title)) continue;
     out.push({ title, url, source, date: new Date(t).toISOString(), tag });
   }
   return out;
@@ -58,7 +64,7 @@ export function mergeNews(groups: NewsItem[][], limit = 8): NewsItem[] {
 
 /** Google ニュースの RSS を 1 つ読む。Google の並びは関連度順なので、日付の新しい順に並べ直してから上位を使う */
 async function fetchFeed(tag: string, q: string, days: number): Promise<NewsItem[]> {
-  const p = new URLSearchParams({ q: `${q} when:${days}d`, hl: 'ja', gl: 'JP', ceid: 'JP:ja' });
+  const p = new URLSearchParams({ q: `${q} ${EXCLUDE} when:${days}d`, hl: 'ja', gl: 'JP', ceid: 'JP:ja' });
   try {
     const res = await fetch(`https://news.google.com/rss/search?${p}`, { cf: { cacheTtl: 1800, cacheEverything: true } } as RequestInit);
     if (!res.ok) return [];
