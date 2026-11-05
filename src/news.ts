@@ -64,13 +64,13 @@ export function mergeNews(groups: NewsItem[][], limit = 8): NewsItem[] {
   return out;
 }
 
-/** Google ニュースの RSS を 1 つ読む。Google の並びは関連度順なので、日付の新しい順に並べ直してから上位を使う */
-async function fetchFeed(tag: string, q: string, days: number): Promise<NewsItem[]> {
-  const p = new URLSearchParams({ q: `${q} ${EXCLUDE} when:${days}d`, hl: 'ja', gl: 'JP', ceid: 'JP:ja' });
+/** Google ニュースの RSS を 1 つ読む (14 日分・6 秒で打ち切り)。Google の並びは関連度順なので、日付の新しい順に並べ直す */
+async function fetchFeed(tag: string, q: string): Promise<NewsItem[]> {
+  const p = new URLSearchParams({ q: `${q} ${EXCLUDE} when:14d`, hl: 'ja', gl: 'JP', ceid: 'JP:ja' });
   try {
-    const res = await fetch(`https://news.google.com/rss/search?${p}`, { cf: { cacheTtl: 1800, cacheEverything: true } } as RequestInit);
+    const res = await fetch(`https://news.google.com/rss/search?${p}`, { signal: AbortSignal.timeout(6000), cf: { cacheTtl: 1800, cacheEverything: true } } as RequestInit);
     if (!res.ok) return [];
-    return newestFirst(parseRss(await res.text(), tag)).slice(0, 12);
+    return newestFirst(parseRss(await res.text(), tag));
   } catch {
     return [];
   }
@@ -78,14 +78,16 @@ async function fetchFeed(tag: string, q: string, days: number): Promise<NewsItem
 export const newestFirst = (xs: NewsItem[]) => [...xs].sort((a, b) => b.date.localeCompare(a.date));
 
 /**
- * extra: 追加の検索 (例: 次の大会の名前)。各カテゴリは直近 7 日、少なければ 14 日まで広げる。
+ * extra: 追加の検索 (例: 次の大会の名前)。1 カテゴリ 1 回だけ読み、直近 7 日が 3 件以上ならその分だけ、少なければ 14 日まで使う。
  * 新しい記事のあるカテゴリから交互に並べる
  */
-export async function runningNews(limit = 12, extra: [string, string][] = []): Promise<NewsItem[]> {
+export async function runningNews(limit = 12, extra: [string, string][] = [], now = Date.now()): Promise<NewsItem[]> {
   const feeds = [...extra, ...FEEDS];
+  const week = new Date(now - 7 * 86400_000).toISOString();
   const groups = await Promise.all(feeds.map(async ([tag, q]) => {
-    const week = await fetchFeed(tag, q, 7);
-    return week.length >= 3 ? week : newestFirst([...week, ...(await fetchFeed(tag, q, 14))]);
+    const all = await fetchFeed(tag, q);
+    const recent = all.filter((x) => x.date >= week);
+    return (recent.length >= 3 ? recent : all).slice(0, 12);
   }));
   // 同じ種類 (セールが 2 つなど) はまとめる。新しい記事のある種類を先に
   const byTag = new Map<string, NewsItem[]>();

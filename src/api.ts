@@ -1047,14 +1047,32 @@ api.post('/backup', async (c) => {
   return c.json({ ok: true, counts });
 });
 
-/** ランニングのニュース (シューズ・大会・レース)。1 時間キャッシュ */
+/**
+ * ランニングのニュース。Google ニュースを 8 回ほど読むので遅い (数秒)。
+ * 読んだ結果を kv (news_cache) に置き、20 分以内ならそれを返す。古ければ古い分をすぐ返して、裏で読み直す。
+ * 読み直しで 1 件も取れなかったとき (Google の一時的な失敗) は、前の結果を消さない
+ */
+const NEWS_FRESH_MS = 20 * 60_000;
 api.get('/news', async (c) => {
-  c.header('Cache-Control', 'private, max-age=900');
+  c.header('Cache-Control', 'private, max-age=300');
   // 次の大会 (エントリー済み・出場決定) の名前でも探す
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
   const race = await c.env.DB.prepare("SELECT name FROM races WHERE date >= ? AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date LIMIT 1").bind(today).first<{ name: string }>().catch(() => null);
-  const name = race?.name?.replace(/\s*\d{4}\s*$|^\s*\d{4}\s*/g, '').replace(/^第\d+回\s*/, '').trim();
-  return c.json(await runningNews(15, name ? [['大会', `"${name}"`]] : []));
+  const name = race?.name?.replace(/\s*\d{4}\s*$|^\s*\d{4}\s*/g, '').replace(/^第\d+回\s*/, '').trim() || '';
+  const raw = await c.env.DB.prepare("SELECT value FROM kv WHERE key = 'news_cache'").first<{ value: string }>().catch(() => null);
+  let cached: { at: number; key: string; items: unknown[] } | null = null;
+  try { cached = raw ? JSON.parse(raw.value) : null; } catch { cached = null; }
+  const refresh = async () => {
+    const items = await runningNews(15, name ? [['大会', `"${name}"`]] : []);
+    if (items.length) await c.env.DB.prepare("INSERT OR REPLACE INTO kv (key, value) VALUES ('news_cache', ?)").bind(JSON.stringify({ at: Date.now(), key: name, items })).run();
+    return items;
+  };
+  if (cached && cached.key === name && cached.items?.length) {
+    if (Date.now() - cached.at > NEWS_FRESH_MS) c.executionCtx.waitUntil(refresh().catch(() => null));
+    return c.json(cached.items);
+  }
+  const items = await refresh().catch(() => []);
+  return c.json(items.length ? items : cached?.items ?? []);
 });
 
 api.get('/race-weather', async (c) => {
