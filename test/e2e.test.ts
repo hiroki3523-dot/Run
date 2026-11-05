@@ -475,7 +475,7 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('Nike ボメロプラス');
       expect(await page.$eval('#shoe-cmp a.sc-rec', (a: HTMLAnchorElement) => a.getAttribute('href'))).toBe('#/shoes/1001');
       // 3 足・名前は省略しない・横にはみ出さない
-      expect(await page.$$eval('#shoe-cmp .sc-fix:not(.sc-more *) th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6']);
+      expect(await page.$$eval('#shoe-cmp .sc-fix:not(.sc-more *) th .sc-md', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6']);
       const over = await page.$eval('#shoe-cmp', (e: HTMLElement) => e.scrollWidth - e.clientWidth);
       expect(over).toBeLessThanOrEqual(1);
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
@@ -487,12 +487,17 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       await page.click('[data-scall]');
       // 4 足以上は横にスライド: 列の幅は固定で、セルが重ならない・ページは横にはみ出さない
       expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.length)).toBe(5);
+      // 名前の長さが違っても、写真・本数の位置はそろう
+      for (const sel of ['.sc-img', 'th > small']) {
+        const tops = await page.$$eval(`#shoe-cmp > .sc-scroll > table.sc-fix tr:first-child ${sel}`, (els: Element[]) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+        expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1);
+      }
       const cells = await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix tr:nth-child(2) td', (els: HTMLElement[]) => els.map((e) => e.getBoundingClientRect().width));
       expect(Math.min(...cells.slice(1))).toBeGreaterThanOrEqual(80);
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
       if (SHOTS) await (await page.$('#shoe-cmp')).screenshot({ path: `${SHOTS}/11f-shoe-compat-all.png` });
       // 並び: 使用回数の順 / 観点の順 (スピード寄り → 速い順)
-      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ズームフライ 6', 'Nike ボメロプラス', 'テストシューズA', 'Nike ボメロ18', 'Nike Pegasus 41']);
+      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-md', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ズームフライ 6', 'Nike ボメロプラス', 'テストシューズA', 'Nike ボメロ18', 'Nike Pegasus 41']);
       expect(await page.$eval('#shoe-cmp > .sc-scroll > table.sc-fix th:last-child .sc-off', (e: Element) => e.textContent)).toBe('レース本番用');
       // 用途外の靴には緑の印を付けない (ペース 5:00 がいちばん速いが、緑はズームフライの 5:12)
       expect(await page.$eval('#shoe-cmp > .sc-scroll > table.sc-fix tr:nth-child(2) .sc-best', (e: Element) => e.textContent)).toBe('5:12');
@@ -503,7 +508,7 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       expect(await page.$eval('#shoe-cmp .sc-rec', (e: Element) => e.textContent)).toContain('Nike ズームフライ 6');
       await page.uncheck('[data-scret]');
       await page.click('[data-ord="n"]');
-      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-nm', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6', 'テストシューズA', 'Nike Pegasus 41']);
+      expect(await page.$$eval('#shoe-cmp > .sc-scroll > table.sc-fix th .sc-md', (els: Element[]) => els.map((e) => e.textContent))).toEqual(['Nike ボメロプラス', 'Nike ボメロ18', 'Nike ズームフライ 6', 'テストシューズA', 'Nike Pegasus 41']);
     } finally {
       await page.unroute('**/api/shoes/compare');
       await call(env, 'DELETE', `/shoes/${near.id}`);
@@ -555,6 +560,10 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       await page.selectOption('#brand-sel', '__other');
       await page.fill('#brand-other', 'Topo Athletic');
       { const w = put(); await page.click('dialog button[value=ok]'); await w; }
+      // 入力中に保存しても、フォーカス (iPhone のキーボード) が残らない・画面が描き直される
+      expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('INPUT');
+      await page.waitForSelector('.sh-title .sh-brand');
+      expect(await page.textContent('.sh-title .sh-brand')).toBe('Topo Athletic');
       expect((await call(env, 'GET', '/shoes')).json.find((x: any) => x.id === sh.id).brand).toBe('Topo Athletic');
     } finally {
       await call(env, 'DELETE', `/shoes/${sh.id}`);
