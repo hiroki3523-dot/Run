@@ -1054,7 +1054,7 @@ api.get('/news', async (c) => {
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
   const race = await c.env.DB.prepare("SELECT name FROM races WHERE date >= ? AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date LIMIT 1").bind(today).first<{ name: string }>().catch(() => null);
   const name = race?.name?.replace(/\s*\d{4}\s*$|^\s*\d{4}\s*/g, '').replace(/^第\d+回\s*/, '').trim();
-  return c.json(await runningNews(12, name ? [['大会', `"${name}"`]] : []));
+  return c.json(await runningNews(15, name ? [['大会', `"${name}"`]] : []));
 });
 
 api.get('/race-weather', async (c) => {

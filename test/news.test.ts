@@ -46,13 +46,14 @@ describe('news', () => {
     const xml = `<rss><item><title>JRA 菊花賞 出走馬確定 - S</title><link>https://a.example/1</link><pubDate>Thu, 05 Nov 2026 01:00:00 GMT</pubDate><source>S</source></item><item><title>大阪マラソン 募集開始 - S</title><link>https://a.example/2</link><pubDate>Thu, 05 Nov 2026 01:00:00 GMT</pubDate><source>S</source></item></rss>`;
     expect(parseRss(xml, '話題').map((x) => x.title)).toEqual(['大阪マラソン 募集開始']);
   });
-  it('検索語から「ランナー」を外し、競馬・野球を除く語を付ける', async () => {
+  it('「ランナー」で探し (記事の数を保つ)、競馬・野球を除く語を付ける・駅伝も探す', async () => {
     const urls: string[] = [];
     const orig = globalThis.fetch;
     globalThis.fetch = (async (u: string) => { urls.push(decodeURIComponent(String(u)).replace(/\+/g, ' ')); return new Response('<rss></rss>'); }) as any;
     try { await runningNews(); } finally { globalThis.fetch = orig; }
     const topic = urls.find((u) => u.includes('ジョギング'))!;
-    expect(topic).not.toContain('ランナー');
+    expect(topic).toContain('ランナー');
+    expect(urls.some((u) => u.includes('駅伝'))).toBe(true);
     expect(urls.every((u) => u.includes('-競馬') && u.includes('-野球'))).toBe(true);
   });
 });
