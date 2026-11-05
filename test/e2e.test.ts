@@ -533,4 +533,31 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       await page.unroute('**/api/news');
     }
   }, 60000);
+  it('シューズ: ブランドを名前と分けて選ぶ (名前の先頭のブランドは編集画面で分ける・その他は入力)', async () => {
+    const sh = (await call(env, 'POST', '/shoes', { name: 'ASICS ノヴァブラスト 5', purpose: 'easy' })).json;
+    const put = () => page.waitForResponse((r: any) => r.url().includes(`/api/shoes/${sh.id}/feel`) && r.request().method() === 'PUT');
+    try {
+      await open(`#/shoes/${sh.id}`);
+      await page.click('#shoe-edit');
+      await page.waitForSelector('dialog #brand-sel');
+      expect(await page.$eval('#brand-sel', (e: HTMLSelectElement) => e.value)).toBe('ASICS');
+      expect(await page.$eval('dialog [name=name]', (e: HTMLInputElement) => e.value)).toBe('ノヴァブラスト 5');
+      if (SHOTS) await (await page.$('dialog')).screenshot({ path: `${SHOTS}/11g-shoe-brand-edit.png` });
+      { const w = put(); await page.click('dialog button[value=ok]'); await w; }
+      const saved = (await call(env, 'GET', '/shoes')).json.find((x: any) => x.id === sh.id);
+      expect([saved.brand, saved.name]).toEqual(['ASICS', 'ノヴァブラスト 5']);
+      expect(saved.initial_km).toBe(0); // 距離は変わらない
+      await open(`#/shoes/${sh.id}`);
+      expect(await page.textContent('.sh-title .sh-brand')).toBe('ASICS');
+      // その他: 入力したブランド名で保存
+      await page.click('#shoe-edit');
+      await page.waitForSelector('dialog #brand-sel');
+      await page.selectOption('#brand-sel', '__other');
+      await page.fill('#brand-other', 'Topo Athletic');
+      { const w = put(); await page.click('dialog button[value=ok]'); await w; }
+      expect((await call(env, 'GET', '/shoes')).json.find((x: any) => x.id === sh.id).brand).toBe('Topo Athletic');
+    } finally {
+      await call(env, 'DELETE', `/shoes/${sh.id}`);
+    }
+  }, 60000);
 });

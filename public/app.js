@@ -68,7 +68,19 @@ function recommendShoe(type) {
   const head = `${PURPOSE_LABELS[top.pu]}用${spare ? ' (予備から)' : ''}`;
   return { shoe: top.shoe, why: [head, ...top.why.slice(0, 2)].join('・') };
 }
-const shoeName = (s) => `${s.name}${s.feel?.label ? ` (${s.feel.label})` : ''}`;
+/** ランニングシューズのブランド (選択肢)。[表示名, 名前の先頭にあればブランドとみなす語] */
+const SHOE_BRANDS = [
+  ['Nike', /^(nike|ナイキ)\s*/i], ['adidas', /^(adidas|アディダス)\s*/i], ['ASICS', /^(asics|アシックス)\s*/i], ['New Balance', /^(new\s*balance|ニューバランス|nb)\s+/i],
+  ['HOKA', /^(hoka(\s*one\s*one)?|ホカ(オネオネ)?)\s*/i], ['On', /^(on|オン)\s+/i], ['Saucony', /^(saucony|サッカニー)\s*/i], ['Brooks', /^(brooks|ブルックス)\s*/i],
+  ['Mizuno', /^(mizuno|ミズノ)\s*/i], ['PUMA', /^(puma|プーマ)\s*/i], ['Under Armour', /^(under\s*armour|アンダーアーマー)\s*/i], ['Salomon', /^(salomon|サロモン)\s*/i],
+  ['ALTRA', /^(altra|アルトラ)\s*/i], ['Reebok', /^(reebok|リーボック)\s*/i], ['361°', /^361°?\s*/i], ['Diadora', /^(diadora|ディアドラ)\s*/i],
+];
+/** 名前の先頭のブランドを分ける (ブランドが未設定の靴の、編集画面の初期値だけに使う。保存するまで変えない) */
+const splitBrand = (name) => { for (const [b, re] of SHOE_BRANDS) { const m = String(name || '').match(re); if (m && name.length > m[0].length) return [b, name.slice(m[0].length).trim()]; } return [null, name]; };
+const shoeModel = (s) => `${s.name}${s.feel?.label ? ` (${s.feel.label})` : ''}`;
+const shoeName = (s) => `${s.brand ? `${s.brand} ` : ''}${shoeModel(s)}`;
+/** ブランドを小さく 1 行・モデル名を大きく (一覧・詳細・相性の表) */
+const shoeNameHtml = (s, cls = '') => `${s.brand ? `<small class="sh-brand">${esc(s.brand)}</small>` : ''}<span class="${cls}">${esc(shoeModel(s))}</span>`;
 const DOW = ['日', '月', '火', '水', '木', '金', '土'];
 
 // ---------------------------------------------------------------- utils
@@ -3742,7 +3754,7 @@ async function shoesView(params) {
       <div class="shoe-fg">
       <div class="shoe-row">
         ${shoeImg(s)}
-        <div class="shoe-body"><b class="shoe-name">${esc(shoeName(s))}</b>
+        <div class="shoe-body"><b class="shoe-name">${shoeNameHtml(s)}</b>
         <div class="sh-tags">${pu.length ? pu.map((p) => `<span class="sh-tag">${PURPOSE_SHORT[p]}</span>`).join('') : '<span class="sh-tag none">用途未設定</span>'}${(s.retired || 0) === 2 ? '<span class="sh-tag st">予備</span>' : s.retired === 1 ? '<span class="sh-tag st">引退</span>' : ''}</div>
         ${wearBar(s)}
         <div class="muted tiny num">${s.last_date ? `最終使用 ${md(s.last_date)}・${s.runs}回` : '使用記録なし'}</div>
@@ -3827,7 +3839,7 @@ async function shoeDetailView(id) {
   const wear = s.limit_km ? s.total_km / s.limit_km : null;
   return `
     <div class="card sh-head">
-      <div class="sh-head-top">${shoeImg(s, false)}<div class="sh-head-tx"><b class="sh-title">${esc(shoeName(s))}</b>
+      <div class="sh-head-top">${shoeImg(s, false)}<div class="sh-head-tx"><b class="sh-title">${shoeNameHtml(s)}</b>
         <div class="sh-tags">${pu.map((p) => `<span class="sh-tag">${PURPOSE_SHORT[p]}</span>`).join('') || '<span class="sh-tag none">用途未設定</span>'}<span class="sh-tag st">${st}</span></div></div></div>
       <div class="hl-tiles"><div class="hl-tile"><small>累計距離</small><b class="num">${s.total_km.toFixed(1)}<small>km</small></b><span>${s.initial_km ? '補正を含む' : 'アプリの記録'}</span></div>
         <div class="hl-tile"><small>目安 (設定値)</small><b class="num">${s.limit_km}<small>km</small></b><span>${wear != null ? `累計の ${Math.round(wear * 100)}%` : ''}</span></div>
@@ -3904,10 +3916,12 @@ async function loadShoeCompare() {
     const top = vals.length >= 2 ? [...vals].sort((a, b) => (C[4] ? C[3](a) - C[3](b) : C[3](b) - C[3](a)))[0] : null;
     const tie = top && vals.filter((r) => C[3](r) === C[3](top)).length > 1;
     const rec = top && !tie
-      ? `<a class="sc-rec" href="#/shoes/${top.shoe_id}"><span class="sc-rec-l">結論</span><div><small>おすすめ・${C[1]}</small><b>${esc(top.name)}</b><span class="muted num">${C[5](top)} (${GROUP_LABEL[cur]}・${top.n}本)</span></div><span class="pm-chev">›</span></a>`
+      ? `<a class="sc-rec" href="#/shoes/${top.shoe_id}"><span class="sc-rec-l">結論</span><div><small>おすすめ・${C[1]}</small><b>${esc((() => { const sh = SHOES.find((x) => x.id === top.shoe_id); return sh ? shoeName(sh) : top.name; })())}</b><span class="muted num">${C[5](top)} (${GROUP_LABEL[cur]}・${top.n}本)</span></div><span class="pm-chev">›</span></a>`
       : `<div class="sc-rec none"><span class="sc-rec-l">結論</span><div><small>${C[1]}</small><span class="muted">${tie ? '差がありません' : `この練習に合う用途の靴で、この観点の記録があるものが 2 足未満のため、比べられません`}</span></div></div>`;
+    // ブランドは小さく別の行に (名前が短くなり、列からはみ出しにくい)
+    const cmpName = (r) => { const sh = SHOES.find((x) => x.id === r.shoe_id); return sh ? shoeNameHtml(sh) : esc(r.name); };
     const wide = rows.length > 3; // 4 足以上は横にスライド (列の幅を固定して、名前・数字が重ならないように)
-    const th = rows.map((r) => `<th><span class="sc-img">${img(r.shoe_id)}</span><span class="sc-nm">${esc(r.name)}</span><small>${r.n}本・${r.km}km</small>${offTag(r)}</th>`).join('');
+    const th = rows.map((r) => `<th><span class="sc-img">${img(r.shoe_id)}</span><span class="sc-nm">${cmpName(r)}</span><small>${r.n}本・${r.km}km</small>${offTag(r)}</th>`).join('');
     const tr = (label, cells) => `<tr><td>${label}</td>${cells}</tr>`;
     box.innerHTML = `<div class="seg sc-tabs">${keys.map((k) => `<a href="javascript:void 0" data-sg="${k}" class="${k === cur ? 'on' : ''}">${GROUP_LABEL[k]}</a>`).join('')}</div>
       ${rec}
@@ -3922,7 +3936,7 @@ async function loadShoeCompare() {
       ${tr('走りやすさ', rows.map((r) => `<td${mark(r, 'form', false)}>${f(r.form, '/10')}</td>`).join(''))}
       ${tr('脚の疲労', rows.map((r) => `<td${mark(r, 'leg', true)}>${f(r.leg, '/10')}</td>`).join(''))}
       </table></div>
-      <details class="rv-acc sc-more"><summary>ほかの項目 (接地時間・呼吸・翌朝の脚・痛み)</summary><div class="rv-acc-b ${wide ? 'sc-scroll' : ''}"><table class="an-cmp num sc-t sc-fix"><tr><th></th>${rows.map((r) => `<th><span class="sc-nm">${esc(r.name)}</span></th>`).join('')}</tr>
+      <details class="rv-acc sc-more"><summary>ほかの項目 (接地時間・呼吸・翌朝の脚・痛み)</summary><div class="rv-acc-b ${wide ? 'sc-scroll' : ''}"><table class="an-cmp num sc-t sc-fix"><tr><th></th>${rows.map((r) => `<th><span class="sc-nm">${cmpName(r)}</span></th>`).join('')}</tr>
       ${tr('接地時間', rows.map((r) => `<td${mark(r, 'gct', true)}>${f(r.gct, 'ms')}</td>`).join(''))}
       ${tr('呼吸', rows.map((r) => `<td${mark(r, 'breath', true)}>${f(r.breath, '/10')}</td>`).join(''))}
       ${tr('翌朝の脚', rows.map((r) => `<td${mark(r, 'next_leg', true)}>${f(r.next_leg, '/10')}</td>`).join(''))}
@@ -3969,16 +3983,42 @@ function wireShoePhoto() {
     noFocus();
   };
   q('#shoe-clear').onclick = () => { set(''); noFocus(); };
+  wireBrandFields();
   q('#shoe-search').onclick = () => {
-    const name = dialogForm.querySelector('[name=name]').value || 'running shoes';
+    const name = `${dialogForm.querySelector('[name=brand]').value} ${dialogForm.querySelector('[name=name]').value}`.trim() || 'running shoes';
     q('#shoe-search').href = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(name + ' シューズ')}`;
   };
 }
 
+/** ブランド (選択・無ければ入力) と名称 (モデル名) の入力欄 */
+function brandFields(s) {
+  // ブランドが未設定で名前の先頭にブランドがあれば、分けた形を初期値にする (保存したときだけ変わる)
+  const [gb, gn] = s.brand ? [s.brand, s.name] : splitBrand(s.name || '');
+  const known = SHOE_BRANDS.some(([b]) => b === gb);
+  const opt = (v, l, on) => `<option value="${esc(v)}" ${on ? 'selected' : ''}>${esc(l)}</option>`;
+  return `<div class="sh-brand-row">
+      <label>ブランド<select id="brand-sel">${opt('', '未設定', !gb)}${SHOE_BRANDS.map(([b]) => opt(b, b, b === gb)).join('')}${opt('__other', 'その他 (入力)', gb && !known)}</select></label>
+      <label class="${gb && !known ? '' : 'hidden'}" id="brand-other-l">ブランド名<input id="brand-other" value="${gb && !known ? esc(gb) : ''}" maxlength="40" placeholder="例: Topo Athletic"></label>
+    </div>
+    <input type="hidden" name="brand" value="${esc(gb || '')}">
+    <label>モデル名<input name="name" value="${esc(gn || '')}" required placeholder="例: ボメロ18"></label>
+    ${!s.brand && gb && s.id ? `<p class="muted tiny" style="margin:-4px 0 8px">名前の先頭の「${esc(s.name.slice(0, s.name.length - gn.length).trim())}」をブランドに分けました。保存すると反映されます。</p>` : ''}`;
+}
+function wireBrandFields() {
+  const sel = dialogForm.querySelector('#brand-sel'), other = dialogForm.querySelector('#brand-other'), hid = dialogForm.querySelector('[name=brand]');
+  if (!sel) return;
+  const sync = () => {
+    const o = sel.value === '__other';
+    dialogForm.querySelector('#brand-other-l').classList.toggle('hidden', !o);
+    hid.value = o ? other.value.trim() : sel.value;
+  };
+  sel.onchange = () => { sync(); if (sel.value === '__other') other.focus(); };
+  other.oninput = sync;
+}
 async function editShoe(s, opts = {}) {
   const pending = openDialog(`
     <h2>${s.id ? 'シューズを編集' : 'シューズを追加'}</h2>
-    <label>名称<input name="name" value="${esc(s.name)}" required></label>
+    ${brandFields(s)}
     <div class="shoe-photo">
       <div class="shoe-img big" id="shoe-preview">${s.image ? `<img src="${s.image}" alt="">` : '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16v-3l4-1 2-3 3 2 4 1c3 .5 5 2 5 4v1H3z"/><path d="M3 19h18"/></svg>'}</div>
       <div class="row">
