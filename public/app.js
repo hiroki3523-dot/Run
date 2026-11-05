@@ -215,7 +215,7 @@ document.addEventListener('focusin', (e) => {
 document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-capture]'); if (b) captureView(b.dataset.capture); });
 
 /** ホームのニュース。画面を出したあとで読み込む (遅くてもホームの表示を待たせない) */
-const NEWS_TAG = { シューズ: 'var(--c-long)', 大会: 'var(--c-m)', レース: 'var(--c-easy)', セール: 'var(--bad)' };
+const NEWS_TAG = { 話題: 'var(--accent)', シューズ: 'var(--c-long)', 大会: 'var(--c-m)', レース: 'var(--c-easy)', セール: 'var(--bad)' };
 function ago(iso) {
   const h = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 3600000));
   return h < 1 ? 'たった今' : h < 24 ? `${h}時間前` : `${Math.round(h / 24)}日前`;
