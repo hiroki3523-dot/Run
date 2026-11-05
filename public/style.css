@@ -1508,3 +1508,10 @@ a.sc-rec { color: var(--text); text-decoration: none; } a.sc-rec:active { opacit
 .sc-off { display: inline-block; margin-top: 3px; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 600; line-height: 1.5; color: var(--muted); border: 1px solid var(--line); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .sc-ret { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
 .sc-ret input { width: 18px; height: 18px; margin: 0; }
+/* シューズのブランド: 名前の上に小さく */
+.sh-brand { display: block; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--muted); line-height: 1.3; }
+.sh-title .sh-brand { font-size: 12.5px; margin-bottom: 2px; }
+.sc-nm .sh-brand { font-size: 10px; font-weight: 500; }
+.sh-brand-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.sh-brand-row label.hidden { display: none; }
+.sh-brand-row select { width: 100%; }

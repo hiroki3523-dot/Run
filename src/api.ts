@@ -1237,12 +1237,13 @@ function shoeValues(b: Record<string, unknown>) {
   const image = typeof b.image === 'string' && b.image.startsWith('data:image/') && b.image.length < 400_000 ? b.image : null;
   // retired: 0 使用中 / 1 引退 / 2 予備 (おすすめには出さない)
   const st = typeof b.retired === 'boolean' ? (b.retired ? 1 : 0) : [0, 1, 2].includes(Number(b.retired)) ? Number(b.retired) : 0;
-  return [b.name, cleanPurposes(b.purpose), b.strava_gear_id || null, num(b.limit_km) ?? 700, num(b.initial_km) ?? 0, st, image];
+  const brand = typeof b.brand === 'string' && b.brand.trim() ? b.brand.trim().slice(0, 40) : null;
+  return [b.name, cleanPurposes(b.purpose), b.strava_gear_id || null, num(b.limit_km) ?? 700, num(b.initial_km) ?? 0, st, image, brand];
 }
 
 api.post('/shoes', async (c) => {
   const row = await c.env.DB.prepare(
-    'INSERT INTO shoes (name, purpose, strava_gear_id, limit_km, initial_km, retired, image) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *',
+    'INSERT INTO shoes (name, purpose, strava_gear_id, limit_km, initial_km, retired, image, brand) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *',
   )
     .bind(...shoeValues(await c.req.json()))
     .first();
@@ -1251,7 +1252,7 @@ api.post('/shoes', async (c) => {
 
 api.put('/shoes/:id', async (c) => {
   const row = await c.env.DB.prepare(
-    `UPDATE shoes SET name = ?, purpose = ?, strava_gear_id = ?, limit_km = ?, initial_km = ?, retired = ?, image = ?, alert_sent = 0
+    `UPDATE shoes SET name = ?, purpose = ?, strava_gear_id = ?, limit_km = ?, initial_km = ?, retired = ?, image = ?, brand = ?, alert_sent = 0
      WHERE id = ? RETURNING *`,
   )
     .bind(...shoeValues(await c.req.json()), c.req.param('id'))
