@@ -1049,8 +1049,12 @@ api.post('/backup', async (c) => {
 
 /** ランニングのニュース (シューズ・大会・レース)。1 時間キャッシュ */
 api.get('/news', async (c) => {
-  c.header('Cache-Control', 'private, max-age=1800');
-  return c.json(await runningNews(10));
+  c.header('Cache-Control', 'private, max-age=900');
+  // 次の大会 (エントリー済み・出場決定) の名前でも探す
+  const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+  const race = await c.env.DB.prepare("SELECT name FROM races WHERE date >= ? AND COALESCE(status, 'confirmed') != 'candidate' ORDER BY date LIMIT 1").bind(today).first<{ name: string }>().catch(() => null);
+  const name = race?.name?.replace(/\s*\d{4}\s*$|^\s*\d{4}\s*/g, '').replace(/^第\d+回\s*/, '').trim();
+  return c.json(await runningNews(12, name ? [['大会', `"${name}"`]] : []));
 });
 
 api.get('/race-weather', async (c) => {
