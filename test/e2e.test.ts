@@ -569,4 +569,21 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       await call(env, 'DELETE', `/shoes/${sh.id}`);
     }
   }, 60000);
+  it('計画: 休養日に走らずに終わった日はチェック・走った日は ▲・今日の休養日は印なし', async () => {
+    const d1 = '2025-06-02', d2 = '2025-06-03'; // 過去の月曜・火曜 (ほかのテストのランが無い週)
+    const p1 = (await call(env, 'POST', '/plans', { date: d1, type: 'rest' })).json;
+    const p2 = (await call(env, 'POST', '/plans', { date: d2, type: 'rest' })).json;
+    const pt = (await call(env, 'POST', '/plans', { date: TODAY, type: 'rest' })).json;
+    await addRun(env, { date: d2, km: 3, segs: [{ km: 3, pace: 360, hr: 130 }] });
+    try {
+      await open(`#/plans?week=${d1}`);
+      const mark = async (d: string) => page.$eval(`[data-day="${d}"] .jmark`, (e: Element) => [e.className, e.getAttribute('aria-label')]).catch(() => null);
+      expect(await mark(d1)).toEqual(['jmark ok', '休養できました']);
+      expect(await mark(d2)).toEqual(['jmark warn', '休養日に走りました']);
+      await open('#/plans');
+      expect(await mark(TODAY)).toBeNull();
+    } finally {
+      for (const p of [p1, p2, pt]) await call(env, 'DELETE', `/plans/${p.id ?? p[0]?.id}`);
+    }
+  }, 60000);
 });
