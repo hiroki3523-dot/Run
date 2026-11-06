@@ -790,7 +790,12 @@ function dayJudge(d, dayPlans, dayActs, settings) {
   const runPlans = dayPlans.filter((p) => p.type !== 'rest');
   const done = dayActs.reduce((a, r) => a + r.distance_m, 0);
   const past = d < today();
-  if (!runPlans.length) return done > 0 && dayPlans.length ? { k: 'warn', t: '休養日に走りました' } : null;
+  if (!runPlans.length) {
+    if (!dayPlans.length) return null;
+    if (done > 0) return { k: 'warn', t: '休養日に走りました' };
+    // 休養日に走らずに終わった日はチェック (今日はまだ終わっていないので付けない)
+    return past ? { k: 'ok', t: '休養できました' } : null;
+  }
   if (!done) return past ? { k: 'ng', t: '未実施' } : null;
   const planned = runPlans.reduce((a, p) => a + (p.distance_m || 0), 0);
   if (d === today() && planned && done < planned * 0.9) return null; // 今日はまだ途中かもしれない
