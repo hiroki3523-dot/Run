@@ -18,7 +18,7 @@ export interface RaceWeather extends Partial<Omit<DaySky, 'code'>> {
   precip_pct: number | null;
   wind_max: number;
   /** スタート後 (9〜13 時) の時間帯別 */
-  hours: { h: number; temp: number; humidity: number | null; precip_pct: number | null; wind: number }[];
+  hours: { h: number; temp: number; humidity: number | null; precip_pct: number | null; wind: number; dir: number | null; gust: number | null }[];
 }
 
 export interface DayWeather extends Partial<Omit<DaySky, 'code'>> { date: string; code: number; tmax: number; tmin: number; precip_pct: number | null; wind_max: number }
@@ -155,7 +155,7 @@ export async function raceWeather(raceName: string, date: string): Promise<RaceW
     latitude: String(city[2]),
     longitude: String(city[3]),
     daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max',
-    hourly: 'temperature_2m,relative_humidity_2m,precipitation_probability,wind_speed_10m,weather_code',
+    hourly: 'temperature_2m,relative_humidity_2m,precipitation_probability,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code',
     timezone: 'Asia/Tokyo',
     wind_speed_unit: 'ms',
     forecast_days: '16',
@@ -171,7 +171,8 @@ export async function raceWeather(raceName: string, date: string): Promise<RaceW
   if (di < 0 || !j.daily) return null;
   const d = j.daily;
   const hours: RaceWeather['hours'] = [];
-  for (const h of [9, 10, 11, 12, 13]) {
+  // 朝 6 時〜夕方 16 時 (スタート前〜関門の時間まで。レース展開の表で使う)
+  for (let h = 6; h <= 16; h++) {
     const i = j.hourly?.time?.indexOf(`${date}T${String(h).padStart(2, '0')}:00`) ?? -1;
     if (i < 0 || !j.hourly) continue;
     hours.push({
@@ -180,6 +181,8 @@ export async function raceWeather(raceName: string, date: string): Promise<RaceW
       humidity: j.hourly.relative_humidity_2m?.[i] == null ? null : Number(j.hourly.relative_humidity_2m[i]),
       precip_pct: j.hourly.precipitation_probability?.[i] == null ? null : Number(j.hourly.precipitation_probability[i]),
       wind: Number(j.hourly.wind_speed_10m?.[i]),
+      dir: j.hourly.wind_direction_10m?.[i] == null ? null : Number(j.hourly.wind_direction_10m[i]),
+      gust: j.hourly.wind_gusts_10m?.[i] == null ? null : Number(j.hourly.wind_gusts_10m[i]),
     });
   }
   return {
@@ -196,7 +199,8 @@ export async function raceWeather(raceName: string, date: string): Promise<RaceW
 
 /** 走りやすさのひと言 (マラソンは 5〜12℃ が最適、15℃を超えると遅くなる) */
 export function weatherAdvice(w: RaceWeather): string {
-  const t = Math.max(...w.hours.map((h) => h.temp), w.tmax);
+  const race = w.hours.filter((h) => h.h >= 8 && h.h <= 13);
+  const t = Math.max(...(race.length ? race : w.hours).map((h) => h.temp));
   const parts: string[] = [];
   if (t >= 20) parts.push('暑い。目標ペースを 10〜20 秒/km 落とし、給水を毎回とる');
   else if (t >= 15) parts.push('やや暖かい。前半を抑え、補水を早めに');
