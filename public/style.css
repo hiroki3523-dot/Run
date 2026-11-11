@@ -1536,3 +1536,18 @@ a.sc-rec { color: var(--text); text-decoration: none; } a.sc-rec:active { opacit
 .bd-howto ol { padding-left: 1.2em; font-size: 13px; line-height: 1.7; }
 .bd-howto code { font-size: 12px; word-break: break-all; }
 .bd-json { font-size: 12px; background: var(--btn-bg); padding: 10px; border-radius: 10px; white-space: pre-wrap; }
+/* 風 */
+.warrow { display: inline-block; vertical-align: -2px; margin-right: 2px; color: var(--accent); }
+.hcell .hw, .hours .hw { display: flex; align-items: center; justify-content: center; gap: 1px; font-size: 11px; white-space: nowrap; }
+.hcell .hwd { font-size: 10px; white-space: nowrap; }
+.facts small { display: block; font-size: 11px; }
+/* レース展開と天気 */
+.rwx { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.rwx-h { font-size: 14px; margin: 0 0 6px; }
+.rwx-h small { font-weight: 500; font-size: 11.5px; }
+.rwx-r { display: grid; grid-template-columns: 4.2em 3.2em 3.6em 1fr 4.2em; align-items: center; gap: 4px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.rwx-r .pk { font-weight: 600; white-space: nowrap; }
+.rwx-w { white-space: nowrap; }
+.rwx-rel { font-size: 11.5px; font-weight: 700; text-align: right; white-space: nowrap; }
+.wr-head { color: var(--bad); } .wr-tail { color: var(--good); } .wr-cross { color: var(--mid); } .wr-calm { color: var(--muted); }
+.rwx-cd { margin-top: 10px; display: grid; gap: 6px; font-size: 12.5px; }

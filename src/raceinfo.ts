@@ -9,7 +9,7 @@ import type { Env } from './types';
 export interface RaceBlock { name: string; start: string | null; close: string | null }
 export interface RaceCutoff { km: number; time: string; place: string | null }
 export interface RaceInfo {
-  image?: string; hero?: string; pace_mode?: string; pace_adj?: number[]; start_loss_s?: number; fuel?: { km: number; item: string }[]; // 本人が決める値 (2026-11)
+  image?: string; hero?: string; pace_mode?: string; pace_adj?: number[]; start_loss_s?: number; course_heading?: number | null; fuel?: { km: number; item: string }[]; // 本人が決める値 (2026-11)
   venue?: string | null;          // 会場 (スタート・ゴール)
   start_time?: string | null;     // スタート時刻 (例 8:30)
   line_close?: string | null;     // 整列の締め切り (全体)
@@ -57,6 +57,8 @@ export function cleanRaceInfo(o: any): RaceInfo {
     ...(['even', 'negative', 'active', 'custom'].includes(o.pace_mode) ? { pace_mode: o.pace_mode } : {}),
     ...(Array.isArray(o.pace_adj) ? { pace_adj: o.pace_adj.slice(0, 30).map((x: any) => (Number.isFinite(Number(x)) ? Math.max(-60, Math.min(60, Math.round(Number(x)))) : 0)) } : {}),
     ...(Number.isFinite(Number(o.start_loss_s)) && o.start_loss_s != null ? { start_loss_s: Math.max(0, Math.min(1800, Math.round(Number(o.start_loss_s)))) } : {}),
+    // コースの大まかな向き (走る方向・度。0 = 北へ)。風が向かい風か追い風かの目安に使う。null は未設定
+    ...(o.course_heading === null || (Number.isFinite(Number(o.course_heading)) && o.course_heading !== '') ? { course_heading: o.course_heading === null ? null : ((Math.round(Number(o.course_heading)) % 360) + 360) % 360 } : {}),
     // 見出しの画像の選び方 (自動の景色・写真・なし)
     ...(['auto', 'city', 'coast', 'sea', 'mountain', 'country', 'photo', 'plain'].includes(o.hero) ? { hero: o.hero } : {}),
     // 大会の写真 (自分で選んだもの。画面で縮小した JPEG。大きすぎるものは保存しない)

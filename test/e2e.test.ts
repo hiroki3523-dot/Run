@@ -603,4 +603,30 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect(st.bg).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
     if (SHOTS) await (await page.$('#cond')).screenshot({ path: `${SHOTS}/01d-cond-save.png` });
   }, 60000);
+  it('レース: 地点ごとの通過時刻の気温と風・コースの向きで向かい風/追い風・天気画面に風向き', async () => {
+    const r0 = (await call(env, 'POST', '/races', { name: '風テストマラソン', date: addDays(TODAY, 1), distance_m: 42195, goal_time_s: 11400, priority: 'B', status: 'confirmed', no_auto: true, info: { start_time: '8:20' } })).json;
+    const hours = Array.from({ length: 11 }, (_, i) => ({ h: 6 + i, temp: 10 + i, humidity: 60, precip_pct: 0, wind: 4 + (i === 5 ? 2 : 0), dir: 270, gust: 9 }));
+    const wx = { race: '風テストマラソン', place: '福岡', date: addDays(TODAY, 1), code: 1, tmax: 20, tmin: 10, precip_pct: 0, wind_max: 6, hours, advice: '走りやすい気温' };
+    await page.route('**/api/race-weather', (r: any) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(wx) }));
+    try {
+      await open(`#/races/${r0.id}`);
+      await page.waitForSelector('#rd-wx .rwx-r');
+      const rows = await page.$$eval('#rd-wx .rwx-r', (els: Element[]) => els.map((e) => e.textContent!.replace(/\s+/g, ' ').trim()));
+      expect(rows.length).toBe(10); // スタート・5〜40km・ゴール
+      expect(rows[0]).toMatch(/^スタート ?8:20 12\.3℃ 西 4\.0m\/s$/); // 8:20 = 8時 12℃ と 9時 13℃ の間
+      expect(rows[9]).toMatch(/^ゴール ?11:30 /); // 3:10:00 後
+      // コースの向き「西へ」→ 西の風は向かい風
+      const put = page.waitForResponse((x: any) => x.url().includes(`/api/races/${r0.id}`) && x.request().method() === 'PUT');
+      await page.click('#rd-wx [data-chd="270"]');
+      await put;
+      expect(await page.textContent('#rd-wx .rwx-r .rwx-rel')).toBe('向かい風');
+      expect(JSON.parse((await call(env, 'GET', '/races')).json.find((x: any) => x.id === r0.id).info).course_heading).toBe(270);
+      await page.click('#rd-wx [data-chd="90"]');
+      expect(await page.textContent('#rd-wx .rwx-r .rwx-rel')).toBe('追い風');
+      if (SHOTS) await (await page.$('#rd-wx')).screenshot({ path: `${SHOTS}/30-race-wind.png` });
+    } finally {
+      await page.unroute('**/api/race-weather');
+      await call(env, 'DELETE', `/races/${r0.id}`);
+    }
+  }, 60000);
 });
