@@ -27,6 +27,7 @@ export interface Hour {
   precip_pct: number | null;
   precip_mm: number;
   wind: number;
+  dir: number | null; // 風が吹いてくる方角 (度。0 = 北から)
   gust: number;
   uv: number;
   wbgt: number;
@@ -90,7 +91,7 @@ export async function forecast(place: Place, nowMs = Date.now()): Promise<Foreca
   const q = new URLSearchParams({
     latitude: String(place.lat),
     longitude: String(place.lon),
-    hourly: 'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,uv_index,shortwave_radiation',
+    hourly: 'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,shortwave_radiation',
     daily: 'weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,sunrise,sunset,uv_index_max',
     timezone: 'Asia/Tokyo',
     wind_speed_unit: 'ms',
@@ -121,7 +122,7 @@ export async function forecast(place: Place, nowMs = Date.now()): Promise<Foreca
     const daylight = info ? ts >= info.sunrise.slice(0, 13) + ':00' && ts <= info.sunset.slice(0, 13) + ':00' : true;
     return {
       t: ts, h: Number(ts.slice(11, 13)), code: n(H.weather_code, i), temp, feels: n(H.apparent_temperature, i), humidity: hum,
-      precip_pct: pp, precip_mm: mm, wind, gust: n(H.wind_gusts_10m, i), uv: n(H.uv_index, i), wbgt,
+      precip_pct: pp, precip_mm: mm, wind, dir: H.wind_direction_10m?.[i] == null ? null : Number(H.wind_direction_10m[i]), gust: n(H.wind_gusts_10m, i), uv: n(H.uv_index, i), wbgt,
       index: runIndex(temp, hum, wind, pp ?? 0, mm, wbgt), daylight,
     };
   });

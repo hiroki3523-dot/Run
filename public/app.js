@@ -321,6 +321,7 @@ async function homeView() {
       ${wkPlan ? `<div class="bar"><div style="width:${Math.min(100, wkPct)}%"></div></div>` : ''}
     </a>
     <div class="card cond" id="cond" data-plan="${esc(JSON.stringify(todays.map((p) => ({ type: p.type, km: p.distance_m ? Math.round(p.distance_m / 100) / 10 : null }))))}"></div>
+    <div class="card bodyc" id="bodyc"></div>
     ${next ? `
     <a class="card hm-race ${raceHeroStyle(next).cls}" href="#/races/${next.id}" style="${raceHeroStyle(next).style}">
       <div class="row spread"><small class="muted">次のレース</small>${next.priority === 'A' ? '<span class="rb rb-main">本命</span>' : ''}</div>
@@ -554,7 +555,7 @@ async function weatherView() {
         <div class="nowidx"><div class="muted">走りやすさ</div><div class="num idx" style="color:${idxColor(n.index)}">${n.index}</div><div style="color:${idxColor(n.index)};font-weight:700">${idxLabel(n.index)}</div></div></div>
       <div class="facts num">
         <div><span class="muted">湿度</span><b>${Math.round(n.humidity)}%</b></div>
-        <div><span class="muted">風</span><b>${n.wind.toFixed(1)}m/s</b></div>
+        <div><span class="muted">風</span><b>${windArrow(n.dir)}${n.wind.toFixed(1)}m/s</b><small class="muted">${n.dir != null ? `${dirName(n.dir)}の風` : ''}${n.gust ? `・瞬間${n.gust.toFixed(0)}` : ''}</small></div>
         <div><span class="muted">降水</span><b>${n.precip_pct ?? 0}%</b></div>
         <div><span class="muted">暑さ指数</span><b style="color:${wbgtColor(n.wbgt)}">${n.wbgt}</b></div>
       </div>
@@ -564,7 +565,8 @@ async function weatherView() {
 </div>
     <div class="card"><h2>おすすめの時間帯</h2>${best(f.daily[0], '今日')}${best(f.daily[1], '明日')}${best(f.daily[2], dowOf(f.daily[2]?.date || '') + '曜')}</div>
     <div class="card"><h2>今日から 24 時間</h2>${hourChart(f.hourly)}
-      <div class="hscroll">${f.hourly.slice(0, 24).map((h) => `<div class="hcell"><span class="muted num">${h.h}時</span>${wxIcon(h.code, 22)}<b class="num">${Math.round(h.temp)}°</b><span class="rain num">${(h.precip_pct ?? 0) >= 20 ? h.precip_pct + '%' : ''}</span><i style="background:${idxColor(h.index)}"></i></div>`).join('')}</div></div>
+      <div class="hscroll">${f.hourly.slice(0, 24).map((h) => `<div class="hcell"><span class="muted num">${h.h}時</span>${wxIcon(h.code, 22)}<b class="num">${Math.round(h.temp)}°</b><span class="rain num">${(h.precip_pct ?? 0) >= 20 ? h.precip_pct + '%' : ''}</span><span class="hw num">${windArrow(h.dir, 12)}${h.wind.toFixed(0)}<small>m</small></span><small class="hwd muted">${dirName(h.dir)}</small><i style="background:${idxColor(h.index)}"></i></div>`).join('')}</div>
+      <p class="muted hint">矢印は風が吹いていく向き (北西の風なら右下を指す)・数字は風速 m/s</p></div>
     <div class="card"><h2>7 日間</h2><div class="dlist">${f.daily.map((d) => `<div class="drow"><span class="dd num"><b>${md(d.date)}</b> <span class="muted">${dow(d.date)}</span></span><span class="dwx">${wxPair(d, 26)}</span><span class="num dt"><b>${Math.round(d.tmax)}</b><span class="muted">/${Math.round(d.tmin)}</span></span><span class="rain num dr">${d.precip_pct ?? 0}%</span><span class="muted num ds"><b class="dlabel">${esc(wxText(d))}</b>・風${d.wind_max.toFixed(0)}m・${d.sunrise}〜${d.sunset}</span></div>`).join('')}</div></div>
     ${f.air ? `<div class="card"><h2>大気</h2><p class="num" style="margin:0">PM2.5 <b>${f.air.pm2_5 != null ? Math.round(f.air.pm2_5) : '-'}</b> µg/m³${f.air.aqi != null ? `・AQI <b>${Math.round(f.air.aqi)}</b> <span class="muted">(${f.air.aqi < 50 ? '良好' : f.air.aqi < 100 ? 'ふつう' : '悪い'})</span>` : ''}</p></div>` : ''}
     <p class="muted hint">暑さ指数と走りやすさは、予報から計算した推定値です。</p>`;
@@ -613,15 +615,85 @@ async function pickPlace() {
   route();
 }
 
-function weatherCard(w) {
+/** 風向き (風が吹いてくる方角・度) → 「北西」 */
+const DIR16 = ['北', '北北東', '北東', '東北東', '東', '東南東', '南東', '南南東', '南', '南南西', '南西', '西南西', '西', '西北西', '北西', '北北西'];
+const dirName = (deg) => (deg == null ? '' : DIR16[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16]);
+/** 風の矢印 (風が吹いていく向きを指す。北西の風なら南東を指す) */
+const windArrow = (deg, size = 14) => (deg == null ? '' : `<svg class="warrow" viewBox="0 0 24 24" width="${size}" height="${size}" style="transform:rotate(${deg + 180}deg)" aria-hidden="true"><path d="M12 3v17M12 3l-5 6M12 3l5 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
+const windTxt = (speed, deg) => `${dirName(deg)}${deg != null ? 'の風 ' : '風 '}${Number(speed).toFixed(1)}m/s`;
+/** コースの向き (走る方向) と風から、向かい風・追い風・横風 */
+const COURSE_DIRS = [[0, '北へ'], [45, '北東へ'], [90, '東へ'], [135, '南東へ'], [180, '南へ'], [225, '南西へ'], [270, '西へ'], [315, '北西へ']];
+function windRel(windFrom, heading, speed) {
+  if (windFrom == null || heading == null) return null;
+  const d = Math.abs(((windFrom - heading + 540) % 360) - 180); // 0 = 進む方向から吹く (向かい風)
+  const head = Math.round(speed * Math.cos((d * Math.PI) / 180) * 10) / 10;
+  if (speed < 1.5) return { k: 'calm', t: '弱い', head };
+  return d <= 45 ? { k: 'head', t: '向かい風', head } : d >= 135 ? { k: 'tail', t: '追い風', head } : { k: 'cross', t: '横風', head };
+}
+/** 時刻 (秒) の予報を、前後の 1 時間ごとの予報から求める (気温・風速は直線で・風向きは近い方の時間) */
+function wxAt(hours, sec) {
+  const h = sec / 3600;
+  const a = [...hours].reverse().find((x) => x.h <= h), b = hours.find((x) => x.h >= h);
+  if (!a && !b) return null;
+  if (!a || !b || a.h === b.h) return a || b;
+  const f = (h - a.h) / (b.h - a.h), mix = (k) => (a[k] == null || b[k] == null ? a[k] ?? b[k] : a[k] + (b[k] - a[k]) * f);
+  return { temp: mix('temp'), wind: mix('wind'), gust: mix('gust'), humidity: mix('humidity'), precip_pct: f < 0.5 ? a.precip_pct : b.precip_pct, dir: f < 0.5 ? a.dir : b.dir };
+}
+/** レース展開と天気: 5km ごとの通過時刻に、その時刻の気温・風 (コースの向きがあれば向かい風/追い風) */
+function raceWxTimeline(w, race, pm) {
+  if (!w || !race) return '';
+  if (!race.goal_time_s) return '<p class="muted an-note">目標タイムを設定すると、地点ごとの通過時刻の気温と風が出ます。</p>';
+  const sc = myStartClock(race);
+  if (sc == null) return '<p class="muted an-note">大会情報にスタート時刻 (または自分のブロックのスタート時刻) を入れると、地点ごとの通過時刻の気温と風が出ます。</p>';
+  const inf = raceInfoOf(race), mode = pm || inf.pace_mode || 'even', heading = inf.course_heading ?? null;
+  const dist = race.distance_m / 1000;
+  const pts = [];
+  for (let k = 0; k < dist; k += 5) pts.push(k);
+  pts.push(dist);
+  const rows = pts.map((k) => {
+    const t = sc + timeAt(race, mode, k), x = wxAt(w.hours, t);
+    if (!x) return '';
+    const rel = windRel(x.dir, heading, x.wind);
+    return `<div class="rwx-r"><span class="pk">${k === 0 ? 'スタート' : k >= dist ? 'ゴール' : `${k}km`}</span><span class="num muted">${clockTxt(t)}</span>
+      <b class="num">${x.temp.toFixed(1)}℃</b>
+      <span class="num rwx-w">${windArrow(x.dir)}${dirName(x.dir)} ${x.wind.toFixed(1)}m/s</span>
+      <span class="rwx-rel ${rel ? `wr-${rel.k}` : ''}">${rel ? rel.t : ''}</span></div>`;
+  }).join('');
+  return `<div class="rwx">
+    <h3 class="rwx-h">レース展開と天気 <small class="muted">(目標 ${dur(race.goal_time_s)}・${esc(PACE_PLANS[mode]?.label || '')})</small></h3>
+    <div class="rwx-t">${rows}</div>
+    <div class="rwx-cd"><span class="muted">コースの向き</span><div class="sm-chips">${[[null, '未設定'], ...COURSE_DIRS].map(([d, l]) => `<button type="button" class="chip ${d === heading ? 'on' : ''}" data-chd="${d ?? ''}">${l}</button>`).join('')}</div></div>
+    <p class="muted an-note">${heading == null ? 'コースの大まかな向き (走っていく方角) を選ぶと、向かい風・追い風の目安が出ます。' : '向かい風・追い風は、コース全体を 1 つの向きとみなした目安です。曲がり角・折り返し・ビル風は入っていません。'}風は高さ 10m の予報で、地上では少し弱くなります。</p>
+  </div>`;
+}
+/** レース詳細: 天気のカードを入れ、コースの向きの選択をつなぐ */
+function drawRaceWx(w, race, pm, tries = 0) {
+  const el = document.getElementById('rd-wx');
+  // 天気が画面より先に届いたときは、画面ができるまで少し待つ (別の画面に移ったらやめる)
+  if (!el) { if (tries < 40 && location.hash.startsWith(`#/races/${race.id}`)) setTimeout(() => drawRaceWx(w, race, pm, tries + 1), 100); return; }
+  el.innerHTML = weatherCard(w, race, pm);
+  el.querySelectorAll('[data-chd]').forEach((b) => (b.onclick = async () => {
+    const v = b.dataset.chd === '' ? null : Number(b.dataset.chd);
+    const info = { ...raceInfoOf(race), course_heading: v };
+    race.info = JSON.stringify(info);
+    drawRaceWx(w, race, pm);
+    await api(`/races/${race.id}`, { method: 'PUT', body: { ...race, info, no_auto: true } }).catch((e) => alert(e.message));
+  }));
+}
+function weatherCard(w, race = null, pm = null) {
   if (!w) return '';
-  const hrs = w.hours.map((h) => `<div><div class="muted">${h.h}時</div><b>${Math.round(h.temp)}℃</b><div class="muted">${h.humidity ?? '-'}%</div></div>`).join('');
+  // 1 時間ごと (レースの時間帯: 7〜14 時)
+  const hrs = w.hours.filter((h) => h.h >= 7 && h.h <= 14).map((h) => `<div><div class="muted">${h.h}時</div><b>${Math.round(h.temp)}℃</b><div class="muted">${h.humidity ?? '-'}%</div><div class="hw">${windArrow(h.dir, 12)}<span>${h.wind.toFixed(0)}m</span></div></div>`).join('');
+  const rh = w.hours.filter((h) => h.h >= 8 && h.h <= 13);
+  const wmax = rh.length ? rh.reduce((a, h) => (h.wind > a.wind ? h : a)) : null;
   return `<div class="card">
     <div class="row spread"><h2>${esc(w.race)}の天気 (${w.place})</h2><span class="muted num">${md(w.date)}</span></div>
     <div class="row" style="gap:10px;align-items:center">${w.code != null ? wxPair(w, 36) + `<b>${esc(wxText(w))}</b>` : ''}</div>
     <div class="num" style="font-size:20px">${Math.round(w.tmin)}〜${Math.round(w.tmax)}℃ <span class="muted" style="font-size:13px">降水${w.precip_pct ?? '-'}%・風${w.wind_max.toFixed(0)}m/s</span></div>
+    ${wmax ? `<p class="num" style="margin:4px 0 0">${windArrow(wmax.dir)} レース中 (8〜13時) の最大: ${windTxt(wmax.wind, wmax.dir)}${wmax.gust ? `<span class="muted">・瞬間 ${wmax.gust.toFixed(0)}m/s</span>` : ''}</p>` : ''}
     <div class="hours num">${hrs}</div>
     <p style="margin:8px 0 0">${esc(w.advice)}</p>
+    ${race ? raceWxTimeline(w, race, pm) : ''}
   </div>`;
 }
 
@@ -694,6 +766,54 @@ async function loadCondition() {
     ${ready != null ? `<div class="cd-top">${ringGauge(ready, 'コンディション', ready >= 70 ? 'var(--good)' : ready >= 50 ? 'var(--accent)' : 'var(--mid)')}<div class="cd-top-r">${impactHtml}</div></div>` : ''}
     <div class="cd-sum">${COND.filter(([k]) => cur[k] != null).map(([k]) => `<div><small>${SH[k]}</small><b class="num">${cur[k]}</b></div>`).join('')}${(cur.pain_part || []).length ? `<div><small>痛む場所</small><b style="font-size:13px">${cur.pain_part.map(esc).join('・')}</b></div>` : ''}</div>${ready == null ? impactHtml : ''}${trend}${warn}`;
   box.querySelector('[data-cd="edit"]').onclick = () => form({ ...cur });
+}
+
+/** からだのデータ (体重・体脂肪・安静時心拍・HRV・睡眠)。ヘルスケアからショートカットで送るか、手で入力 */
+const BODY_F = [['weight', '体重', 'kg'], ['body_fat', '体脂肪率', '%'], ['resting_hr', '安静時心拍', 'bpm'], ['hrv', 'HRV', 'ms'], ['sleep_h', '睡眠', '時間']];
+async function loadBody() {
+  const box = document.getElementById('bodyc');
+  if (!box) return;
+  const t = today();
+  let r;
+  try { r = await api(`/body?from=${addDays(t, -34)}&to=${t}`); } catch { box.remove(); return; }
+  const days = r.days || {};
+  const latest = (k) => { const ds = Object.keys(days).filter((d) => days[d][k] != null).sort(); const d = ds[ds.length - 1]; return d && d >= addDays(t, -6) ? { v: days[d][k], d } : null; };
+  const items = BODY_F.map(([k, l, u]) => [k, l, u, latest(k)]).filter((x) => x[3]);
+  // 体重の 35 日の推移
+  const ws = Object.keys(days).filter((d) => days[d].weight != null).sort().map((d) => [d, days[d].weight]);
+  let spark = '';
+  if (ws.length >= 2) {
+    const lo = Math.min(...ws.map((x) => x[1])), hi = Math.max(...ws.map((x) => x[1])), span = Math.max(0.6, hi - lo);
+    const X = (d) => 4 + ((Date.parse(d) - Date.parse(addDays(t, -34))) / (34 * 86400_000)) * 292, Y = (v) => 40 - ((v - lo) / span) * 32;
+    spark = `<svg class="bd-spark" viewBox="0 0 300 46" preserveAspectRatio="none" aria-label="体重の推移 (35 日)"><polyline points="${ws.map(([d, v]) => `${X(d).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>${ws.map(([d, v]) => `<circle cx="${X(d).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="2" fill="var(--accent)"/>`).join('')}</svg>
+      <div class="bd-spark-l muted num"><span>${md(addDays(t, -34))}</span><span>${lo.toFixed(1)}〜${hi.toFixed(1)}kg</span><span>今日</span></div>`;
+  }
+  const g = r.guide;
+  const guide = g ? `<details class="bd-guide"><summary>体重と目標タイムの目安</summary>
+      <p><b class="num">7 日平均 ${g.avg7}kg</b>${g.change28 != null ? `<span class="muted num">・4 週前から ${g.change28 > 0 ? '+' : ''}${g.change28}kg</span>` : ''}${g.bmi != null ? `<span class="muted num">・BMI ${g.bmi}</span>` : ''}</p>
+      ${g.sec_per_kg ? `<p>同じ走力なら「体重 1% ≈ タイム 1%」がよく使われる目安です。いまの体重と目標 ${dur(r.goal_s)} では、<b class="num">1kg ≈ 約 ${Math.floor(g.sec_per_kg / 60)}分${String(g.sec_per_kg % 60).padStart(2, '0')}秒</b>にあたります。</p>` : '<p class="muted">次のフルマラソンに目標タイムを入れると、1kg あたりの目安が出ます。</p>'}
+      ${g.lean ? '<p class="bd-note">BMI が 20 未満で、すでに軽めの体重です。これ以上減らすより、練習と回復でタイムを伸ばす方が確実です。</p>' : ''}
+      <p class="muted">あくまで目安です。体重を落とすと筋肉や回復力も落ちることがあり、タイムが良くなるとは限りません。食事を大きく減らすのではなく、練習量に見合った食事で、体調 (疲労・睡眠) が悪くならない範囲で。${g.bmi_low_kg ? ` BMI 18.5 (${g.bmi_low_kg}kg) を下回る体重は、健康のために目指さないでください。` : ''}${r.profile?.height_cm ? '' : ' 身長を入れると BMI も出ます。'}</p>
+    </details>` : '';
+  box.innerHTML = `<div class="row spread"><h2>からだ</h2><button type="button" class="chip" data-bd="edit">入力</button></div>
+    ${items.length ? `<div class="bd-grid">${items.map(([k, l, u, x]) => `<div><small>${l}${x.d !== t ? `<em> ${md(x.d)}</em>` : ''}</small><b class="num">${x.v}<span>${u}</span></b></div>`).join('')}</div>`
+      : '<p class="muted" style="margin:0">体重・体脂肪率・安静時心拍・HRV・睡眠を記録できます。iPhone のヘルスケアから毎朝自動で送る方法は 設定 › からだのデータ にあります。</p>'}
+    ${spark}${guide}`;
+  box.querySelector('[data-bd="edit"]').onclick = async () => {
+    const cur = days[t] || {};
+    const f = (k, l, u, step, min, max) => `<label>${l} (${u})<input name="${k}" type="number" inputmode="decimal" step="${step}" min="${min}" max="${max}" value="${cur[k] ?? ''}"></label>`;
+    const v = await openDialog(`<h2>からだ (${md(t)})</h2>
+      <div class="bd-form">${f('weight', '体重', 'kg', '0.1', 30, 200)}${f('body_fat', '体脂肪率', '%', '0.1', 3, 60)}${f('resting_hr', '安静時心拍', 'bpm', '1', 30, 120)}${f('hrv', 'HRV', 'ms', '1', 5, 250)}${f('sleep_h', '睡眠', '時間', '0.1', 0.5, 16)}
+      <label>身長 (cm・BMI 用)<input name="height_cm" type="number" inputmode="decimal" step="0.1" min="120" max="230" value="${r.profile?.height_cm ?? ''}"></label></div>
+      <p class="muted" style="font-size:12px">空欄の項目は記録しません。ヘルスケアから送った値も、ここで直せます。</p>`);
+    if (!v) return;
+    try {
+      const { height_cm, ...rest } = v;
+      if (String(height_cm ?? '') !== String(r.profile?.height_cm ?? '')) await api('/body-profile', { method: 'PUT', body: { height_cm } });
+      await api(`/body/${t}`, { method: 'PUT', body: rest });
+      loadBody();
+    } catch (e) { alert(e.message); }
+  };
 }
 
 /** マラソン適性 (6 つの能力) と予測の根拠 */
@@ -2887,13 +3007,14 @@ async function loadRaceReady(r) {
     <p class="muted an-note">予測は今の練習の記録からの目安で、達成を約束するものではありません。気温・風・コース・当日の体調で結果は変わります。</p>`;
 }
 
+let RACE_WX = null; // レース詳細の天気 (ペースの型を変えたら、レース展開の表を描き直す)
 async function raceDetailView(id) {
   const [races, state] = await Promise.all([
     api('/races'),
     api(`/checklist/${id}`).catch(() => ({ checked: [], custom: [] })),
   ]);
   // レース天気は外のサービスなので、画面を出してから入れる
-  setTimeout(() => api('/race-weather').then((w) => { const el = document.getElementById('rd-wx'); const rr = races.find((x) => x.id === Number(id)); if (el) el.outerHTML = w && rr && w.race === rr.name ? weatherCard(w) : ''; }).catch(() => {}));
+  setTimeout(() => api('/race-weather').then((w) => { const rr = races.find((x) => x.id === Number(id)); if (w && rr && w.race === rr.name) { RACE_WX = w; drawRaceWx(w, rr); } else document.getElementById('rd-wx')?.remove(); }).catch(() => {}));
   // 持ち物のひな形 (全レース共通)。設定に保存してあればそれ、無ければ最初の一覧
   const st0 = await api('/settings').catch(() => ({}));
   let tmpl = Array.isArray(st0.checklist_template) ? st0.checklist_template : CHECK_ITEMS.map(([cat, iid, text]) => ({ cat, id: iid, text }));
@@ -2929,7 +3050,7 @@ async function raceDetailView(id) {
   setTimeout(() => {
     if (upcoming) wireChecks();
     const saveInfo = async (patch) => { const info = { ...raceInfoOf(r), ...patch }; r.info = JSON.stringify(info); await api(`/races/${r.id}`, { method: 'PUT', body: { ...r, info, no_auto: true } }).catch((e) => alert(e.message)); };
-    const redraw = () => { view.querySelector('#pace-out').innerHTML = splitTable(r, mode); view.querySelector('#rp-extra').innerHTML = racePlanExtras(r, mode); if (upcoming) drawChecks(); };
+    const redraw = () => { view.querySelector('#pace-out').innerHTML = splitTable(r, mode); view.querySelector('#rp-extra').innerHTML = racePlanExtras(r, mode); if (upcoming) drawChecks(); if (RACE_WX && RACE_WX.race === r.name) drawRaceWx(RACE_WX, r, mode); };
     view.querySelectorAll('[data-pm]').forEach((b) => (b.onclick = () => {
       mode = b.dataset.pm;
       view.querySelectorAll('[data-pm]').forEach((x) => x.classList.toggle('on', x === b));
@@ -4404,6 +4525,21 @@ async function settingsView() {
       <p class="muted">練習メニューとレースを iPhone のカレンダーに表示します (読み取り専用・自動更新)。</p>
       <div class="row"><button id="open-cal" class="primary">カレンダーに追加</button><button id="copy-cal">URL をコピー</button></div>
     </div>
+    <div class="card" id="body-setup">
+      <h2>からだのデータ (ヘルスケア)</h2>
+      <p class="muted">iPhone のヘルスケアの体重・体脂肪率・安静時心拍・HRV・睡眠を、ショートカットで毎朝 STRIDE に送れます (ホームの「からだ」に出ます)。STRIDE はヘルスケアを直接は読めないため、この方法になります。</p>
+      <details class="bd-howto"><summary>ショートカットの作り方</summary>
+        <ol>
+          <li>ショートカット App › オートメーション › ＋ › 「時刻」(例: 毎朝 7:00)・「すぐに実行」</li>
+          <li>アクション「ヘルスケアサンプルを検索」を項目ごとに追加: 体重 / 体脂肪率 / 安静時心拍数 / 心拍変動 / 睡眠 (それぞれ「開始日が今日」「最新の 1 件」)</li>
+          <li>アクション「URL の内容を取得」: URL <code>${esc(location.origin)}/api/body</code>・方法 POST・ヘッダ <code>Authorization</code> = <code>Bearer (設定のトークン)</code>・本文 JSON に次のキーで値を入れる</li>
+        </ol>
+        <pre class="bd-json">{"weight": 体重, "body_fat": 体脂肪率,
+ "resting_hr": 安静時心拍数, "hrv": 心拍変動,
+ "sleep_h": 睡眠 (時間)}</pre>
+        <p class="muted">無いキーは省いて大丈夫です。体脂肪率は 0.152 でも 15.2 でも受け取れます。日付を変えたいときは "date": "2026-11-12" を足します。</p>
+      </details>
+    </div>
     <div class="card">
       <h2>通知</h2>
       <p class="muted">ntfy: ${status.ntfy_topic_set ? '設定済み' : '未設定'}・Bark: ${status.bark_set ? '設定済み' : '未設定'}</p>
@@ -4458,6 +4594,7 @@ async function route() {
     if (document.getElementById('insights')) loadInsights();
     if (document.getElementById('shoe-cmp')) loadShoeCompare();
     if (document.getElementById('cond')) loadCondition();
+    if (document.getElementById('bodyc')) loadBody();
   } catch (e) {
     if (seq === ROUTE_SEQ) view.innerHTML = `<div class="card error">${esc(e.message)}</div>`;
   }

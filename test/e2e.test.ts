@@ -126,7 +126,7 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
 
   it('実績 一覧: 日ごとにまとまり、11/1 は 3 本・メインが目立つ', async () => {
     await open('#/activities');
-    const day = page.locator('.hl-day', { hasText: '11/1' });
+    const day = page.locator('.hl-day', { hasText: /11\/1\(/ });
     expect(await day.locator('.hl-run').count()).toBe(3);
     expect(await day.locator('.hl-run.main').count()).toBe(1);
     expect(await day.locator('.hl-dh').textContent()).toContain('18.14km');
@@ -175,7 +175,7 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
 
   it('実績 一覧: ロング走の M ペース区間は「ロング走 (Mペース)」', async () => {
     await open('#/activities');
-    expect(await page.locator('.hl-day', { hasText: '11/1' }).textContent()).toContain('ロング走 (Mペース)');
+    expect(await page.locator('.hl-day', { hasText: /11\/1\(/ }).textContent()).toContain('ロング走 (Mペース)');
   }, 30000);
   it('レース一覧: 次の大会が大きく出て、今後・過去が分かれる', async () => {
     await open('#/races');
@@ -584,6 +584,49 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       expect(await mark(TODAY)).toBeNull();
     } finally {
       for (const p of [p1, p2, pt]) await call(env, 'DELETE', `/plans/${p.id ?? p[0]?.id}`);
+    }
+  }, 60000);
+  it('ホーム: 今朝の体調の保存ボタンは大きく目立つ・からだのデータ (ヘルスケアから送った値) と体重の目安', async () => {
+    await call(env, 'POST', '/body', { weight: 71.8, body_fat: 0.148, resting_hr: 47, hrv: 64, sleep_h: 6.5 });
+    await open('#/');
+    await page.waitForSelector('#bodyc .bd-grid');
+    const cells = await page.$$eval('#bodyc .bd-grid > div', (els: Element[]) => els.map((e) => e.textContent!.replace(/\s+/g, '')));
+    expect(cells).toEqual(['体重71.8kg', '体脂肪率14.8%', '安静時心拍47bpm', 'HRV64ms', '睡眠6.5時間']);
+    expect(await page.textContent('#bodyc .bd-guide')).toContain('体重 1% ≈ タイム 1%');
+    if (SHOTS) await (await page.$('#bodyc')).screenshot({ path: `${SHOTS}/01c-body.png` });
+    // 体調の入力を開いて、保存ボタンの大きさと色
+    const openBtn = await page.$('#cond [data-cd="open"], #cond [data-cd="edit"]');
+    await openBtn!.click();
+    const st = await page.$eval('#cond .fbx-save', (b: HTMLElement) => { const r = b.getBoundingClientRect(), cs = getComputedStyle(b); return { h: r.height, w: r.width, bg: cs.backgroundColor, box: b.closest('.card')!.getBoundingClientRect().width }; });
+    expect(st.h).toBeGreaterThanOrEqual(50);
+    expect(st.w).toBeGreaterThan(st.box * 0.8);
+    expect(st.bg).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+    if (SHOTS) await (await page.$('#cond')).screenshot({ path: `${SHOTS}/01d-cond-save.png` });
+  }, 60000);
+  it('レース: 地点ごとの通過時刻の気温と風・コースの向きで向かい風/追い風・天気画面に風向き', async () => {
+    const r0 = (await call(env, 'POST', '/races', { name: '風テストマラソン', date: addDays(TODAY, 1), distance_m: 42195, goal_time_s: 11400, priority: 'B', status: 'confirmed', no_auto: true, info: { start_time: '8:20' } })).json;
+    const hours = Array.from({ length: 11 }, (_, i) => ({ h: 6 + i, temp: 10 + i, humidity: 60, precip_pct: 0, wind: 4 + (i === 5 ? 2 : 0), dir: 270, gust: 9 }));
+    const wx = { race: '風テストマラソン', place: '福岡', date: addDays(TODAY, 1), code: 1, tmax: 20, tmin: 10, precip_pct: 0, wind_max: 6, hours, advice: '走りやすい気温' };
+    await page.route('**/api/race-weather', (r: any) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(wx) }));
+    try {
+      await open(`#/races/${r0.id}`);
+      await page.waitForSelector('#rd-wx .rwx-r');
+      const rows = await page.$$eval('#rd-wx .rwx-r', (els: Element[]) => els.map((e) => e.textContent!.replace(/\s+/g, ' ').trim()));
+      expect(rows.length).toBe(10); // スタート・5〜40km・ゴール
+      expect(rows[0]).toMatch(/^スタート ?8:20 12\.3℃ 西 4\.0m\/s$/); // 8:20 = 8時 12℃ と 9時 13℃ の間
+      expect(rows[9]).toMatch(/^ゴール ?11:30 /); // 3:10:00 後
+      // コースの向き「西へ」→ 西の風は向かい風
+      const put = page.waitForResponse((x: any) => x.url().includes(`/api/races/${r0.id}`) && x.request().method() === 'PUT');
+      await page.click('#rd-wx [data-chd="270"]');
+      await put;
+      expect(await page.textContent('#rd-wx .rwx-r .rwx-rel')).toBe('向かい風');
+      expect(JSON.parse((await call(env, 'GET', '/races')).json.find((x: any) => x.id === r0.id).info).course_heading).toBe(270);
+      await page.click('#rd-wx [data-chd="90"]');
+      expect(await page.textContent('#rd-wx .rwx-r .rwx-rel')).toBe('追い風');
+      if (SHOTS) await (await page.$('#rd-wx')).screenshot({ path: `${SHOTS}/30-race-wind.png` });
+    } finally {
+      await page.unroute('**/api/race-weather');
+      await call(env, 'DELETE', `/races/${r0.id}`);
     }
   }, 60000);
 });

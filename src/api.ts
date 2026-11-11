@@ -13,6 +13,7 @@ import { analyzeRun, groupOf, type Snapshot } from './analysis';
 import { cleanText, legacyText } from './evaluate';
 import { probeFit, probeLapJson } from './fitprobe';
 import { runningNews } from './news';
+import { cleanBody, weightGuide, type BodyDay } from './body';
 import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
 import { autoFillRace, cleanRaceInfo, entryHistory, extractRaceInfo } from './raceinfo';
 import { findOfficialSite } from './sitefind';
@@ -962,6 +963,59 @@ api.put('/condition/:date', async (c) => {
   const v = { leg: n10(b.leg), tight: n10(b.tight), pain: n10(b.pain), pain_part: Array.isArray(b.pain_part) ? (b.pain_part as string[]).filter((x) => typeof x === 'string').slice(0, 6) : [], sleep: n10(b.sleep), fatigue: n10(b.fatigue), memo: String(b.memo ?? '').slice(0, 300) };
   await kvSet(c.env, `cond:${d}`, JSON.stringify(v));
   return c.json(v);
+});
+
+// ---------------------------------------------------------------- からだのデータ (体重・体脂肪など)
+
+const jstToday = () => new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
+async function bodyRange(env: Env, from: string, to: string): Promise<Record<string, BodyDay>> {
+  const { results } = await env.DB.prepare("SELECT key, value FROM kv WHERE key >= ? AND key <= ? AND key LIKE 'body:%'").bind(`body:${from}`, `body:${to}`).all<{ key: string; value: string }>();
+  const out: Record<string, BodyDay> = {};
+  for (const r of results) { try { out[r.key.slice(5)] = JSON.parse(r.value); } catch { /* 無視 */ } }
+  return out;
+}
+async function saveBody(env: Env, date: string, v: BodyDay, source: 'health' | 'manual', replace = false) {
+  const cur = replace ? {} : JSON.parse((await kvGet(env, `body:${date}`)) || '{}');
+  const merged = { ...cur, ...v, source, at: new Date().toISOString() };
+  await kvSet(env, `body:${date}`, JSON.stringify(merged));
+  return merged;
+}
+/** 日ごとのからだのデータ・身長・体重の目安 */
+api.get('/body', async (c) => {
+  const to = c.req.query('to') || jstToday();
+  const from = c.req.query('from') || addDays(to, -34);
+  const [days, prof, races] = await Promise.all([
+    bodyRange(c.env, isDate(from) ? from : addDays(to, -34), to),
+    kvGet(c.env, 'body_profile'),
+    c.env.DB.prepare("SELECT goal_time_s, date FROM races WHERE date >= ? AND distance_m >= 42000 AND goal_time_s IS NOT NULL ORDER BY date LIMIT 1").bind(jstToday()).all<{ goal_time_s: number }>(),
+  ]);
+  const profile = prof ? JSON.parse(prof) : {};
+  const goal = races.results[0]?.goal_time_s ?? null;
+  return c.json({ days, profile, goal_s: goal, guide: weightGuide(days, to, profile.height_cm ?? null, goal) });
+});
+/** iPhone のショートカット (ヘルスケア) から。date が無ければ今日。送られた項目だけ上書き */
+api.post('/body', async (c) => {
+  const b = await c.req.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
+  const date = typeof b.date === 'string' && isDate(b.date.slice(0, 10)) ? b.date.slice(0, 10) : jstToday();
+  const v = cleanBody(b);
+  if (!Object.keys(v).length) return c.json({ error: '読み取れる値がありません (weight・body_fat・resting_hr・hrv・sleep_h)' }, 400);
+  return c.json({ date, ...(await saveBody(c.env, date, v, 'health')) });
+});
+/** 画面から手入力 (その日の値を入れ直す。空にした項目は消える) */
+api.put('/body/:date', async (c) => {
+  const d = c.req.param('date');
+  if (!isDate(d)) return c.json({ error: '日付が不正です' }, 400);
+  const b = await c.req.json<Record<string, unknown>>();
+  const v = cleanBody(b);
+  if (!Object.keys(v).length) { await c.env.DB.prepare('DELETE FROM kv WHERE key = ?').bind(`body:${d}`).run(); return c.json({}); }
+  return c.json(await saveBody(c.env, d, v, 'manual', true));
+});
+api.put('/body-profile', async (c) => {
+  const b = await c.req.json<Record<string, unknown>>();
+  const h = Number(b.height_cm);
+  const profile = { height_cm: Number.isFinite(h) && h >= 120 && h <= 230 ? Math.round(h * 10) / 10 : null };
+  await kvSet(c.env, 'body_profile', JSON.stringify(profile));
+  return c.json(profile);
 });
 
 // ---------------------------------------------------------------- シューズの相性
