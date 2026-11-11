@@ -321,6 +321,7 @@ async function homeView() {
       ${wkPlan ? `<div class="bar"><div style="width:${Math.min(100, wkPct)}%"></div></div>` : ''}
     </a>
     <div class="card cond" id="cond" data-plan="${esc(JSON.stringify(todays.map((p) => ({ type: p.type, km: p.distance_m ? Math.round(p.distance_m / 100) / 10 : null }))))}"></div>
+    <div class="card bodyc" id="bodyc"></div>
     ${next ? `
     <a class="card hm-race ${raceHeroStyle(next).cls}" href="#/races/${next.id}" style="${raceHeroStyle(next).style}">
       <div class="row spread"><small class="muted">次のレース</small>${next.priority === 'A' ? '<span class="rb rb-main">本命</span>' : ''}</div>
@@ -694,6 +695,54 @@ async function loadCondition() {
     ${ready != null ? `<div class="cd-top">${ringGauge(ready, 'コンディション', ready >= 70 ? 'var(--good)' : ready >= 50 ? 'var(--accent)' : 'var(--mid)')}<div class="cd-top-r">${impactHtml}</div></div>` : ''}
     <div class="cd-sum">${COND.filter(([k]) => cur[k] != null).map(([k]) => `<div><small>${SH[k]}</small><b class="num">${cur[k]}</b></div>`).join('')}${(cur.pain_part || []).length ? `<div><small>痛む場所</small><b style="font-size:13px">${cur.pain_part.map(esc).join('・')}</b></div>` : ''}</div>${ready == null ? impactHtml : ''}${trend}${warn}`;
   box.querySelector('[data-cd="edit"]').onclick = () => form({ ...cur });
+}
+
+/** からだのデータ (体重・体脂肪・安静時心拍・HRV・睡眠)。ヘルスケアからショートカットで送るか、手で入力 */
+const BODY_F = [['weight', '体重', 'kg'], ['body_fat', '体脂肪率', '%'], ['resting_hr', '安静時心拍', 'bpm'], ['hrv', 'HRV', 'ms'], ['sleep_h', '睡眠', '時間']];
+async function loadBody() {
+  const box = document.getElementById('bodyc');
+  if (!box) return;
+  const t = today();
+  let r;
+  try { r = await api(`/body?from=${addDays(t, -34)}&to=${t}`); } catch { box.remove(); return; }
+  const days = r.days || {};
+  const latest = (k) => { const ds = Object.keys(days).filter((d) => days[d][k] != null).sort(); const d = ds[ds.length - 1]; return d && d >= addDays(t, -6) ? { v: days[d][k], d } : null; };
+  const items = BODY_F.map(([k, l, u]) => [k, l, u, latest(k)]).filter((x) => x[3]);
+  // 体重の 35 日の推移
+  const ws = Object.keys(days).filter((d) => days[d].weight != null).sort().map((d) => [d, days[d].weight]);
+  let spark = '';
+  if (ws.length >= 2) {
+    const lo = Math.min(...ws.map((x) => x[1])), hi = Math.max(...ws.map((x) => x[1])), span = Math.max(0.6, hi - lo);
+    const X = (d) => 4 + ((Date.parse(d) - Date.parse(addDays(t, -34))) / (34 * 86400_000)) * 292, Y = (v) => 40 - ((v - lo) / span) * 32;
+    spark = `<svg class="bd-spark" viewBox="0 0 300 46" preserveAspectRatio="none" aria-label="体重の推移 (35 日)"><polyline points="${ws.map(([d, v]) => `${X(d).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>${ws.map(([d, v]) => `<circle cx="${X(d).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="2" fill="var(--accent)"/>`).join('')}</svg>
+      <div class="bd-spark-l muted num"><span>${md(addDays(t, -34))}</span><span>${lo.toFixed(1)}〜${hi.toFixed(1)}kg</span><span>今日</span></div>`;
+  }
+  const g = r.guide;
+  const guide = g ? `<details class="bd-guide"><summary>体重と目標タイムの目安</summary>
+      <p><b class="num">7 日平均 ${g.avg7}kg</b>${g.change28 != null ? `<span class="muted num">・4 週前から ${g.change28 > 0 ? '+' : ''}${g.change28}kg</span>` : ''}${g.bmi != null ? `<span class="muted num">・BMI ${g.bmi}</span>` : ''}</p>
+      ${g.sec_per_kg ? `<p>同じ走力なら「体重 1% ≈ タイム 1%」がよく使われる目安です。いまの体重と目標 ${dur(r.goal_s)} では、<b class="num">1kg ≈ 約 ${Math.floor(g.sec_per_kg / 60)}分${String(g.sec_per_kg % 60).padStart(2, '0')}秒</b>にあたります。</p>` : '<p class="muted">次のフルマラソンに目標タイムを入れると、1kg あたりの目安が出ます。</p>'}
+      ${g.lean ? '<p class="bd-note">BMI が 20 未満で、すでに軽めの体重です。これ以上減らすより、練習と回復でタイムを伸ばす方が確実です。</p>' : ''}
+      <p class="muted">あくまで目安です。体重を落とすと筋肉や回復力も落ちることがあり、タイムが良くなるとは限りません。食事を大きく減らすのではなく、練習量に見合った食事で、体調 (疲労・睡眠) が悪くならない範囲で。${g.bmi_low_kg ? ` BMI 18.5 (${g.bmi_low_kg}kg) を下回る体重は、健康のために目指さないでください。` : ''}${r.profile?.height_cm ? '' : ' 身長を入れると BMI も出ます。'}</p>
+    </details>` : '';
+  box.innerHTML = `<div class="row spread"><h2>からだ</h2><button type="button" class="chip" data-bd="edit">入力</button></div>
+    ${items.length ? `<div class="bd-grid">${items.map(([k, l, u, x]) => `<div><small>${l}${x.d !== t ? `<em> ${md(x.d)}</em>` : ''}</small><b class="num">${x.v}<span>${u}</span></b></div>`).join('')}</div>`
+      : '<p class="muted" style="margin:0">体重・体脂肪率・安静時心拍・HRV・睡眠を記録できます。iPhone のヘルスケアから毎朝自動で送る方法は 設定 › からだのデータ にあります。</p>'}
+    ${spark}${guide}`;
+  box.querySelector('[data-bd="edit"]').onclick = async () => {
+    const cur = days[t] || {};
+    const f = (k, l, u, step, min, max) => `<label>${l} (${u})<input name="${k}" type="number" inputmode="decimal" step="${step}" min="${min}" max="${max}" value="${cur[k] ?? ''}"></label>`;
+    const v = await openDialog(`<h2>からだ (${md(t)})</h2>
+      <div class="bd-form">${f('weight', '体重', 'kg', '0.1', 30, 200)}${f('body_fat', '体脂肪率', '%', '0.1', 3, 60)}${f('resting_hr', '安静時心拍', 'bpm', '1', 30, 120)}${f('hrv', 'HRV', 'ms', '1', 5, 250)}${f('sleep_h', '睡眠', '時間', '0.1', 0.5, 16)}
+      <label>身長 (cm・BMI 用)<input name="height_cm" type="number" inputmode="decimal" step="0.1" min="120" max="230" value="${r.profile?.height_cm ?? ''}"></label></div>
+      <p class="muted" style="font-size:12px">空欄の項目は記録しません。ヘルスケアから送った値も、ここで直せます。</p>`);
+    if (!v) return;
+    try {
+      const { height_cm, ...rest } = v;
+      if (String(height_cm ?? '') !== String(r.profile?.height_cm ?? '')) await api('/body-profile', { method: 'PUT', body: { height_cm } });
+      await api(`/body/${t}`, { method: 'PUT', body: rest });
+      loadBody();
+    } catch (e) { alert(e.message); }
+  };
 }
 
 /** マラソン適性 (6 つの能力) と予測の根拠 */
@@ -4404,6 +4453,21 @@ async function settingsView() {
       <p class="muted">練習メニューとレースを iPhone のカレンダーに表示します (読み取り専用・自動更新)。</p>
       <div class="row"><button id="open-cal" class="primary">カレンダーに追加</button><button id="copy-cal">URL をコピー</button></div>
     </div>
+    <div class="card" id="body-setup">
+      <h2>からだのデータ (ヘルスケア)</h2>
+      <p class="muted">iPhone のヘルスケアの体重・体脂肪率・安静時心拍・HRV・睡眠を、ショートカットで毎朝 STRIDE に送れます (ホームの「からだ」に出ます)。STRIDE はヘルスケアを直接は読めないため、この方法になります。</p>
+      <details class="bd-howto"><summary>ショートカットの作り方</summary>
+        <ol>
+          <li>ショートカット App › オートメーション › ＋ › 「時刻」(例: 毎朝 7:00)・「すぐに実行」</li>
+          <li>アクション「ヘルスケアサンプルを検索」を項目ごとに追加: 体重 / 体脂肪率 / 安静時心拍数 / 心拍変動 / 睡眠 (それぞれ「開始日が今日」「最新の 1 件」)</li>
+          <li>アクション「URL の内容を取得」: URL <code>${esc(location.origin)}/api/body</code>・方法 POST・ヘッダ <code>Authorization</code> = <code>Bearer (設定のトークン)</code>・本文 JSON に次のキーで値を入れる</li>
+        </ol>
+        <pre class="bd-json">{"weight": 体重, "body_fat": 体脂肪率,
+ "resting_hr": 安静時心拍数, "hrv": 心拍変動,
+ "sleep_h": 睡眠 (時間)}</pre>
+        <p class="muted">無いキーは省いて大丈夫です。体脂肪率は 0.152 でも 15.2 でも受け取れます。日付を変えたいときは "date": "2026-11-12" を足します。</p>
+      </details>
+    </div>
     <div class="card">
       <h2>通知</h2>
       <p class="muted">ntfy: ${status.ntfy_topic_set ? '設定済み' : '未設定'}・Bark: ${status.bark_set ? '設定済み' : '未設定'}</p>
@@ -4458,6 +4522,7 @@ async function route() {
     if (document.getElementById('insights')) loadInsights();
     if (document.getElementById('shoe-cmp')) loadShoeCompare();
     if (document.getElementById('cond')) loadCondition();
+    if (document.getElementById('bodyc')) loadBody();
   } catch (e) {
     if (seq === ROUTE_SEQ) view.innerHTML = `<div class="card error">${esc(e.message)}</div>`;
   }
