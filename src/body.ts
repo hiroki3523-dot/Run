@@ -46,7 +46,10 @@ export function describeReceived(b: Record<string, unknown>): Record<string, str
 }
 
 /** 受け取った値を確かめる。範囲外・読めない値は捨てる (保存しない) */
-export function cleanBody(b: Record<string, unknown>): BodyDay {
+export function cleanBody(input: Record<string, unknown>): BodyDay {
+  // キーの前後の空白・大文字は無視する (ショートカットで「weight 」のように空白が入りやすい)
+  const b: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input || {})) b[k.trim().toLowerCase()] = v;
   const out: BodyDay = {};
   for (const [k, names, lo, hi] of FIELDS) {
     let v: number | null = null;
