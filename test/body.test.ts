@@ -7,6 +7,8 @@ describe('からだのデータ: 受け取る値', () => {
     expect(cleanBody({ weight: '72,4 kg', body_fat: 0.152, resting_hr: [50, 48], hrv: '62 ms', sleep_h: 412 })).toEqual({ weight: 72.4, body_fat: 15.2, resting_hr: 48, hrv: 62, sleep_h: 6.9 });
     expect(cleanBody({ weight: 0, body_fat: 95, resting_hr: '', hrv: 'abc' })).toEqual({});
     expect(cleanBody({ weight_kg: 70, sleep_hours: 7.25 })).toEqual({ weight: 70, sleep_h: 7.3 });
+    // ヘルスケアサンプルをそのまま文字にしたもの (日時付き)・オブジェクト・空
+    expect(cleanBody({ weight: '71.4 kg 2026/11/13 21:09', body_fat: { value: 0.186 }, resting_hr: '' })).toEqual({ weight: 71.4, body_fat: 18.6 });
   });
 });
 
@@ -39,7 +41,9 @@ describe('からだのデータ: API', () => {
     await call(env, 'POST', '/body', { date: '2026-11-12', weight: 72.4, body_fat: 0.15 });
     const r2 = (await call(env, 'POST', '/body', { date: '2026-11-12', resting_hr: 48 })).json;
     expect([r2.weight, r2.body_fat, r2.resting_hr, r2.source]).toEqual([72.4, 15, 48, 'health']);
-    expect((await call(env, 'POST', '/body', { weight: 'x' })).status).toBe(400);
+    const bad = await call(env, 'POST', '/body', { weight: 'x', note: '' });
+    expect(bad.status).toBe(400);
+    expect(bad.json.received.weight).toBe('string: "x"'); // 何が届いたかを返す
     const m = (await call(env, 'PUT', '/body/2026-11-12', { weight: '72.0', body_fat: '' })).json;
     expect([m.weight, m.body_fat, m.resting_hr, m.source]).toEqual([72, undefined, undefined, 'manual']);
     await call(env, 'PUT', '/body-profile', { height_cm: 175 });
