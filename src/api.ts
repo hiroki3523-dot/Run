@@ -991,7 +991,7 @@ api.get('/body', async (c) => {
   ]);
   const profile = prof ? JSON.parse(prof) : {};
   const goal = races.results[0]?.goal_time_s ?? null;
-  return c.json({ days, profile, goal_s: goal, guide: weightGuide(days, to, profile.height_cm ?? null, goal) });
+  return c.json({ days, profile, goal_s: goal, guide: weightGuide(days, to, profile.height_cm ?? null, goal, profile.target_kg ?? null) });
 });
 /** iPhone のショートカット (ヘルスケア) から。date が無ければ今日。送られた項目だけ上書き */
 api.post('/body', async (c) => {
@@ -1017,9 +1017,13 @@ api.put('/body/:date', async (c) => {
   return c.json(await saveBody(c.env, d, v, 'manual', true));
 });
 api.put('/body-profile', async (c) => {
+  // 送られた項目だけ変える (身長だけ・目標体重だけでも、ほかは消さない)。空なら未設定に戻す
   const b = await c.req.json<Record<string, unknown>>();
-  const h = Number(b.height_cm);
-  const profile = { height_cm: Number.isFinite(h) && h >= 120 && h <= 230 ? Math.round(h * 10) / 10 : null };
+  const cur = JSON.parse((await kvGet(c.env, 'body_profile')) || '{}');
+  const num = (v: unknown, lo: number, hi: number) => { if (v === '' || v == null) return null; const n = Number(v); return Number.isFinite(n) && n >= lo && n <= hi ? Math.round(n * 10) / 10 : null; };
+  const profile = { height_cm: cur.height_cm ?? null, target_kg: cur.target_kg ?? null };
+  if ('height_cm' in b) profile.height_cm = num(b.height_cm, 120, 230);
+  if ('target_kg' in b) profile.target_kg = num(b.target_kg, 30, 200);
   await kvSet(c.env, 'body_profile', JSON.stringify(profile));
   return c.json(profile);
 });
