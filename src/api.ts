@@ -13,7 +13,7 @@ import { analyzeRun, groupOf, type Snapshot } from './analysis';
 import { cleanText, legacyText } from './evaluate';
 import { probeFit, probeLapJson } from './fitprobe';
 import { runningNews } from './news';
-import { cleanBody, weightGuide, type BodyDay } from './body';
+import { cleanBody, describeReceived, weightGuide, type BodyDay } from './body';
 import { applyCoach, askCoach, coachBrief, BRIEF_Q } from './coach';
 import { autoFillRace, cleanRaceInfo, entryHistory, extractRaceInfo } from './raceinfo';
 import { findOfficialSite } from './sitefind';
@@ -995,10 +995,16 @@ api.get('/body', async (c) => {
 });
 /** iPhone のショートカット (ヘルスケア) から。date が無ければ今日。送られた項目だけ上書き */
 api.post('/body', async (c) => {
-  const b = await c.req.json<Record<string, unknown>>().catch(() => ({} as Record<string, unknown>));
+  // ショートカットは JSON 以外 (フォーム) で送ることもあるので、どちらも読む
+  let b: Record<string, unknown> | null = await c.req.json<Record<string, unknown>>().catch(() => null);
+  if (!b) {
+    const raw: string = await ((c.req as any).text?.() ?? c.req.raw?.text?.() ?? Promise.resolve('')).catch(() => '');
+    try { b = JSON.parse(raw); } catch { b = Object.fromEntries(new URLSearchParams(raw)); }
+  }
+  if (!b || typeof b !== 'object' || Array.isArray(b)) b = {};
   const date = typeof b.date === 'string' && isDate(b.date.slice(0, 10)) ? b.date.slice(0, 10) : jstToday();
   const v = cleanBody(b);
-  if (!Object.keys(v).length) return c.json({ error: '読み取れる値がありません (weight・body_fat・resting_hr・hrv・sleep_h)' }, 400);
+  if (!Object.keys(v).length) return c.json({ error: '読み取れる値がありません (weight・body_fat・resting_hr・hrv・sleep_h)', received: describeReceived(b) }, 400);
   return c.json({ date, ...(await saveBody(c.env, date, v, 'health')) });
 });
 /** 画面から手入力 (その日の値を入れ直す。空にした項目は消える) */

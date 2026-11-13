@@ -26,10 +26,23 @@ const FIELDS: [keyof BodyDay, string[], number, number][] = [
 
 /** ショートカットは「72,4」「15.2 %」のような文字や配列を送ってくることがあるので、ゆるく数にする */
 function toNum(v: unknown): number | null {
-  if (Array.isArray(v)) v = v[v.length - 1];
+  if (Array.isArray(v)) v = v[v.length - 1]; // 新しい順でないこともあるので、最後 (いちばん新しい) を使う
+  if (v && typeof v === 'object') { const o = v as Record<string, unknown>; v = o.value ?? o.quantity ?? o.qty ?? null; }
   if (v === null || v === undefined || v === '') return null;
-  const n = Number(String(v).replace(',', '.').replace(/[^\d.\-]/g, ''));
-  return Number.isFinite(n) ? n : null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  // 「71.4 kg」「71,4」「71.4 kg 2026/11/13 21:09」などから、最初の数だけを読む
+  const m = String(v).replace(/(\d),(\d)/, '$1.$2').match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+
+/** 読めなかったときに、何が届いたかを短く返す (原因を調べるため。値は先頭 60 文字まで) */
+export function describeReceived(b: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(b || {}).slice(0, 10)) {
+    const t = Array.isArray(v) ? `配列(${v.length})` : v === null ? 'null' : typeof v;
+    out[k.slice(0, 30)] = `${t}: ${JSON.stringify(v)?.slice(0, 60) ?? ''}`;
+  }
+  return out;
 }
 
 /** 受け取った値を確かめる。範囲外・読めない値は捨てる (保存しない) */
