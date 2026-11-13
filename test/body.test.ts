@@ -7,6 +7,7 @@ describe('からだのデータ: 受け取る値', () => {
     expect(cleanBody({ weight: '72,4 kg', body_fat: 0.152, resting_hr: [50, 48], hrv: '62 ms', sleep_h: 412 })).toEqual({ weight: 72.4, body_fat: 15.2, resting_hr: 48, hrv: 62, sleep_h: 6.9 });
     expect(cleanBody({ weight: 0, body_fat: 95, resting_hr: '', hrv: 'abc' })).toEqual({});
     expect(cleanBody({ weight_kg: 70, sleep_hours: 7.25 })).toEqual({ weight: 70, sleep_h: 7.3 });
+    expect(cleanBody({ 'weight ': 71.4, ' Body_Fat': 18.7 })).toEqual({ weight: 71.4, body_fat: 18.7 }); // キーの空白・大文字
     // ヘルスケアサンプルをそのまま文字にしたもの (日時付き)・オブジェクト・空
     expect(cleanBody({ weight: '71.4 kg 2026/11/13 21:09', body_fat: { value: 0.186 }, resting_hr: '' })).toEqual({ weight: 71.4, body_fat: 18.6 });
   });
