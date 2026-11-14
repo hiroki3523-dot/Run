@@ -1879,6 +1879,7 @@ function editPlan(p, settings) {
             <div class="wk-presets">${Object.keys(STEP_PRESETS).map((n) => `<button type="button" class="wk-preset" data-preset="${esc(n)}">${esc(n)}</button>`).join('')}</div>
             <button type="button" class="wk-own" data-add-at="0"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>自分でステップを組む</button></div>`}
         <div class="wk-card"><div class="field"><span class="lbl">メモ (任意)</span><input name="notes" value="${esc(st.notes)}" placeholder="気をつけたいこと など"></div></div>
+        <button type="button" class="wk-save" data-act="save">保存</button>
         ${p.id ? '<button type="button" class="danger wide" data-act="del">この計画を削除</button>' : ''}
       </div>`;
     };

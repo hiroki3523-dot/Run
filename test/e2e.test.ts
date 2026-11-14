@@ -655,6 +655,32 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect(names.some((n) => /^GET \/plans/.test(n || ''))).toBe(true);
     if (SHOTS) await (await page.$('#perf-card')).screenshot({ path: `${SHOTS}/31-perf.png` });
   }, 60000);
+  it('押しやすさ: 選択肢は行全体が押せる・保存は大きく目立つ・計画の編集は下にも保存', async () => {
+    const fresh = await addRun(env, { date: addDays(TODAY, -20), km: 8, segs: [{ km: 8, pace: 330, hr: 140 }] });
+    await open(`#/activities/${fresh}`);
+    await page.waitForSelector('.fbx-radio .rd');
+    const rd = await page.$eval('.fbx-radio .rd', (b: HTMLElement) => { const r = b.getBoundingClientRect(); return { w: r.width, h: r.height, box: b.closest('.card')!.getBoundingClientRect().width }; });
+    expect(rd.h).toBeGreaterThanOrEqual(48);
+    expect(rd.w).toBeGreaterThan(rd.box * 0.8);
+    const sv = await page.$eval('.fbx .fbx-save', (b: HTMLElement) => { const r = b.getBoundingClientRect(); return { h: r.height }; });
+    expect(sv.h).toBeGreaterThanOrEqual(52);
+    if (SHOTS) { await page.click('.fbx-radio .rd'); await (await page.$('.fbx')).screenshot({ path: `${SHOTS}/32-fbx.png` }); }
+    // 計画の編集: 下の保存で保存できる
+    const d = addDays(TODAY, 9);
+    const pid = (await call(env, 'POST', '/plans', { date: d, type: 'jog', distance_m: 6000 })).json.id;
+    await open(`#/plans?week=${d}`);
+    await page.click(`#cal [data-plan="${pid}"]`);
+    await page.waitForSelector('.wk-save');
+    await page.click('.wk-type[data-type="easy"]');
+    await page.waitForSelector('.wk-save');
+    const ws = await page.$eval('.wk-save', (b: HTMLElement) => b.getBoundingClientRect().height);
+    expect(ws).toBeGreaterThanOrEqual(52);
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/33-plan-save.png` });
+    await page.click('.wk-save');
+    await page.waitForTimeout(800);
+    expect((await call(env, 'GET', `/plans?from=${d}&to=${d}`)).json[0].type).toBe('easy');
+    await call(env, 'DELETE', `/plans/${pid}`);
+  }, 60000);
   it('ホーム: 今日の体調に体重・体脂肪率 (適正体重・目標まで) をまとめる・保存ボタンは大きく目立つ・見出しのボタンが中身に重ならない', async () => {
     await call(env, 'POST', '/body', { date: addDays(TODAY, -2), weight: 72.0, body_fat: 19.0 });
     await call(env, 'POST', '/body', { weight: 71.4, body_fat: 0.187, resting_hr: 47, hrv: 64, sleep_h: 6.5 });

@@ -1610,3 +1610,20 @@ a.sc-rec { color: var(--text); text-decoration: none; } a.sc-rec:active { opacit
 .pf-n em { font-style: normal; font-size: 11px; }
 .pf-t { font-size: 12px; color: var(--muted); margin: 12px 0 2px; }
 .pf-mid { color: var(--accent); } .pf-bad { color: var(--mid); }
+
+/* 押しやすさ: 保存はどこでも大きく目立つ色・選択肢は行全体を押せる */
+.fbx .fbx-save { background: var(--accent); color: #fff; font-weight: 700; font-size: 16px; min-height: 52px; box-shadow: 0 6px 18px rgba(0, 0, 0, .25); }
+.fbx .fbx-save:disabled { box-shadow: none; }
+.wk-save { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 54px; margin: 4px 0 12px; border-radius: 999px; border: 0; background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; box-shadow: 0 6px 18px rgba(0, 0, 0, .25); }
+.fbx-radio { gap: 6px; }
+.fbx-radio .rd { box-sizing: border-box; width: 100%; min-height: 48px; padding: 0 14px; border-radius: 14px; background: var(--btn-bg); border: 1.5px solid transparent; }
+.fbx-radio .rd.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--btn-bg)); }
+.fbx-radio .rd.on i { border-color: var(--accent); background: var(--accent); }
+.fbx .chips .chip, #cond .chips .chip { min-height: 44px; padding: 0 16px; }
+/* 小さな文字ボタン (追加済みにする・公式サイトを探す・画像 など) は、見た目はそのまま、押せる範囲だけ広げる */
+.linkbtn, .linkdanger, .cap-btn { position: relative; }
+.linkbtn::after, .linkdanger::after, .cap-btn::after { content: ''; position: absolute; inset: -12px -8px; }
+.chip.mini { min-height: 36px; padding: 6px 14px; font-size: 13px; position: relative; }
+.chip.mini::after { content: ''; position: absolute; inset: -6px -4px; }
+label.row:has(> input[type=checkbox]) { min-height: 44px; align-items: center; cursor: pointer; }
+label.row > input[type=checkbox] { width: 22px; height: 22px; flex: none; }
