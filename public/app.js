@@ -140,7 +140,22 @@ async function api(path, opts = {}) {
   if (method !== 'GET') clearApiCache();
   return out;
 }
+/** 通信の速さの記録 (設定に表示)。この端末だけに、最新 120 件を残す */
+const PERF = (() => { try { return JSON.parse(localStorage.getItem('perf') || '[]'); } catch { return []; } })();
+let perfSave = 0;
+function perfLog(kind, name, ms, ok = true) {
+  PERF.push({ k: kind, n: name, ms: Math.round(ms), ok, t: Date.now() });
+  if (PERF.length > 120) PERF.splice(0, PERF.length - 120);
+  clearTimeout(perfSave);
+  perfSave = setTimeout(() => { try { localStorage.setItem('perf', JSON.stringify(PERF)); } catch {} }, 1000);
+}
 async function apiFetch(path, opts = {}) {
+  const t0 = performance.now();
+  const pname = `${String(opts.method || 'GET').toUpperCase()} ${path.split('?')[0].replace(/\/\d+(?=\/|$)/g, '/:id').replace(/\d{4}-\d{2}-\d{2}/g, ':date')}`;
+  let ok = true;
+  try { return await apiFetchRaw(path, opts); } catch (e) { ok = false; throw e; } finally { perfLog('api', pname, performance.now() - t0, ok); }
+}
+async function apiFetchRaw(path, opts = {}) {
   const res = await fetch(`/api${path}`, {
     ...opts,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}`, ...opts.headers },
@@ -1238,7 +1253,8 @@ async function plansView(params) {
         try { sessionStorage.setItem('pm', k); } catch {}
       } else { try { sessionStorage.removeItem('pm'); } catch {} }
     }));
-    try { const k = sessionStorage.getItem('pm'); if (k) view.querySelector(`[data-pm="${k}"]`)?.click(); } catch {}
+    // 前に開いていた欄を開き直す。ただし AI コーチは押したときだけ (開くたびに AI が動いて重くなるため)
+    try { const k = sessionStorage.getItem('pm'); if (k && k !== 'coach') view.querySelector(`[data-pm="${k}"]`)?.click(); } catch {}
   });
 
   const prefsOf = settings.plan_prefs;
@@ -4392,6 +4408,28 @@ async function editShoe(s, opts = {}) {
 
 // ---- 設定
 
+/** 設定: 通信の速さ (この端末で記録した、読み込みと画面の表示にかかった時間) */
+const VIEW_NAME = { home: 'ホーム', plans: '計画', activities: '実績', 'activities-detail': 'ランの詳細', races: 'レース', 'races-detail': 'レースの詳細', shoes: 'シューズ', 'shoes-detail': 'シューズの詳細', settings: '設定', weather: '天気' };
+function renderPerf() {
+  const box = document.getElementById('perf-card');
+  if (!box) return;
+  const sec = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}秒` : `${ms}ms`);
+  const group = (k) => {
+    const m = new Map();
+    for (const e of PERF.filter((x) => x.k === k)) { const g = m.get(e.n) || { n: e.n, xs: [], ng: 0, t: 0 }; g.xs.push(e.ms); if (!e.ok) g.ng++; g.t = Math.max(g.t, e.t); m.set(e.n, g); }
+    return [...m.values()].map((g) => { const xs = [...g.xs].sort((a, b) => a - b); return { ...g, med: xs[Math.floor(xs.length / 2)], max: xs[xs.length - 1] }; }).sort((a, b) => b.max - a.max);
+  };
+  const row = (g, label) => `<div class="pf-row"><span class="pf-n">${esc(label)}${g.ng ? ` <em class="bd-note">失敗 ${g.ng}</em>` : ''}</span><span class="num muted">${g.xs.length}回</span><span class="num">${sec(g.med)}</span><b class="num ${g.max >= 3000 ? 'pf-bad' : g.max >= 1000 ? 'pf-mid' : ''}">${sec(g.max)}</b></div>`;
+  const views = group('view'), apis = group('api').slice(0, 12);
+  box.innerHTML = `<h2>通信の速さ</h2>
+    <p class="muted">この iPhone で、画面が出るまでと、読み込みにかかった時間 (最近 120 件)。重いと感じたら、ここのスクショを送ってください。</p>
+    ${PERF.length ? `<div class="pf-h"><span></span><span>回数</span><span>ふつう</span><span>最大</span></div>
+      <h3 class="pf-t">画面が出るまで</h3>${views.map((g) => row(g, VIEW_NAME[g.n] || g.n)).join('') || '<p class="muted">まだありません</p>'}
+      <h3 class="pf-t">読み込み (遅い順)</h3>${apis.map((g) => row(g, g.n)).join('')}
+      <button type="button" class="chip mini" id="perf-clear" style="margin-top:10px">記録を消す</button>` : '<p class="muted">まだ記録がありません。ほかの画面を開くとたまります。</p>'}`;
+  const c = box.querySelector('#perf-clear');
+  if (c) c.onclick = () => { PERF.length = 0; try { localStorage.removeItem('perf'); } catch {} renderPerf(); };
+}
 async function settingsView() {
   let status = null;
   let settings = null;
@@ -4685,6 +4723,7 @@ async function settingsView() {
       <p class="muted">練習メニューとレースを iPhone のカレンダーに表示します (読み取り専用・自動更新)。</p>
       <div class="row"><button id="open-cal" class="primary">カレンダーに追加</button><button id="copy-cal">URL をコピー</button></div>
     </div>
+    <div class="card" id="perf-card"></div>
     <div class="card" id="body-setup">
       <h2>からだのデータ (ヘルスケア)</h2>
       <p class="muted">iPhone のヘルスケアの体重・体脂肪率・安静時心拍・HRV・睡眠を、ショートカットで毎朝 STRIDE に送れます (ホームの「今日の体調」に出ます)。STRIDE はヘルスケアを直接は読めないため、この方法になります。</p>
@@ -4738,6 +4777,7 @@ async function route() {
   }
   try {
     view.innerHTML = '<p class="muted">読み込み中…</p>';
+    const r0 = performance.now();
     const html =
       tab === 'plans' ? await plansView(params)
       : tab === 'activities' ? (parts[1] ? await activityDetailView(parts[1]) : await activitiesView(params))
@@ -4748,12 +4788,14 @@ async function route() {
       : await homeView();
     if (seq !== ROUTE_SEQ) return;
     view.innerHTML = html;
+    perfLog('view', view.dataset.tab, performance.now() - r0);
     setHeaderH();
     bindTrend(view);
     if (document.getElementById('news-list')) loadNews();
     if (document.getElementById('insights')) loadInsights();
     if (document.getElementById('shoe-cmp')) loadShoeCompare();
     if (document.getElementById('cond')) loadCondition();
+    if (document.getElementById('perf-card')) renderPerf();
   } catch (e) {
     if (seq === ROUTE_SEQ) view.innerHTML = `<div class="card error">${esc(e.message)}</div>`;
   }

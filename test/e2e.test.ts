@@ -398,8 +398,9 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     let next = BROKEN, calls = 0;
     env.AI = { run: async () => { calls++; return { response: next }; } };
     try {
-      await page.evaluate(() => { sessionStorage.clear(); sessionStorage.setItem('pm', 'coach'); });
+      await page.evaluate(() => sessionStorage.clear());
       await open('#/plans');
+      await page.click('[data-pm="coach"]'); // AI コーチは押したときだけ動く
       await page.waitForSelector('#coach-log .cm-card', { timeout: 15000 });
       if (SHOTS) await (await page.$('#pm-coach')).screenshot({ path: `${SHOTS}/40-coach-brief.png` });
       const text = await page.$eval('#coach-log', (e: Element) => e.textContent || '');
@@ -416,6 +417,8 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       expect(await page.$('#coach-log .cm-card')).toBeNull();
       expect(await page.$('#coach-brief-btn')).toBeTruthy();
       await open('#/plans');
+      await page.click('[data-pm="coach"]');
+      await page.waitForTimeout(800);
       expect(await page.$('#coach-log .cm-card')).toBeNull();
       expect(calls).toBe(before);
 
@@ -627,6 +630,30 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect([iv.reps, iv.work.by, iv.work.value, iv.work.pmin, iv.work.pmax, iv.rest.by, iv.rest.value]).toEqual([2, 'dist', 3000, 285, 290, 'dist', 500]);
     expect(got.find((p: any) => p.date === d1).steps).toBeNull(); // 1 区間だけならステップにしない
     for (const p of got) await call(env, 'DELETE', `/plans/${p.id}`);
+  }, 60000);
+  it('速さ: 計画を開き直しても AI コーチは自動で動かない・設定に通信の速さが出る', async () => {
+    let briefs = 0;
+    await page.route('**/api/coach/brief**', async (r: any) => { briefs++; await r.fulfill({ status: 200, contentType: 'application/json', body: '{"summary":"テスト","items":[]}' }); });
+    try {
+      await open('#/plans');
+      await page.evaluate(() => sessionStorage.setItem('pm', 'coach'));
+      await open('#/');
+      await open('#/plans');
+      await page.waitForTimeout(800);
+      expect(briefs).toBe(0);
+      expect(await page.$eval('#pm-coach', (e: Element) => e.classList.contains('hidden'))).toBe(true);
+      // ほかの欄 (予定をコピー) は開き直す
+      await page.evaluate(() => sessionStorage.setItem('pm', 'copy'));
+      await open('#/');
+      await open('#/plans');
+      expect(await page.$eval('#pm-copy', (e: Element) => e.classList.contains('hidden'))).toBe(false);
+    } finally { await page.unroute('**/api/coach/brief**'); await page.evaluate(() => sessionStorage.removeItem('pm')); }
+    await open('#/settings');
+    await page.waitForSelector('#perf-card .pf-row');
+    const names = await page.$$eval('#perf-card .pf-row .pf-n', (els: Element[]) => els.map((e) => e.textContent));
+    expect(names).toContain('計画');
+    expect(names.some((n) => /^GET \/plans/.test(n || ''))).toBe(true);
+    if (SHOTS) await (await page.$('#perf-card')).screenshot({ path: `${SHOTS}/31-perf.png` });
   }, 60000);
   it('ホーム: 今日の体調に体重・体脂肪率 (適正体重・目標まで) をまとめる・保存ボタンは大きく目立つ・見出しのボタンが中身に重ならない', async () => {
     await call(env, 'POST', '/body', { date: addDays(TODAY, -2), weight: 72.0, body_fat: 19.0 });

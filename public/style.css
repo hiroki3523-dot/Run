@@ -1600,3 +1600,13 @@ a.sc-rec { color: var(--text); text-decoration: none; } a.sc-rec:active { opacit
 .bulk-row { display: grid; grid-template-columns: 60px 88px 46px minmax(0, 1fr); gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
 .bulk-row .badge { justify-self: start; white-space: nowrap; }
 .bulk-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 設定: 通信の速さ */
+.pf-h, .pf-row { display: grid; grid-template-columns: minmax(0, 1fr) 40px 58px 58px; gap: 6px; align-items: baseline; font-size: 12.5px; }
+.pf-h { font-size: 11px; color: var(--muted); text-align: right; margin-top: 8px; }
+.pf-row { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.pf-row > span:not(.pf-n), .pf-row > b { text-align: right; }
+.pf-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-n em { font-style: normal; font-size: 11px; }
+.pf-t { font-size: 12px; color: var(--muted); margin: 12px 0 2px; }
+.pf-mid { color: var(--accent); } .pf-bad { color: var(--mid); }
