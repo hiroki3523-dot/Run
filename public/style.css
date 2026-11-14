@@ -1519,19 +1519,57 @@ a.sc-rec { color: var(--text); text-decoration: none; } a.sc-rec:active { opacit
 /* 今朝の体調の保存ボタン: 大きく・目立つ色に */
 #cond .fbx-save { width: 100%; margin-top: 18px; min-height: 52px; border-radius: 999px; font-size: 16px; font-weight: 700; background: var(--accent); color: #fff; border: 0; box-shadow: 0 6px 18px rgba(0, 0, 0, .25); }
 #cond .fbx-save:disabled { background: var(--btn-bg); color: var(--muted); box-shadow: none; }
-/* からだ */
-.bd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; margin: 4px 0 8px; }
-.bd-grid > div { background: var(--btn-bg); border-radius: 12px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.bd-grid small { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
-.bd-grid small em { font-style: normal; font-size: 10.5px; }
-.bd-grid b { font-size: 20px; white-space: nowrap; }
-.bd-grid b span { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 2px; }
-.bd-spark { width: 100%; height: 46px; display: block; }
-.bd-spark-l { display: flex; justify-content: space-between; font-size: 11px; margin-top: 2px; }
+/* 今日の体調: 体重・体脂肪率 */
+.bd-sec { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.bd-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.bd-h b { font-size: 14px; }
+.bd-top { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.bd-main { background: var(--btn-bg); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bd-main > small { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.bd-main small em { font-style: normal; font-size: 10.5px; margin-left: 4px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--text) 8%, transparent); }
+.bd-main > div { display: flex; align-items: baseline; gap: 3px; white-space: nowrap; }
+.bd-main > div b { font-size: 28px; line-height: 1.15; }
+.bd-main > div > span { font-size: 12px; color: var(--muted); }
+.bd-d { margin-left: auto; font-size: 13px; font-weight: 700; color: var(--muted); }
+.bd-d small { font-size: 10px; font-weight: 500; margin-left: 2px; }
+.bd-d.dn { color: var(--good); } .bd-d.up { color: var(--mid); }
+.bd-goal { margin-top: 12px; }
+.bd-goal-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 13px; margin-bottom: 6px; }
+.bd-rem { font-size: 18px; color: var(--accent); white-space: nowrap; } .bd-rem.ok { color: var(--good); }
+.bd-goal .bar > div { background: linear-gradient(90deg, var(--accent), var(--good)); }
+.bd-sub { font-size: 12.5px; line-height: 1.6; margin: 6px 0 0; }
+.bd-empty { font-size: 12.5px; margin: 8px 0 0; }
+.bd-chart { width: 100%; height: auto; display: block; margin-top: 12px; }
+.bd-ax { font-size: 9.5px; fill: var(--muted); font-family: inherit; }
+.bd-legend { display: flex; gap: 12px; font-size: 11px; margin-top: 2px; }
+.bd-legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+.lg-w { background: var(--accent); } .lg-t { background: var(--good); } .lg-f { background: color-mix(in srgb, var(--good) 30%, transparent); height: 8px !important; }
+.bd-more { margin-top: 10px; }
+/* 体調の入力: 体重・体脂肪率 */
+.bf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.bf-f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.bf-f > span { font-size: 12px; color: var(--muted); }
+.bf-f > small { font-size: 11px; color: var(--muted); text-align: center; }
+.bf-in { display: grid; grid-template-columns: 34px 1fr 34px; align-items: center; gap: 4px; background: var(--btn-bg); border-radius: 14px; padding: 4px; }
+.bf-in input { width: 100%; min-width: 0; text-align: center; font-size: 20px; font-weight: 700; background: transparent; border: 0; padding: 6px 0; color: var(--text); font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
+.bf-in input::-webkit-outer-spin-button, .bf-in input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.bf-step { width: 34px; height: 34px; min-height: 0; padding: 0; border-radius: 10px; font-size: 18px; display: grid; place-items: center; box-shadow: none; }
+#cond .fbx-q.bf-form { margin-top: 16px; }
 .bd-guide { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .bd-guide summary { font-weight: 600; font-size: 14px; cursor: pointer; }
 .bd-guide p { font-size: 13px; line-height: 1.7; margin: 8px 0 0; }
 .bd-note { color: var(--mid); }
+/* カードの見出し行: 右のボタンが下の中身に重ならないよう、見出しの余白を行に持たせる */
+.card > .row.spread:first-child { margin-bottom: 12px; align-items: center; flex-wrap: nowrap; }
+.card > .row.spread:first-child > h2 { margin: 0; min-width: 0; }
+.card > .row.spread:first-child > .chip, .card > .row.spread:first-child > a.chip { flex: none; }
+/* ダイアログの保存: 体調の保存と同じく、大きく目立つ色に */
+.dlg-actions { flex-direction: column-reverse; align-items: stretch; gap: 10px; }
+.dlg-actions > div { justify-content: space-between; }
+.dlg-actions > .row { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
+.dlg-actions > .row button { min-height: 50px; border-radius: 999px; font-size: 15px; padding: 0 10px; white-space: nowrap; justify-content: center; }
+.dlg-actions > .row button.primary { background: var(--accent); color: #fff; border: 0; font-weight: 700; box-shadow: 0 6px 18px rgba(0, 0, 0, .25); }
+.dlg-actions > div:first-child:empty { display: none; }
 .bd-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
 .bd-howto ol { padding-left: 1.2em; font-size: 13px; line-height: 1.7; }
 .bd-howto code { font-size: 12px; word-break: break-all; }

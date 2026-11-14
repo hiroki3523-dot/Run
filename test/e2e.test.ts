@@ -586,22 +586,58 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       for (const p of [p1, p2, pt]) await call(env, 'DELETE', `/plans/${p.id ?? p[0]?.id}`);
     }
   }, 60000);
-  it('ホーム: 今朝の体調の保存ボタンは大きく目立つ・からだのデータ (ヘルスケアから送った値) と体重の目安', async () => {
-    await call(env, 'POST', '/body', { weight: 71.8, body_fat: 0.148, resting_hr: 47, hrv: 64, sleep_h: 6.5 });
+  it('ホーム: 今日の体調に体重・体脂肪率 (適正体重・目標まで) をまとめる・保存ボタンは大きく目立つ・見出しのボタンが中身に重ならない', async () => {
+    await call(env, 'POST', '/body', { date: addDays(TODAY, -2), weight: 72.0, body_fat: 19.0 });
+    await call(env, 'POST', '/body', { weight: 71.4, body_fat: 0.187, resting_hr: 47, hrv: 64, sleep_h: 6.5 });
     await open('#/');
-    await page.waitForSelector('#bodyc .bd-grid');
-    const cells = await page.$$eval('#bodyc .bd-grid > div', (els: Element[]) => els.map((e) => e.textContent!.replace(/\s+/g, '')));
-    expect(cells).toEqual(['体重71.8kg', '体脂肪率14.8%', '安静時心拍47bpm', 'HRV64ms', '睡眠6.5時間']);
-    expect(await page.textContent('#bodyc .bd-guide')).toContain('体重 1% ≈ タイム 1%');
-    if (SHOTS) await (await page.$('#bodyc')).screenshot({ path: `${SHOTS}/01c-body.png` });
-    // 体調の入力を開いて、保存ボタンの大きさと色
-    const openBtn = await page.$('#cond [data-cd="open"], #cond [data-cd="edit"]');
-    await openBtn!.click();
+    await page.waitForSelector('#cond .bd-sec');
+    expect(await page.$('#bodyc')).toBeNull(); // 別のカードには分けない
+    expect(await page.textContent('#cond h2')).toContain('今日の体調');
+    const mains = await page.$$eval('#cond .bd-main', (els: Element[]) => els.map((e) => e.textContent!.replace(/\s+/g, '')));
+    expect(mains[0]).toContain('71.4kg');
+    expect(mains[1]).toContain('18.7%');
+    const goal = (await page.textContent('#cond .bd-goal'))!.replace(/\s+/g, ' ');
+    expect(goal).toMatch(/適正体重 6\d\.\d〜6\d\.\dkg/);
+    expect(goal).toMatch(/あと \d+\.\dkg/);
+    expect(await page.$('#cond svg.bd-chart')).not.toBeNull(); // 2 日分あるのでグラフ
+    const others = await page.$$eval('#cond .bd-more > div', (els: Element[]) => els.map((e) => e.textContent!.replace(/\s+/g, '')));
+    expect(others).toEqual(['安静時心拍47bpm', 'HRV64ms', '睡眠6.5時間']);
+    // ホームの各カード: 見出しの右のボタンと、その下の中身が重ならない
+    const overlaps = await page.$$eval('.card > .row.spread:first-child', (rows: Element[]) => rows.map((r) => {
+      const next = r.nextElementSibling; const btn = r.querySelector('.chip, button');
+      if (!next || !btn) return 0;
+      return btn.getBoundingClientRect().bottom + 2 - next.getBoundingClientRect().top; // 影 2px も含める
+    }).filter((x) => x > 0));
+    expect(overlaps).toEqual([]);
+    if (SHOTS) await (await page.$('#cond')).screenshot({ path: `${SHOTS}/01c-body.png` });
+    // 体調の入力: 体重・体脂肪率も同じ画面で入れられ、保存ボタンは大きく目立つ
+    await page.click('#cond [data-cd="open"], #cond [data-cd="edit"]');
+    expect(await page.inputValue('#cond input[name="weight"]')).toBe('71.4');
     const st = await page.$eval('#cond .fbx-save', (b: HTMLElement) => { const r = b.getBoundingClientRect(), cs = getComputedStyle(b); return { h: r.height, w: r.width, bg: cs.backgroundColor, box: b.closest('.card')!.getBoundingClientRect().width }; });
     expect(st.h).toBeGreaterThanOrEqual(50);
     expect(st.w).toBeGreaterThan(st.box * 0.8);
     expect(st.bg).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+    // ＋ で 0.1kg 上げて保存 → 手入力として保存され、心拍・睡眠は残る
+    await page.click('#cond [data-bs="weight"][data-d="0.1"]');
+    expect(await page.inputValue('#cond input[name="weight"]')).toBe('71.5');
     if (SHOTS) await (await page.$('#cond')).screenshot({ path: `${SHOTS}/01d-cond-save.png` });
+    const saved = page.waitForResponse((x: any) => x.url().includes(`/api/body/${TODAY}`) && x.request().method() === 'PUT');
+    await page.click('#cond [data-cd="save"]');
+    await saved;
+    const day = (await call(env, 'GET', '/body')).json.days[TODAY];
+    expect([day.weight, day.body_fat, day.resting_hr, day.sleep_h, day.source]).toEqual([71.5, 18.7, 47, 6.5, 'manual']);
+    // ダイアログの保存ボタンも大きく目立つ
+    await page.waitForSelector('#cond [data-bd="goal"]');
+    await page.click('#cond [data-bd="goal"]');
+    const ok = await page.$eval('dialog[open] button[value="ok"]', (b: HTMLElement) => { const r = b.getBoundingClientRect(), cs = getComputedStyle(b); return { h: r.height, bg: cs.backgroundColor }; });
+    expect(ok.h).toBeGreaterThanOrEqual(48);
+    expect(ok.bg).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/01e-body-goal.png` });
+    await page.fill('dialog[open] input[name="target_kg"]', '68');
+    await page.click('dialog[open] button[value="ok"]');
+    await page.waitForFunction(() => document.querySelector('#cond .bd-goal')?.textContent?.includes('目標体重'));
+    expect((await page.textContent('#cond .bd-goal-h'))!.replace(/\s+/g, '')).toMatch(/目標体重68\.0kgあと3\.\dkg/);
+    await call(env, 'PUT', '/body-profile', { target_kg: '' });
   }, 60000);
   it('レース: 地点ごとの通過時刻の気温と風・コースの向きで向かい風/追い風・天気画面に風向き', async () => {
     const r0 = (await call(env, 'POST', '/races', { name: '風テストマラソン', date: addDays(TODAY, 1), distance_m: 42195, goal_time_s: 11400, priority: 'B', status: 'confirmed', no_auto: true, info: { start_time: '8:20' } })).json;
