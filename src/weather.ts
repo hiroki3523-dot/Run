@@ -37,7 +37,7 @@ export async function overlayJma(lat: number, lon: number, j: { hourly?: Record<
     forecast_days: String(days.forecast), ...(days.past ? { past_days: String(days.past) } : {}),
   });
   try {
-    const res = await fetch(`https://api.open-meteo.com/v1/forecast?${q}`, { cf: { cacheTtl: 900, cacheEverything: true } } as RequestInit);
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?${q}`, { cf: { cacheTtl: 900, cacheEverything: true }, signal: AbortSignal.timeout(4000) } as RequestInit);
     if (!res.ok) return;
     const k = (await res.json()) as { hourly?: Record<string, any[]>; daily?: Record<string, any[]> };
     for (const part of ['hourly', 'daily'] as const) {
@@ -124,7 +124,7 @@ export async function weatherDays(place: { name: string; lat: number; lon: numbe
     past_days: '7',
     forecast_days: '16',
   });
-  const res = await fetch(`https://api.open-meteo.com/v1/forecast?${q}`, { cf: { cacheTtl: 1800, cacheEverything: true } } as RequestInit);
+  const res = await fetch(`https://api.open-meteo.com/v1/forecast?${q}`, { cf: { cacheTtl: 1800, cacheEverything: true }, signal: AbortSignal.timeout(5000) } as RequestInit);
   if (!res.ok) return null;
   const j = (await res.json()) as { daily?: Record<string, (number | string | null)[]>; hourly?: Record<string, (number | string | null)[]> };
   await overlayJma(city[2], city[3], j as any, { past: 7, forecast: 16 });
