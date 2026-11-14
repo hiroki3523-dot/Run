@@ -915,10 +915,14 @@ async function loadInsights() {
   } catch { box.innerHTML = '<p class="muted">読み込めませんでした。</p>'; }
 }
 
+function shoeRecHtml(type) {
+  const r = recommendShoe(type);
+  return r ? `<div class="shoe-rec">おすすめ: ${esc(shoeName(r.shoe))} <span class="muted">${Math.round(r.shoe.total_km)}km</span><div class="muted why">${esc(r.why)}</div></div>` : '';
+}
+/** おすすめシューズの欄。相性のデータがあとから届いたら、data-st の欄だけ描き直す */
 function shoeLine(p, calendar) {
   if (!calendar || p.type === 'rest' || p.activity_id) return '';
-  const r = recommendShoe(p.type);
-  return r ? `<div class="shoe-rec">おすすめ: ${esc(shoeName(r.shoe))} <span class="muted">${Math.round(r.shoe.total_km)}km</span><div class="muted why">${esc(r.why)}</div></div>` : '';
+  return `<div class="shoe-slot" data-st="${p.type}">${shoeRecHtml(p.type)}</div>`;
 }
 
 /** 同じ日・同じ内容の計画が重なっていたら 1 つにまとめる (走った実績が付いている方を残す) */
@@ -1051,15 +1055,20 @@ function activityList(acts) {
 
 async function plansView(params) {
   const ws = weekStart(params.get('week') || today());
+  const mySeq = ROUTE_SEQ;
+  // 天気とシューズの相性は待たない (外の天気サービスが遅いと画面が出ないため)。届いたら、その欄だけ埋める
+  const wxP = loadWx();
+  const fitP = SHOE_FIT ? null : api('/shoes/compare').catch(() => ({}));
   const [plansRaw, weekActs, settings, shoes] = await Promise.all([
     api(`/plans?from=${ws}&to=${addDays(ws, 6)}`),
     api(`/activities?from=${ws}&to=${addDays(ws, 6)}`),
     api('/settings'),
     api('/shoes').catch(() => []),
-    loadWx(),
   ]);
   SHOES = shoes;
-  if (!SHOE_FIT) SHOE_FIT = await api('/shoes/compare').catch(() => ({}));
+  const fresh = () => mySeq === ROUTE_SEQ && view.dataset.tab === 'plans';
+  wxP.then(() => setTimeout(() => { if (fresh()) view.querySelectorAll('[data-wx]').forEach((el) => { el.innerHTML = wxDay(el.dataset.wx); }); }));
+  if (fitP) fitP.then((f) => { SHOE_FIT = f; setTimeout(() => { if (fresh()) view.querySelectorAll('.shoe-slot').forEach((el) => { el.innerHTML = shoeRecHtml(el.dataset.st); }); }); });
   dedupeIfNeeded(plansRaw);
   const plans = uniqPlans(plansRaw);
   /** 同じ日に走ったワークアウトは 1 つのメニューとして見せる。アップ・メイン・ダウンの内訳つき */
@@ -1164,7 +1173,7 @@ async function plansView(params) {
         const dp = plans.filter((p) => p.date === d);
         return `
         <div class="week-day ${d === t ? 'today' : ''}" data-day="${d}">
-          <div class="daycol">${dp.length ? '<span class="grip" data-grip="' + d + '" aria-label="ドラッグして入れ替え">⠿</span>' : '<span class="grip off"></span>'}<div><strong>${md(d)}</strong><div class="muted">${dow(d)}</div>${wxDay(d)}${dayTag(d)}</div></div>
+          <div class="daycol">${dp.length ? '<span class="grip" data-grip="' + d + '" aria-label="ドラッグして入れ替え">⠿</span>' : '<span class="grip off"></span>'}<div><strong>${md(d)}</strong><div class="muted">${dow(d)}</div><span class="wx-slot" data-wx="${d}">${wxDay(d)}</span>${dayTag(d)}</div></div>
           <div class="day-body">
             ${markHtml(dayJudge(d, dp, weekActs.filter((a) => a.date === d), settings))}
             ${dp.map((p) => planLine(p, true)).join('')}

@@ -665,4 +665,26 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       await call(env, 'DELETE', `/races/${r0.id}`);
     }
   }, 60000);
+  it('計画: 天気・シューズの相性が遅くても、計画はすぐ出る (届いたらその欄だけ埋まる)', async () => {
+    const wx = { place: '福岡', days: [...Array(23)].map((_, k) => ({ date: addDays(TODAY, k - 7), sky: 'sun', code: 0, tmax: 21, tmin: 12, precip_pct: 10 })) };
+    let releaseWx: () => void = () => {}, releaseFit: () => void = () => {};
+    const wxGate = new Promise<void>((r) => (releaseWx = r)), fitGate = new Promise<void>((r) => (releaseFit = r));
+    await page.route('**/api/weather/week', async (r: any) => { await wxGate; await r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(wx) }).catch(() => {}); });
+    await page.route('**/api/shoes/compare', async (r: any) => { await fitGate; await r.fulfill({ status: 200, contentType: 'application/json', body: '{}' }).catch(() => {}); });
+    try {
+      // 前の画面で読んだ天気・相性を持ち越さないよう、ページを読み直す
+      await page.goto(`${srv.url}/?t=${Date.now()}#/plans`);
+      const t0 = Date.now();
+      await page.waitForSelector(`#cal .week-day[data-day="${TODAY}"]`, { timeout: 5000 });
+      expect(Date.now() - t0).toBeLessThan(5000);
+      expect(await page.$(`#cal [data-wx="${TODAY}"] .wxday`)).toBeNull(); // 天気はまだ
+      releaseWx();
+      await page.waitForSelector(`#cal [data-wx="${TODAY}"] .wxday`, { timeout: 5000 }); // 届いたら埋まる
+      releaseFit();
+    } finally {
+      releaseWx(); releaseFit();
+      await page.unroute('**/api/weather/week');
+      await page.unroute('**/api/shoes/compare');
+    }
+  }, 60000);
 });
