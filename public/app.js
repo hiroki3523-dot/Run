@@ -151,7 +151,7 @@ function perfLog(kind, name, ms, ok = true) {
 }
 async function apiFetch(path, opts = {}) {
   const t0 = performance.now();
-  const pname = `${String(opts.method || 'GET').toUpperCase()} ${path.split('?')[0].replace(/\/\d+(?=\/|$)/g, '/:id').replace(/\d{4}-\d{2}-\d{2}/g, ':date')}`;
+  const pname = `${String(opts.method || 'GET').toUpperCase()} ${path.split('?')[0].replace(/\/-?\d+(?=\/|$)/g, '/:id').replace(/\d{4}-\d{2}-\d{2}/g, ':date')}`;
   let ok = true;
   try { return await apiFetchRaw(path, opts); } catch (e) { ok = false; throw e; } finally { perfLog('api', pname, performance.now() - t0, ok); }
 }
