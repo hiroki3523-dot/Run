@@ -68,6 +68,24 @@ describe('計画と実績の紐付け', () => {
     await call(env, 'PUT', `/activities/${id}`, { plan_id: p.json.id });
     expect((await call(env, 'GET', `/activities/${id}`)).json.plan_id).toBe(p.json.id);
   });
+  it('まとめて取り込み: ステップも保存・置き換えでも走った記録と結びついた計画は残す', async () => {
+    const p = await call(env, 'POST', '/plans', { date: '2026-10-24', type: 'easy', distance_m: 8000 });
+    const id = await addRun(env, { date: '2026-10-24', km: 8, segs: [{ km: 8, pace: 330 }] });
+    await call(env, 'POST', '/plans', { date: '2026-10-25', type: 'jog', distance_m: 5000 });
+    const steps = [{ kind: 'warmup', by: 'dist', value: 2000, pmin: 340, pmax: 365, zone: 0 }, { kind: 'interval', reps: 2, work: { by: 'dist', value: 3000, pmin: 285, pmax: 290, zone: 2 }, rest: { by: 'dist', value: 500, pmin: 345, pmax: 390, zone: 0 } }];
+    const r = await call(env, 'POST', '/plans/bulk', { replace: true, plans: [
+      { date: '2026-10-24', type: 'long', distance_m: 20000 },
+      { date: '2026-10-25', type: 'm', distance_m: 11000, steps },
+      { date: '2026-10-26', type: 'rest' },
+    ] });
+    expect(r.status).toBe(200);
+    expect(r.json).toEqual({ imported: 2, replaced: true, kept: ['2026-10-24'] });
+    const l = (await call(env, 'GET', '/plans?from=2026-10-24&to=2026-10-26')).json;
+    expect(l.map((x: any) => `${x.date}:${x.type}`).sort()).toEqual(['2026-10-24:easy', '2026-10-25:m', '2026-10-26:rest']);
+    expect(JSON.parse(l.find((x: any) => x.date === '2026-10-25').steps)).toEqual(steps);
+    // 走った記録と計画の結びつきはそのまま
+    expect((await call(env, 'GET', `/activities/${id}`)).json.plan_id).toBe(p.json.id);
+  });
   it('計画を消しても実績は残り、紐付けだけ外れる', async () => {
     const p = await call(env, 'POST', '/plans', { date: '2026-10-23', type: 'easy', distance_m: 8000 });
     const id = await addRun(env, { date: '2026-10-23', km: 8, segs: [{ km: 8, pace: 330 }] });

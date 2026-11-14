@@ -315,6 +315,8 @@ api.post('/plans/dedupe', async (c) => {
 });
 
 /** 計画をまとめて登録する (JSON 配列)。replace=true なら対象期間の既存計画を先に消す */
+/** 走った記録と結びついた計画 (activities.plan_id から参照されている) */
+const LINKED = '(id IN (SELECT plan_id FROM activities WHERE plan_id IS NOT NULL))';
 api.post('/plans/bulk', async (c) => {
   const body = await c.req.json<{ plans?: Record<string, unknown>[]; replace?: boolean } | Record<string, unknown>[]>();
   const list = Array.isArray(body) ? body : body.plans;
@@ -329,14 +331,20 @@ api.post('/plans/bulk', async (c) => {
     }
   });
   const stmts: D1PreparedStatement[] = [];
+  let kept: string[] = [];
   if (replace) {
+    // 置き換え: 期間内の計画を消してから入れる。ただし走った記録と結びついた計画は消さず、その日は新しい計画を入れない
     const dates = rows.map((r) => r[0] as string).sort();
-    stmts.push(c.env.DB.prepare('DELETE FROM plans WHERE date BETWEEN ? AND ?').bind(dates[0], dates[dates.length - 1]));
+    const [from, to] = [dates[0], dates[dates.length - 1]];
+    const { results } = await c.env.DB.prepare(`SELECT DISTINCT date FROM plans WHERE date BETWEEN ? AND ? AND ${LINKED}`).bind(from, to).all<{ date: string }>();
+    kept = results.map((r) => r.date);
+    stmts.push(c.env.DB.prepare(`DELETE FROM plans WHERE date BETWEEN ? AND ? AND NOT ${LINKED}`).bind(from, to));
   }
-  const ins = c.env.DB.prepare('INSERT INTO plans (date, type, distance_m, pace_min_s, pace_max_s, hr_max, notes) VALUES (?, ?, ?, ?, ?, ?, ?)');
-  rows.forEach((r) => stmts.push(ins.bind(...r)));
+  const ins = c.env.DB.prepare('INSERT INTO plans (date, type, distance_m, pace_min_s, pace_max_s, hr_max, notes, steps) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  const add = rows.filter((r) => !kept.includes(r[0] as string));
+  add.forEach((r) => stmts.push(ins.bind(...r)));
   await c.env.DB.batch(stmts);
-  return c.json({ imported: rows.length, replaced: replace });
+  return c.json({ imported: add.length, replaced: replace, kept });
 });
 
 /** 週の計画を別の週へ複製する */
