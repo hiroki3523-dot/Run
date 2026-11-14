@@ -586,6 +586,48 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
       for (const p of [p1, p2, pt]) await call(env, 'DELETE', `/plans/${p.id ?? p[0]?.id}`);
     }
   }, 60000);
+  it('計画: COROS のプランの JSON をファイルで取り込む (確認してから置き換え・今日より前は入れない・ステップ付き)', async () => {
+    const d1 = addDays(TODAY, 20), d2 = addDays(TODAY, 21), d3 = addDays(TODAY, 22);
+    await call(env, 'POST', '/plans', { date: d2, type: 'jog', distance_m: 5000, notes: '古い計画' });
+    const data = { format: 'STRIDE_COROS_PLAN_EXCHANGE_V1', days: [
+      { date: addDays(TODAY, -1), status: 'planned', name: 'Eジョグ 8km', workout_type: 'easy_run', planned_distance_km: 8, blocks: [{ role: 'main', target: { type: 'distance', meters: 8000 }, intensity: { faster_sec_per_km: 320, slower_sec_per_km: 345 } }] },
+      { date: d1, status: 'planned', name: '回復ジョグ 7km', workout_type: 'easy_run', planned_distance_km: 7, blocks: [{ role: 'main', target: { type: 'distance', meters: 7000 }, intensity: { faster_sec_per_km: 340, slower_sec_per_km: 360 } }], description: '無理なく' },
+      { date: d2, status: 'planned', name: 'ペース走 3km×2本', workout_type: 'pace_intervals', planned_distance_km: 11, blocks: [
+        { role: 'warmup', target: { type: 'distance', meters: 2000 }, intensity: { faster_sec_per_km: 340, slower_sec_per_km: 365 } },
+        { role: 'repeat', count: 2, steps: [{ role: 'main', target: { type: 'distance', meters: 3000 }, intensity: { faster_sec_per_km: 285, slower_sec_per_km: 290 } }, { role: 'recovery', target: { type: 'distance', meters: 500 }, intensity: { faster_sec_per_km: 345, slower_sec_per_km: 390 } }] },
+        { role: 'cooldown', target: { type: 'distance', meters: 2000 }, intensity: { faster_sec_per_km: 340, slower_sec_per_km: 380 } }] },
+      { date: d3, status: 'rest', name: '休養', workout_type: 'rest', planned_distance_km: 0, blocks: [] },
+    ] };
+    await open('#/plans');
+    await page.evaluate(() => { document.querySelectorAll('.pm-pane, .tool-pane').forEach((e) => e.classList.remove('hidden')); });
+    await page.setInputFiles('#bulk-file', { name: 'coros.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)) });
+    await page.waitForFunction(() => (document.querySelector('#bulk-text') as HTMLTextAreaElement).value.includes('STRIDE_COROS'));
+    await page.check('#bulk-replace');
+    await page.click('#bulk-go');
+    await page.waitForSelector('#bulk-prev .bulk-row');
+    const rows = await page.$$eval('#bulk-prev .bulk-row', (els: Element[]) => els.map((e) => e.textContent!.replace(/\s+/g, '')));
+    expect(rows.length).toBe(3); // 昨日の分は入れない
+    expect(rows[0]).toContain('Jog7km回復ジョグ7km');
+    expect(rows[1]).toContain('Mペース走11km');
+    expect(rows[1]).toContain('3ステップ');
+    expect(rows[2]).toContain('休養');
+    expect(await page.textContent('#bulk-prev .bulk-sum')).toContain('今日より前の 1 件は入れません');
+    expect(await page.textContent('#bulk-go')).toContain('置き換えて登録 (3 件)');
+    if (SHOTS) await (await page.$('#pane-bulk')).screenshot({ path: `${SHOTS}/30-plan-import.png` });
+    // 確認までは登録しない
+    expect((await call(env, 'GET', `/plans?from=${d2}&to=${d2}`)).json.map((p: any) => p.notes)).toEqual(['古い計画']);
+    await page.click('#bulk-go');
+    await page.waitForFunction(() => /3 件登録しました/.test(document.querySelector('#bulk-out')!.textContent || ''));
+    const got = (await call(env, 'GET', `/plans?from=${d1}&to=${d3}`)).json;
+    expect(got.map((p: any) => `${p.date}:${p.type}`).sort()).toEqual([`${d1}:jog`, `${d2}:m`, `${d3}:rest`]);
+    const pm = got.find((p: any) => p.date === d2);
+    expect([pm.pace_min_s, pm.pace_max_s, pm.distance_m]).toEqual([285, 290, 11000]);
+    expect(JSON.parse(pm.steps).map((s: any) => s.kind)).toEqual(['warmup', 'interval', 'cooldown']);
+    const iv = JSON.parse(pm.steps)[1];
+    expect([iv.reps, iv.work.by, iv.work.value, iv.work.pmin, iv.work.pmax, iv.rest.by, iv.rest.value]).toEqual([2, 'dist', 3000, 285, 290, 'dist', 500]);
+    expect(got.find((p: any) => p.date === d1).steps).toBeNull(); // 1 区間だけならステップにしない
+    for (const p of got) await call(env, 'DELETE', `/plans/${p.id}`);
+  }, 60000);
   it('ホーム: 今日の体調に体重・体脂肪率 (適正体重・目標まで) をまとめる・保存ボタンは大きく目立つ・見出しのボタンが中身に重ならない', async () => {
     await call(env, 'POST', '/body', { date: addDays(TODAY, -2), weight: 72.0, body_fat: 19.0 });
     await call(env, 'POST', '/body', { weight: 71.4, body_fat: 0.187, resting_hr: 47, hrv: 64, sleep_h: 6.5 });

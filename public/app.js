@@ -1053,6 +1053,102 @@ function activityList(acts) {
 
 // ---- 計画
 
+/**
+ * COROS のプランを書き出した JSON (STRIDE_COROS_PLAN_EXCHANGE_V1) を、STRIDE の計画 (ステップ付き) にする。
+ * 読めない日は飛ばして理由を返す (推測で埋めない)
+ */
+const COROS_TYPE = { pace_intervals: 'm', threshold_intervals: 'lt', long_run_with_mp: 'long', progression_with_mp: 'm', race_sharpening_intervals: 'm', easy_plus_strides: 'easy', race: 'race', rest: 'rest', interval: 'interval', intervals: 'interval' };
+function zoneOfPace(mid) { const k = ZONES.findIndex((z) => mid >= z.pace[0] && mid <= z.pace[1]); return k >= 0 ? k : mid > 345 ? 0 : 5; }
+function corosTarget(b) {
+  const t = b?.target || {}, it = b?.intensity || {};
+  const out = t.type === 'time' ? { by: 'time', value: Math.round(t.seconds) } : { by: 'dist', value: Math.round(t.meters) };
+  if (!(out.value > 0)) return null;
+  if (it.faster_sec_per_km && it.slower_sec_per_km) { out.pmin = it.faster_sec_per_km; out.pmax = it.slower_sec_per_km; out.zone = zoneOfPace((out.pmin + out.pmax) / 2); }
+  else if (it.zone >= 1 && it.zone <= 6) out.zone = it.zone - 1; // COROS のゾーン 1〜6 → STRIDE の 0〜5
+  else out.zone = 1;
+  return out;
+}
+function fromCorosExchange(data) {
+  const plans = [], skipped = [];
+  const KIND = { warmup: 'warmup', main: 'work', recovery: 'rest', cooldown: 'cooldown' };
+  for (const d of data.days || []) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date || '')) { skipped.push(`${d.date ?? '?'}: 日付が読めません`); continue; }
+    const name = String(d.name || '');
+    let type = COROS_TYPE[d.workout_type] || null;
+    if (!type) type = /レース|マラソン/.test(name) && d.planned_distance_km >= 20 ? 'race' : /ロング/.test(name) ? 'long' : /回復|調整/.test(name) ? 'jog' : 'easy';
+    if (d.workout_type === 'easy_run' && /ロング/.test(name)) type = 'long';
+    else if (d.workout_type === 'easy_run' && /回復/.test(name)) type = 'jog';
+    if (d.status === 'rest' || type === 'rest') { plans.push({ date: d.date, type: 'rest', notes: name && name !== '休養' ? name : null }); continue; }
+    const steps = [];
+    let bad = false;
+    for (const b of d.blocks || []) {
+      if (b.role === 'repeat') {
+        const ss = b.steps || [];
+        const work = ss.find((x) => x.role === 'main'), rest = ss.find((x) => x.role === 'recovery');
+        const w = corosTarget(work), r = rest ? corosTarget(rest) : null;
+        if (!w || !(b.count >= 1)) { bad = true; continue; }
+        steps.push({ kind: 'interval', reps: b.count, work: w, rest: r || { by: 'dist', value: 0, zone: 0 } });
+      } else {
+        const t = corosTarget(b);
+        if (!t) { bad = true; continue; }
+        steps.push({ kind: KIND[b.role] || 'work', ...t });
+      }
+    }
+    // 計画のペース: 繰り返しがあればその 1 本。無ければ、ポイント練は速い区間・ロング走などはいちばん長い区間 (一部の MP を全体のペースにしない)
+    const mains = steps.filter((sp) => sp.kind === 'work' && sp.by === 'dist');
+    const fast = ['m', 'lt', 'interval'].includes(type);
+    const key = steps.find((sp) => sp.kind === 'interval')?.work || mains.sort((a, b) => (fast ? (a.pmin || 999) - (b.pmin || 999) : b.value - a.value))[0];
+    const simple = steps.length === 1 && steps[0].kind === 'work';
+    plans.push({
+      date: d.date, type,
+      distance_m: d.planned_distance_km ? Math.round(d.planned_distance_km * 1000) : null,
+      pace_min_s: key?.pmin ?? null, pace_max_s: key?.pmax ?? null,
+      notes: [name, d.description].filter(Boolean).join(' / ') || null,
+      steps: simple || !steps.length ? null : steps,
+    });
+    if (bad) skipped.push(`${d.date}: 読めないステップがあったので、その部分を除きました`);
+  }
+  return { plans, skipped };
+}
+/** 貼り付け・ファイルの取り込み: 確認してから登録 (今日より前の日は入れない) */
+function wireBulk(root) {
+  const out = root.querySelector('#bulk-out'), prev = root.querySelector('#bulk-prev'), go = root.querySelector('#bulk-go'), ta = root.querySelector('#bulk-text');
+  let ready = null;
+  const reset = () => { ready = null; prev.innerHTML = ''; go.textContent = '確認する'; };
+  ta.addEventListener('input', reset);
+  root.querySelector('#bulk-replace').addEventListener('change', reset);
+  root.querySelector('#bulk-file').onchange = async (e) => { const f = e.target.files?.[0]; if (!f) return; ta.value = await f.text(); reset(); out.textContent = `${f.name} を読み込みました。「確認する」を押してください。`; };
+  go.onclick = async () => {
+    const replace = root.querySelector('#bulk-replace').checked;
+    if (ready) {
+      go.disabled = true;
+      try {
+        const r = await api('/plans/bulk', { method: 'POST', body: { plans: ready, replace } });
+        out.textContent = `${r.imported} 件登録しました${r.kept?.length ? `。${r.kept.map(md).join('・')} は走った記録と結びついた計画を残しました` : ''}`;
+        setTimeout(route, 1200);
+      } catch (e) { out.textContent = `エラー: ${e.message}`; go.disabled = false; }
+      return;
+    }
+    try {
+      const data = JSON.parse(ta.value);
+      let list, notes = [];
+      if (data && typeof data.format === 'string' && data.format.startsWith('STRIDE_COROS_PLAN_EXCHANGE')) ({ plans: list, skipped: notes } = fromCorosExchange(data));
+      else list = Array.isArray(data) ? data : data.plans;
+      if (!Array.isArray(list) || !list.length) throw new Error('計画が見つかりません');
+      const t = today();
+      const past = list.filter((p) => p.date < t).length;
+      list = list.filter((p) => p.date >= t);
+      if (!list.length) throw new Error('今日以降の計画がありません');
+      const ds = list.map((p) => p.date).sort();
+      ready = list;
+      const km1 = (m) => (m ? `${+(m / 1000).toFixed(1)}km` : '');
+      prev.innerHTML = `<div class="bulk-sum"><b>${md(ds[0])}〜${md(ds[ds.length - 1])} の ${list.length} 件</b>${replace ? '<span>この期間の計画を置き換えます</span>' : '<span>今の計画に追加します</span>'}${past ? `<span class="muted">今日より前の ${past} 件は入れません</span>` : ''}${notes.map((n) => `<span class="bd-note">${esc(n)}</span>`).join('')}</div>
+        <div class="bulk-list">${list.map((p) => { const st = parseSteps(p); return `<div class="bulk-row"><span class="num">${md(p.date)}(${dow(p.date)})</span><span class="badge" data-t="${p.type}">${PLAN_LABELS[p.type] || esc(p.type)}</span><span class="num">${km1(p.distance_m)}</span><span class="muted bulk-n">${esc(String(p.notes || '').split(' / ')[0])}${st.length ? ` <small>(${st.length} ステップ)</small>` : ''}</span></div>`; }).join('')}</div>`;
+      go.textContent = replace ? `置き換えて登録 (${list.length} 件)` : `登録 (${list.length} 件)`;
+      out.textContent = '';
+    } catch (e) { reset(); out.textContent = `エラー: ${e.message}`; }
+  };
+}
 async function plansView(params) {
   const ws = weekStart(params.get('week') || today());
   const mySeq = ROUTE_SEQ;
@@ -1125,16 +1221,7 @@ async function plansView(params) {
     wireAutoPlan(view);
     wireTools(view);
     wireDrag(view, plans, ws);
-    view.querySelector('#bulk-go').onclick = async () => {
-      const out = view.querySelector('#bulk-out');
-      try {
-        const data = JSON.parse(view.querySelector('#bulk-text').value);
-        const replace = view.querySelector('#bulk-replace').checked;
-        const r = await api('/plans/bulk', { method: 'POST', body: { plans: Array.isArray(data) ? data : data.plans, replace } });
-        out.textContent = `${r.imported} 件登録しました`;
-        setTimeout(route, 800);
-      } catch (e) { out.textContent = `エラー: ${e.message}`; }
-    };
+    wireBulk(view);
     wireCopy(view, ws);
     wireCoach(view);
     wireCalendar(view, settings);
@@ -1209,10 +1296,12 @@ async function plansView(params) {
         <div id="auto-out"></div>
       </div>
       <div class="tool-pane hidden" id="pane-bulk">
-        <p class="muted">Claude が作った JSON を貼り付けます。</p>
+        <p class="muted">Claude が作った JSON (COROS のプランを書き出した形式も可) を貼り付けるか、ファイルを選びます。今日より前の日は取り込みません。</p>
+        <label class="bulk-file">JSON ファイルを選ぶ<input type="file" id="bulk-file" accept=".json,application/json,text/plain"></label>
         <textarea id="bulk-text" rows="8" style="width:100%" placeholder='[{"date":"2026-11-03","type":"jog","distance_m":8000,"notes":"..."}]'></textarea>
-        <label class="row"><input type="checkbox" id="bulk-replace"> 期間内の既存メニューを置き換える</label>
-        <div class="row"><button id="bulk-go" class="primary">登録</button></div>
+        <label class="row"><input type="checkbox" id="bulk-replace"> 期間内の既存メニューを置き換える (走った記録と結びついた計画は残します)</label>
+        <div id="bulk-prev"></div>
+        <button id="bulk-go" class="fbx-save" type="button">確認する</button>
         <p id="bulk-out"></p>
       </div>
       </div>
