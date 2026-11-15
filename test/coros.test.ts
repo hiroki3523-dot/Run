@@ -85,4 +85,17 @@ describe('coros', () => {
     const plain = runWithStop(true);
     expect(movingClock(plain, null)[plain.length - 1]).toBe(plain[plain.length - 1].t - plain[0].t);
   });
+  it('1km ごとのラップ: 長いランでも距離はちょうど 1.00km (間引いた記録で区切って 0.99・1.01 にならない)', () => {
+    // 3 時間 (1 秒ごと 10800 点・間引くと 3 点おき) を 1km 4:40〜4:50 で走る
+    const recs: { t: number; dist: number; hr: number }[] = [];
+    let d = 0;
+    for (let k = 0; k <= 10800; k++) { recs.push({ t: 5000 + k, dist: d, hr: 160 + (k % 7) }); d += 1000 / (280 + ((k / 600) % 10)); }
+    const fit: any = { session: { start: 5000, elapsed: 10800, timer: 10800, dist: d }, laps: [], records: recs, tz_offset_s: 9 * 3600, fields: [] };
+    const sp = (buildExt({ labelId: '476123456789012399', sportType: 100, date: '2026-11-08' } as any, fit, null) as any).act.splits_metric;
+    const full = sp.filter((x: any) => x.distance === 1000);
+    expect(full.length).toBe(Math.floor(recs[recs.length - 1].dist / 1000));
+    for (const x of full) { expect(x.moving_time).toBeGreaterThanOrEqual(279); expect(x.moving_time).toBeLessThanOrEqual(291); }
+    // 合計の時間は変わらない
+    expect(Math.abs(sp.reduce((a: number, x: any) => a + x.moving_time, 0) - 10800)).toBeLessThanOrEqual(sp.length);
+  });
 });

@@ -422,12 +422,11 @@ export function buildExt(rec: CorosRecord, fit: FitData | null, lapsJson: any): 
 
   // 1 秒ごとの記録 → Strava の streams と同じ形 (最大 3600 点に間引く)
   let raw: ExtActivity['raw'] = null;
-  let clock: number[] = []; // 1km ごとの区切り用: 止まっていた時間 (一時停止) を除いた経過秒 (pick と同じ並び)
+  let fullClock: number[] = []; // 1km ごとの区切り用: 止まっていた時間 (一時停止) を除いた経過秒 (recs と同じ並び)
   if (recs.length > 10 && recs.some((r) => r.dist != null)) {
     const step = Math.max(1, Math.ceil(recs.length / 3600));
     const pick = recs.filter((_, i) => i % step === 0 || i === recs.length - 1);
-    const mc = movingClock(recs, s?.timer || null);
-    clock = recs.map((_, i) => mc[i]).filter((_, i) => i % step === 0 || i === recs.length - 1);
+    fullClock = movingClock(recs, s?.timer || null);
     let lastD = 0;
     const dist = pick.map((r) => (lastD = r.dist ?? lastD));
     raw = {
@@ -444,20 +443,37 @@ export function buildExt(rec: CorosRecord, fit: FitData | null, lapsJson: any): 
       ...(pick.some((r) => r.sl) ? { stride_cm: { data: pick.map((r) => Math.round((r.sl ?? 0) * 10) / 10) } } : {}),
     };
   }
-  // 1km ごとのスプリット (詳細画面・レビュー用)
+  // 1km ごとのスプリット (詳細画面・レビュー用)。間引く前の 1 秒ごとの記録で、ちょうど 1km の地点を前後の記録から補って区切る
+  // (間引いた記録で区切ると 0.99km・1.01km のようにずれるため)
   const splits: any[] = [];
-  if (raw) {
-    const t = clock.length === raw.time.data.length ? clock : raw.time.data, d = raw.distance.data, hr = raw.heartrate?.data, alt = raw.altitude?.data;
-    let i0 = 0;
-    for (let k = 1; k * 1000 <= d[d.length - 1] + 1; k++) {
-      let i = i0;
-      while (i < d.length - 1 && d[i] < k * 1000) i++;
-      const hrs = hr ? hr.slice(i0, i + 1).filter((x) => x > 0) : [];
-      splits.push({ distance: d[i] - d[i0], moving_time: t[i] - t[i0], elevation_difference: alt ? alt[i] - alt[i0] : 0, average_heartrate: hrs.length ? hrs.reduce((a, b) => a + b, 0) / hrs.length : undefined });
-      i0 = i;
+  if (raw && fullClock.length === recs.length) {
+    const D: number[] = [];
+    let last = 0;
+    for (const r of recs) { if (r.dist != null && r.dist >= last) last = r.dist; D.push(last); }
+    const at = (b: number, arr: (number | undefined)[]) => {
+      // 距離 b の地点の値 (前後の記録から直線で補う)
+      let i = 1;
+      while (i < D.length - 1 && D[i] < b) i++;
+      const j = i - 1, span = D[i] - D[j];
+      const f = span > 0 ? Math.min(1, Math.max(0, (b - D[j]) / span)) : 1;
+      const a0 = arr[j], a1 = arr[i];
+      return a0 == null || a1 == null ? (a1 ?? a0 ?? null) : a0 + f * (a1 - a0);
+    };
+    const C = fullClock, A = recs.map((r) => r.alt);
+    const total = D[D.length - 1];
+    let prevB = 0, prevT = 0, prevA = at(0, A);
+    for (let k = 1; k * 1000 <= total; k++) {
+      const b = k * 1000, tb = at(b, C)!, ab = at(b, A);
+      const hrs = recs.filter((r, i) => D[i] > prevB && D[i] <= b && (r.hr ?? 0) > 0).map((r) => r.hr!);
+      splits.push({ distance: 1000, moving_time: Math.round(tb - prevT), elevation_difference: ab != null && prevA != null ? Math.round((ab - prevA) * 10) / 10 : 0, average_heartrate: hrs.length ? hrs.reduce((x, y) => x + y, 0) / hrs.length : undefined });
+      prevB = b; prevT = tb; prevA = ab;
     }
-    const restD = d[d.length - 1] - d[i0];
-    if (restD > 50) splits.push({ distance: restD, moving_time: t[t.length - 1] - t[i0], elevation_difference: alt ? alt[alt.length - 1] - alt[i0] : 0 });
+    const restD = total - prevB;
+    if (restD > 50) {
+      const hrs = recs.filter((r, i) => D[i] > prevB && (r.hr ?? 0) > 0).map((r) => r.hr!);
+      const aEnd = A[A.length - 1];
+      splits.push({ distance: Math.round(restD), moving_time: Math.round(C[C.length - 1] - prevT), elevation_difference: aEnd != null && prevA != null ? Math.round((aEnd - prevA) * 10) / 10 : 0, average_heartrate: hrs.length ? hrs.reduce((x, y) => x + y, 0) / hrs.length : undefined });
+    }
   }
   // 合計欄に心拍・ピッチが無い FIT もあるので、1 秒ごとの記録から補う
   const hrs = recs.map((r) => r.hr ?? 0).filter((x) => x > 0), cads = recs.map((r) => r.cad ?? 0).filter((x) => x > 0);
