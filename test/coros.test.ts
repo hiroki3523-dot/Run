@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseFitness, parseRecords, unquote } from '../src/coros';
+import { buildExt, movingClock, parseFitness, parseRecords, unquote } from '../src/coros';
 import { extIdToNumber } from '../src/ext';
 
 describe('coros', () => {
@@ -47,5 +47,42 @@ describe('coros', () => {
   it('COROS の id は負の数で、同じ labelId なら同じ', () => {
     expect(extIdToNumber('476123456789012345')).toBeLessThan(0);
     expect(extIdToNumber('476123456789012345')).toBe(extIdToNumber('476123456789012345'));
+  });
+  // 2km を 1km 5:00 で走り、600m 地点で 50 秒止まった (時計のタイマーは 600 秒)
+  const runWithStop = (keepRecording: boolean) => {
+    const recs: { t: number; dist: number; hr: number }[] = [];
+    let t = 1000, d = 0;
+    recs.push({ t, dist: 0, hr: 140 });
+    while (d < 2000) {
+      t += 1; d = Math.min(2000, d + 1000 / 300);
+      recs.push({ t, dist: d, hr: 150 });
+      if (Math.abs(d - 600) < 1000 / 600 && !recs.some((r) => r.t > t)) {
+        if (keepRecording) for (let k = 0; k < 50; k++) { t += 1; recs.push({ t, dist: d, hr: 120 }); } // 止まっている間も記録が続く
+        else t += 50; // オートポーズで記録が途切れる
+      }
+    }
+    return recs;
+  };
+  it('1km ごとのラップ: 止まっていた時間 (一時停止) は入れない — 記録が途切れる場合', () => {
+    const recs = runWithStop(false);
+    const mc = movingClock(recs, 600);
+    expect(Math.abs(mc[mc.length - 1] - 600)).toBeLessThanOrEqual(2);
+    const fit: any = { session: { start: 1000, elapsed: 650, timer: 600, dist: 2000 }, laps: [], records: recs, tz_offset_s: 9 * 3600, fields: [] };
+    const a = buildExt({ labelId: '476123456789012345', sportType: 100, date: '2026-11-14' } as any, fit, null);
+    const sp = (a as any).act.splits_metric.map((x: any) => x.moving_time);
+    expect(sp.length).toBe(2);
+    for (const x of sp) expect(Math.abs(x - 300)).toBeLessThanOrEqual(2); // 5:50 ではなく 5:00
+    expect((a as any).act.elapsed_time).toBe(650); // 合計の経過時間はそのまま
+  });
+  it('1km ごとのラップ: 止まっている間も記録が続く場合は、距離が進まない区間をタイマー時間に合わせて除く', () => {
+    const recs = runWithStop(true);
+    const mc = movingClock(recs, 600);
+    expect(Math.abs(mc[mc.length - 1] - 600)).toBeLessThanOrEqual(2);
+    // 600m までと、止まったあとの時間は減らさない
+    const at = (dist: number) => mc[recs.findIndex((r) => r.dist >= dist)];
+    expect(Math.abs(at(1000) - 300)).toBeLessThanOrEqual(2);
+    // タイマーが無いとき・止まっていないときは、そのまま
+    const plain = runWithStop(true);
+    expect(movingClock(plain, null)[plain.length - 1]).toBe(plain[plain.length - 1].t - plain[0].t);
   });
 });

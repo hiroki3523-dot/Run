@@ -607,6 +607,7 @@ api.put('/activities/:id/feedback', async (c) => {
   const b = await c.req.json<Record<string, unknown>>();
   const fb = normalizeFb({ ...b, v: 2 });
   await kvSet(c.env, `fb:${id}`, JSON.stringify({ v: 2, ...fb }));
+  await dropShoeCompareCache(c.env);
   return c.json({ ok: true });
 });
 
@@ -970,6 +971,7 @@ api.put('/condition/:date', async (c) => {
   const b = await c.req.json<Record<string, unknown>>();
   const v = { leg: n10(b.leg), tight: n10(b.tight), pain: n10(b.pain), pain_part: Array.isArray(b.pain_part) ? (b.pain_part as string[]).filter((x) => typeof x === 'string').slice(0, 6) : [], sleep: n10(b.sleep), fatigue: n10(b.fatigue), memo: String(b.memo ?? '').slice(0, 300) };
   await kvSet(c.env, `cond:${d}`, JSON.stringify(v));
+  await dropShoeCompareCache(c.env);
   return c.json(v);
 });
 
@@ -1039,9 +1041,25 @@ api.put('/body-profile', async (c) => {
 // ---------------------------------------------------------------- シューズの相性
 
 /** シューズごとに、同じ種類のランでの ペース・心拍・ピッチ・接地時間・主観 (走りやすさ・呼吸・脚・痛み)・翌朝の脚 を比べる */
+/** シューズの相性の計算結果 (下の /shoes/compare) を捨てる。評価・体調を保存したとき (長さが同じ書き換えでも確実に作り直す) */
+async function dropShoeCompareCache(env: Env) {
+  await env.DB.prepare("DELETE FROM kv WHERE key = 'cache:shoe_compare'").run().catch(() => null);
+}
 api.get('/shoes/compare', async (c) => {
   const today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
   const st = await getSettings(c.env);
+  // 計算に使うデータが変わっていなければ、前の結果を返す (1 年分のランと分析を毎回読むと重いため)。最長 6 時間
+  const sigRow = await c.env.DB.prepare(
+    `SELECT (SELECT COUNT(*) || ':' || COALESCE(MAX(id), 0) || ':' || TOTAL(COALESCE(shoe_id, 0) * id) || ':' || TOTAL(COALESCE(plan_id, 0)) || ':' || TOTAL(LENGTH(COALESCE(evaluation, ''))) FROM activities WHERE date >= ?) || '|' ||
+            (SELECT COALESCE(GROUP_CONCAT(id || name || COALESCE(retired, 0), ','), '') FROM shoes) || '|' ||
+            (SELECT COUNT(*) || ':' || TOTAL(LENGTH(value)) FROM kv WHERE key LIKE 'fb:%' OR key LIKE 'snap:%' OR key LIKE 'cond:%') || '|' ||
+            (SELECT TOTAL(LENGTH(type) * id) FROM plans WHERE date >= ?) AS s`,
+  ).bind(addDays(today, -365), addDays(today, -365)).first<{ s: string }>();
+  const sig = `${today}|${JSON.stringify(st)}|${sigRow?.s ?? ''}`;
+  try {
+    const hit = JSON.parse((await kvGet(c.env, 'cache:shoe_compare')) || 'null');
+    if (hit && hit.sig === sig && Date.now() - hit.at < 6 * 3600_000) return c.json(hit.out);
+  } catch { /* 作り直す */ }
   const [{ results: rows }, { results: shoes }, { results: kvs }] = await Promise.all([
     c.env.DB.prepare(`SELECT a.id, a.date, a.distance_m, a.moving_time_s, a.avg_hr, a.avg_cadence_spm, a.shoe_id, COALESCE(p.type, json_extract(a.evaluation, '$.type')) AS type, json_extract(a.evaluation, '$.role') AS role
       FROM activities a LEFT JOIN plans p ON p.id = a.plan_id WHERE a.shoe_id IS NOT NULL AND a.date >= ? AND a.sport_type LIKE '%Run%' AND a.distance_m >= 2000`).bind(addDays(today, -365)).all<any>(),
@@ -1081,6 +1099,7 @@ api.get('/shoes/compare', async (c) => {
     }));
     if (rowsG.length) out[g] = rowsG.sort((a, b) => b.n - a.n);
   }
+  await kvSet(c.env, 'cache:shoe_compare', JSON.stringify({ sig, at: Date.now(), out })).catch(() => {});
   return c.json(out);
 });
 
@@ -1091,7 +1110,7 @@ const BACKUP_TABLES = ['activities', 'plans', 'races', 'shoes', 'kv'] as const;
 api.get('/backup', async (c) => {
   const out: Record<string, unknown[]> = {};
   for (const t of BACKUP_TABLES) {
-    const q = t === 'kv' ? "SELECT * FROM kv WHERE key NOT LIKE 'coros_%' AND key NOT LIKE 'strava_%' AND key NOT LIKE 'oauth%' AND key NOT LIKE 'rprev:%' AND key NOT LIKE 'site:%'" : `SELECT * FROM ${t}`;
+    const q = t === 'kv' ? "SELECT * FROM kv WHERE key NOT LIKE 'coros_%' AND key NOT LIKE 'strava_%' AND key NOT LIKE 'oauth%' AND key NOT LIKE 'rprev:%' AND key NOT LIKE 'site:%' AND key NOT LIKE 'cache:%'" : `SELECT * FROM ${t}`;
     out[t] = (await c.env.DB.prepare(q).all()).results;
   }
   c.header('Content-Disposition', `attachment; filename="stride-backup-${new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)}.json"`);

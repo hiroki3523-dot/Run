@@ -17,6 +17,24 @@ describe('K-01 ピッチを 2 倍しない', () => {
     expect(cad.past).toBe('180spm');
     expect(cad.now).toBe('180spm');
   });
+  it('シューズの相性: 結果をとっておき、ランの追加・シューズ名の変更・評価の保存ではすぐ作り直す', async () => {
+    const sid = (await call(env, 'POST', '/shoes', { name: 'A', strava_gear_id: 'ga' })).json.id;
+    for (let i = 0; i < 3; i++) await addRun(env, { date: `2026-10-0${i + 1}`, km: 10, segs: [{ km: 10, pace: 300, spm: 180 }], gear_id: 'ga' });
+    const all = (o: any) => Object.values(o).flat() as any[];
+    const r1 = (await call(env, 'GET', '/shoes/compare')).json;
+    expect(all(r1)[0].n).toBe(3);
+    expect((await call(env, 'GET', '/shoes/compare')).json).toEqual(r1); // 2 回目は同じ結果 (とっておいたもの)
+    // ランが増えたら作り直す
+    const id4 = await addRun(env, { date: '2026-10-05', km: 10, segs: [{ km: 10, pace: 300, spm: 180 }], gear_id: 'ga' });
+    expect(all((await call(env, 'GET', '/shoes/compare')).json)[0].n).toBe(4);
+    // シューズ名を変えたら作り直す
+    await call(env, 'PUT', `/shoes/${sid}`, { name: 'B', strava_gear_id: 'ga' });
+    expect(all((await call(env, 'GET', '/shoes/compare')).json)[0].name).toBe('B');
+    // 評価 (ふりかえり) を保存したら作り直す
+    await call(env, 'PUT', `/activities/${id4}/feedback`, { form: 9 });
+    const r4 = all((await call(env, 'GET', '/shoes/compare')).json)[0];
+    expect(r4.form).not.toBeNull();
+  });
   it('シューズの相性のピッチも 2 倍にならない', async () => {
     await call(env, 'POST', '/shoes', { name: 'A', strava_gear_id: 'ga' });
     for (let i = 0; i < 3; i++) await addRun(env, { date: `2026-10-0${i + 1}`, km: 10, segs: [{ km: 10, pace: 300, spm: 180 }], gear_id: 'ga' });

@@ -422,9 +422,12 @@ export function buildExt(rec: CorosRecord, fit: FitData | null, lapsJson: any): 
 
   // 1 秒ごとの記録 → Strava の streams と同じ形 (最大 3600 点に間引く)
   let raw: ExtActivity['raw'] = null;
+  let clock: number[] = []; // 1km ごとの区切り用: 止まっていた時間 (一時停止) を除いた経過秒 (pick と同じ並び)
   if (recs.length > 10 && recs.some((r) => r.dist != null)) {
     const step = Math.max(1, Math.ceil(recs.length / 3600));
     const pick = recs.filter((_, i) => i % step === 0 || i === recs.length - 1);
+    const mc = movingClock(recs, s?.timer || null);
+    clock = recs.map((_, i) => mc[i]).filter((_, i) => i % step === 0 || i === recs.length - 1);
     let lastD = 0;
     const dist = pick.map((r) => (lastD = r.dist ?? lastD));
     raw = {
@@ -444,7 +447,7 @@ export function buildExt(rec: CorosRecord, fit: FitData | null, lapsJson: any): 
   // 1km ごとのスプリット (詳細画面・レビュー用)
   const splits: any[] = [];
   if (raw) {
-    const t = raw.time.data, d = raw.distance.data, hr = raw.heartrate?.data, alt = raw.altitude?.data;
+    const t = clock.length === raw.time.data.length ? clock : raw.time.data, d = raw.distance.data, hr = raw.heartrate?.data, alt = raw.altitude?.data;
     let i0 = 0;
     for (let k = 1; k * 1000 <= d[d.length - 1] + 1; k++) {
       let i = i0;
@@ -598,4 +601,39 @@ export async function corosTick(env: Env, minute: number): Promise<void> {
   if (st.coros?.updated !== today && minute % 30 === 5) {
     await syncCorosFitness(env).then(() => kvSet(env, 'coros_fitness_err', '')).catch((e) => kvSet(env, 'coros_fitness_err', String((e as Error).message).slice(0, 200)));
   }
+}
+
+/**
+ * 記録ごとの「止まっていた時間を除いた」経過秒。時計の一時停止 (オートポーズ) 中は記録が途切れるか、距離が進まない。
+ * 1. 記録の間が 5 秒を超えたら、一時停止とみなして 1 秒だけ数える
+ * 2. それでも時計のタイマー時間 (timer) より長ければ、距離が進んでいない区間を長い順に除いて合わせる
+ * timer が無ければ 1. だけ。COROS の画面のラップ (タイマー時間で区切る) に合わせるため
+ */
+export function movingClock(recs: { t: number; dist?: number | null }[], timer: number | null): number[] {
+  const n = recs.length;
+  const dt = recs.map((r, i) => (i ? Math.max(0, r.t - recs[i - 1].t) : 0));
+  const use = dt.map((x) => (x > 5 ? 1 : x));
+  let total = use.reduce((a, b) => a + b, 0);
+  if (timer && total > timer + 5) {
+    // 距離が進んでいない連続区間 (止まっていた) を集める
+    const runs: { from: number; to: number; sec: number }[] = [];
+    let i = 1;
+    while (i < n) {
+      if ((recs[i].dist ?? 0) - (recs[i - 1].dist ?? 0) < 0.3) {
+        let j = i, sec = 0;
+        while (j < n && (recs[j].dist ?? 0) - (recs[j - 1].dist ?? 0) < 0.3) { sec += use[j]; j++; }
+        if (sec >= 5) runs.push({ from: i, to: j, sec });
+        i = j;
+      } else i++;
+    }
+    runs.sort((a, b) => b.sec - a.sec);
+    for (const r of runs) {
+      if (total <= timer + 1) break;
+      for (let k = r.from; k < r.to && total > timer; k++) { const cut = Math.min(use[k], total - timer); use[k] -= cut; total -= cut; }
+    }
+  }
+  const out: number[] = new Array(n);
+  let acc = 0;
+  for (let k = 0; k < n; k++) { acc += use[k]; out[k] = acc; }
+  return out;
 }
