@@ -710,6 +710,21 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect(got.find((p: any) => p.date === d2).steps).toBeNull();
     for (const p of got) await call(env, 'DELETE', `/plans/${p.id}`);
   }, 60000);
+  it('設定 › 拡張機能: ChatGPT 連携はふだんは使っていない・使うと鍵と手順が出る・やめられる', async () => {
+    await open('#/settings');
+    await page.waitForSelector('#ext-gpt details.ext');
+    expect(await page.textContent('#ext-gpt summary')).toContain('使っていません');
+    await page.click('#ext-gpt summary');
+    await page.click('#ext-gpt [data-gact="on"]');
+    await page.waitForSelector('#ext-gpt .ext-steps');
+    expect(await page.textContent('#ext-gpt summary')).toContain('使っています');
+    expect(await page.textContent('#ext-gpt .ext-row code')).toContain('/gpt/openapi.json');
+    expect((await call(env, 'GET', '/gpt-token')).json.enabled).toBe(true);
+    if (SHOTS) await (await page.$('#ext-gpt')).screenshot({ path: `${SHOTS}/34-ext-gpt.png` });
+    await page.click('#ext-gpt [data-gact="off"]');
+    await page.waitForSelector('#ext-gpt [data-gact="on"]', { state: 'attached' });
+    expect((await call(env, 'GET', '/gpt-token')).json.enabled).toBe(false);
+  }, 60000);
   it('ホーム: 今日の体調に体重・体脂肪率 (適正体重・目標まで) をまとめる・保存ボタンは大きく目立つ・見出しのボタンが中身に重ならない', async () => {
     await call(env, 'POST', '/body', { date: addDays(TODAY, -2), weight: 72.0, body_fat: 19.0 });
     await call(env, 'POST', '/body', { weight: 71.4, body_fat: 0.187, resting_hr: 47, hrv: 64, sleep_h: 6.5 });

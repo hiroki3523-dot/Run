@@ -1041,6 +1041,23 @@ api.put('/body-profile', async (c) => {
 // ---------------------------------------------------------------- シューズの相性
 
 /** シューズごとに、同じ種類のランでの ペース・心拍・ピッチ・接地時間・主観 (走りやすさ・呼吸・脚・痛み)・翌朝の脚 を比べる */
+// ---------------------------------------------------------------- 拡張機能: ChatGPT 連携の鍵 (APP_TOKEN とは別。/gpt/* だけで使える)
+api.get('/gpt-token', async (c) => {
+  const t = await kvGet(c.env, 'gpt_token');
+  return c.json({ enabled: !!t, token: t || null });
+});
+api.post('/gpt-token', async (c) => {
+  const b = new Uint8Array(24);
+  crypto.getRandomValues(b);
+  const t = 'gpt_' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  await kvSet(c.env, 'gpt_token', t);
+  return c.json({ enabled: true, token: t });
+});
+api.delete('/gpt-token', async (c) => {
+  await c.env.DB.prepare("DELETE FROM kv WHERE key = 'gpt_token'").run();
+  return c.json({ enabled: false, token: null });
+});
+
 /** シューズの相性の計算結果 (下の /shoes/compare) を捨てる。評価・体調を保存したとき (長さが同じ書き換えでも確実に作り直す) */
 async function dropShoeCompareCache(env: Env) {
   await env.DB.prepare("DELETE FROM kv WHERE key = 'cache:shoe_compare'").run().catch(() => null);
@@ -1110,7 +1127,7 @@ const BACKUP_TABLES = ['activities', 'plans', 'races', 'shoes', 'kv'] as const;
 api.get('/backup', async (c) => {
   const out: Record<string, unknown[]> = {};
   for (const t of BACKUP_TABLES) {
-    const q = t === 'kv' ? "SELECT * FROM kv WHERE key NOT LIKE 'coros_%' AND key NOT LIKE 'strava_%' AND key NOT LIKE 'oauth%' AND key NOT LIKE 'rprev:%' AND key NOT LIKE 'site:%' AND key NOT LIKE 'cache:%'" : `SELECT * FROM ${t}`;
+    const q = t === 'kv' ? "SELECT * FROM kv WHERE key NOT LIKE 'coros_%' AND key NOT LIKE 'strava_%' AND key NOT LIKE 'oauth%' AND key NOT LIKE 'rprev:%' AND key NOT LIKE 'site:%' AND key NOT LIKE 'cache:%' AND key != 'gpt_token'" : `SELECT * FROM ${t}`;
     out[t] = (await c.env.DB.prepare(q).all()).results;
   }
   c.header('Content-Disposition', `attachment; filename="stride-backup-${new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)}.json"`);

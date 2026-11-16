@@ -1627,3 +1627,12 @@ a.sc-rec { color: var(--text); text-decoration: none; } a.sc-rec:active { opacit
 .chip.mini::after { content: ''; position: absolute; inset: -6px -4px; }
 label.row:has(> input[type=checkbox]) { min-height: 44px; align-items: center; cursor: pointer; }
 label.row > input[type=checkbox] { width: 22px; height: 22px; flex: none; }
+
+/* 設定 › 拡張機能 */
+#ext-gpt details.ext > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; cursor: pointer; list-style: none; }
+#ext-gpt details.ext > summary::-webkit-details-marker { display: none; }
+#ext-gpt .ext-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+#ext-gpt .ext-row code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
+#ext-gpt .ext-steps { padding-left: 20px; font-size: 13px; line-height: 1.8; margin: 10px 0; }
+#ext-gpt .ext-steps .chip { margin-left: 4px; }
+#ext-gpt .fbx-save { width: 100%; margin-top: 10px; min-height: 52px; border-radius: 999px; font-size: 16px; font-weight: 700; background: var(--accent); color: #fff; border: 0; }
