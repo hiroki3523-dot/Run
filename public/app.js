@@ -4233,7 +4233,7 @@ async function shoeDetailView(id) {
     <div class="card sh-head">
       <div class="sh-head-top">${shoeImg(s, false)}<div class="sh-head-tx"><b class="sh-title">${shoeNameHtml(s)}</b>
         <div class="sh-tags">${pu.map((p) => `<span class="sh-tag">${PURPOSE_SHORT[p]}</span>`).join('') || '<span class="sh-tag none">用途未設定</span>'}<span class="sh-tag st">${st}</span></div></div></div>
-      <div class="hl-tiles"><div class="hl-tile"><small>累計距離</small><b class="num">${s.total_km.toFixed(1)}<small>km</small></b><span>${s.initial_km ? '補正を含む' : 'アプリの記録'}</span></div>
+      <div class="hl-tiles"><div class="hl-tile"><small>累計距離</small><b class="num">${s.total_km.toFixed(1)}<small>km</small></b><span>${s.initial_km ? `記録 ${(s.total_km - s.initial_km).toFixed(1)} ${s.initial_km > 0 ? '＋' : '−'} 補正 ${Math.abs(s.initial_km).toFixed(1)}` : 'アプリの記録'}</span></div>
         <div class="hl-tile"><small>目安 (設定値)</small><b class="num">${s.limit_km}<small>km</small></b><span>${wear != null ? `累計の ${Math.round(wear * 100)}%` : ''}</span></div>
         <div class="hl-tile"><small>使用回数</small><b class="num">${h.total_runs}<small>回</small></b><span>${h.first_date ? `${md(h.first_date)}〜${md(h.last_date)}` : '記録なし'}</span></div></div>
       <div class="bar" style="margin-top:10px"><div style="width:${Math.min(100, (wear ?? 0) * 100)}%"></div></div>
@@ -4436,7 +4436,7 @@ async function editShoe(s, opts = {}) {
     </details>
     <label>交換目安 (km)<input name="limit_km" inputmode="numeric" value="${s.limit_km}"></label>
     <div class="grid2">
-      <label>走行距離 (km)<input name="total_km" inputmode="decimal" value="${s.id ? Math.round((s.total_km ?? s.initial_km) * 10) / 10 : (s.initial_km || 0)}"></label>
+      <label>走行距離 (km)<input name="total_km" inputmode="decimal" value="${s.id ? Math.round((s.total_km ?? s.initial_km) * 10) / 10 : (s.initial_km || 0)}"><small class="muted sh-break" id="sh-break"></small></label>
       <label>Strava gear ID<input name="strava_gear_id" placeholder="g12345" value="${esc(s.strava_gear_id)}"></label>
     </div>
     <label>色・呼び名 (同じモデルが複数あるとき)<input name="f_label" maxlength="20" placeholder="例: 白・2足目" value="${esc(s.feel?.label || '')}"></label>
@@ -4461,12 +4461,33 @@ async function editShoe(s, opts = {}) {
     dialogForm.querySelector('[name=retired]').value = b.dataset.stv;
   }));
   hint();
+  // 走行距離の内訳: 記録 (このシューズで走ったランの合計) ＋ 補正 ＝ 累計。入力に合わせて補正がいくつになるかを出す
+  const recKm = s.id ? (s.total_km ?? 0) - (s.initial_km || 0) : 0;
+  const tIn = dialogForm.querySelector('[name=total_km]'), brk = dialogForm.querySelector('#sh-break');
+  const showBreak = () => {
+    const v = Number(tIn.value);
+    if (!s.id || tIn.value.trim() === '' || !Number.isFinite(v)) { brk.textContent = s.id ? '' : '新しいシューズは、ここに入れた距離から数えます'; return; }
+    const adj = Math.round((v - recKm) * 10) / 10;
+    brk.textContent = `記録の合計 ${recKm.toFixed(1)}km ${adj >= 0 ? '＋' : '−'} 補正 ${Math.abs(adj).toFixed(1)}km${adj < 0 ? ' (記録より少なくしています)' : ''}`;
+    brk.classList.toggle('bd-note', adj < 0);
+  };
+  tIn.addEventListener('input', showBreak);
+  showBreak();
+  const startTotal = tIn.value;
   const values = await pending;
   if (!values) return;
-  // 走行距離は Nike Run Club など正確な値をそのまま入力 → 取り込みラン分を引いて初期距離にする
-  const imported = s.id ? (s.total_km ?? 0) - (s.initial_km || 0) : 0;
+  // 走行距離は Nike Run Club など正確な値をそのまま入力 → 取り込みラン分を引いて補正 (初期距離) にする
+  // 走行距離を変えていなければ、補正はそのまま (開いている間に新しいランが入っても打ち消さない)
   const total = Number(values.total_km);
-  values.initial_km = Number.isFinite(total) && String(values.total_km).trim() !== '' ? Math.round((total - imported) * 10) / 10 : s.initial_km || 0;
+  if (!s.id || String(values.total_km).trim() === '' || !Number.isFinite(total)) values.initial_km = s.initial_km || 0;
+  else if (String(values.total_km).trim() === String(startTotal).trim()) values.initial_km = s.initial_km || 0;
+  else {
+    // 補正は、保存する時点の最新の記録の合計から出す
+    let rec = recKm;
+    try { const fresh = (await api(`/shoes/${s.id}/history`)).shoe; if (fresh) rec = (fresh.total_km ?? 0) - (fresh.initial_km || 0); } catch {}
+    values.initial_km = Math.round((total - rec) * 10) / 10;
+  }
+  if (!s.id && Number.isFinite(total) && String(values.total_km).trim() !== '') values.initial_km = total;
   delete values.total_km;
   const feel = { label: values.f_label || '' };
   for (const [k] of SHOE_FEEL) if (values[`f_${k}`] !== '' && values[`f_${k}`] != null) feel[k] = Number(values[`f_${k}`]);
