@@ -1125,6 +1125,76 @@ function fromCorosExchange(data) {
   }
   return { plans, skipped };
 }
+/**
+ * ほかの AI などが作った、日ごとのメニューの JSON (days: [{ date, name, steps: [{ type, distance_km | duration_sec, pace_min_per_km: "5:15-5:40" }, { type: 'interval', repeats, steps }] }])
+ * を STRIDE の計画にする。読めない日・ステップは飛ばして理由を返す (推測で埋めない)
+ */
+function fromGenericPlan(data) {
+  const plans = [], skipped = [];
+  const paceRange = (v) => {
+    const m = String(v ?? '').match(/(\d{1,2}):(\d{2})\s*[-〜~–]\s*(\d{1,2}):(\d{2})/) || String(v ?? '').match(/(\d{1,2}):(\d{2})()()/);
+    if (!m) return null;
+    const a = +m[1] * 60 + +m[2], b = m[3] ? +m[3] * 60 + +m[4] : a;
+    return a >= 150 && b <= 600 ? [Math.min(a, b), Math.max(a, b)] : null;
+  };
+  const target = (st) => {
+    const out = st.distance_km > 0 ? { by: 'dist', value: Math.round(st.distance_km * 1000) } : st.distance_m > 0 ? { by: 'dist', value: Math.round(st.distance_m) } : st.duration_sec > 0 ? { by: 'time', value: Math.round(st.duration_sec) } : st.duration_min > 0 ? { by: 'time', value: Math.round(st.duration_min * 60) } : null;
+    if (!out) return null;
+    const pr = paceRange(st.pace_min_per_km ?? st.pace);
+    if (pr) { out.pmin = pr[0]; out.pmax = pr[1]; out.zone = zoneOfPace((pr[0] + pr[1]) / 2); }
+    else { const z = String(st.note || '').match(/zone\s*(\d)/i); out.zone = z ? Math.min(5, Math.max(0, +z[1] - 1)) : /stride|流し/.test(st.type || '') ? 4 : /recover|rest|jog/.test(st.type || '') ? 0 : 1; }
+    return out;
+  };
+  const KIND = { warmup: 'warmup', cooldown: 'cooldown' };
+  for (const d of data.days || []) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date || '')) { skipped.push(`${d.date ?? '?'}: 日付が読めません`); continue; }
+    const name = String(d.name || d.title || '');
+    const memo = [name, d.purpose && `目的: ${d.purpose}`, d.shoe && `シューズ: ${d.shoe}`, d.notes].filter(Boolean).join(' / ') || null;
+    const raw = Array.isArray(d.steps) ? d.steps : [];
+    if (d.sport === 'rest' || d.type === 'rest' || (!raw.length && /休養|休み|rest/i.test(name))) { plans.push({ date: d.date, type: 'rest', notes: name && name !== '休養' ? memo : null }); continue; }
+    const steps = [];
+    let bad = false;
+    for (const st of raw) {
+      if (st.type === 'interval' || st.repeats > 0) {
+        const ss = st.steps || [];
+        const w = target(ss.find((x) => !/recover|rest/.test(x.type || '')) || {}), r = target(ss.find((x) => /recover|rest/.test(x.type || '')) || {});
+        if (!w || !(st.repeats >= 1)) { bad = true; continue; }
+        steps.push({ kind: 'interval', reps: st.repeats, work: w, rest: r || { by: 'dist', value: 0, zone: 0 } });
+      } else {
+        const t = target(st);
+        if (!t) { bad = true; continue; }
+        steps.push({ kind: KIND[st.type] || 'work', ...t, _t: st.type });
+      }
+    }
+    const totalKm = d.distance_km || d.planned_distance_km || (steps.length ? stepsTotalM(steps) / 1000 : null);
+    const iv = steps.find((x) => x.kind === 'interval');
+    const fastWork = steps.filter((x) => x.kind === 'work' && /steady|tempo|threshold|race|pace|m$/.test(x._t || '')).sort((a, b) => (a.pmin || 999) - (b.pmin || 999))[0];
+    let type;
+    if (raw.some((x) => x.type === 'race') || /マラソン(?!対策)|大会|本番/.test(name) && totalKm >= 20) type = 'race';
+    else if (iv) type = (iv.work.pmin && (iv.work.pmin + iv.work.pmax) / 2 <= 250) || iv.work.by === 'time' && /流し|stride/i.test(name) === false ? 'interval' : 'lt';
+    else if (/ロング/.test(name) || totalKm >= 20) type = 'long';
+    else if (fastWork) type = 'm';
+    else if (/回復|調整|recovery/i.test(name) || raw.every((x) => x.type === 'recovery')) type = 'jog';
+    else type = 'easy';
+    if (iv && /流し|stride/i.test(name)) type = 'easy'; // 軽いジョグ＋流し
+    // 計画のペース: 繰り返しはその 1 本、ポイント練は速い区間、それ以外はいちばん長い区間
+    const mains = steps.filter((x) => x.kind === 'work' && x.by === 'dist');
+    const longest = [...mains].sort((a, b) => b.value - a.value)[0];
+    const key = ['m', 'lt', 'interval'].includes(type) ? iv?.work || fastWork || longest : longest || iv?.work;
+    // ジョグ・Easy で区間が 1 つ (または同じ種類だけ) ならステップにしない
+    const simple = !iv && ((steps.length === 1 && steps[0].kind === 'work') || (steps.every((x) => x.kind === 'work' && !/steady|tempo|threshold|race|pace/.test(x._t || '')) && type !== 'long'));
+    steps.forEach((x) => delete x._t);
+    plans.push({
+      date: d.date, type,
+      distance_m: totalKm ? Math.round(totalKm * 1000) : null,
+      pace_min_s: key?.pmin ?? null, pace_max_s: key?.pmax ?? null,
+      notes: memo,
+      steps: simple || !steps.length ? null : steps,
+    });
+    if (bad) skipped.push(`${d.date}: 読めないステップがあったので、その部分を除きました`);
+  }
+  return { plans, skipped };
+}
 /** 貼り付け・ファイルの取り込み: 確認してから登録 (今日より前の日は入れない) */
 function wireBulk(root) {
   const out = root.querySelector('#bulk-out'), prev = root.querySelector('#bulk-prev'), go = root.querySelector('#bulk-go'), ta = root.querySelector('#bulk-text');
@@ -1148,6 +1218,7 @@ function wireBulk(root) {
       const data = JSON.parse(ta.value);
       let list, notes = [];
       if (data && typeof data.format === 'string' && data.format.startsWith('STRIDE_COROS_PLAN_EXCHANGE')) ({ plans: list, skipped: notes } = fromCorosExchange(data));
+      else if (data && !Array.isArray(data) && Array.isArray(data.days) && !data.plans) ({ plans: list, skipped: notes } = fromGenericPlan(data));
       else list = Array.isArray(data) ? data : data.plans;
       if (!Array.isArray(list) || !list.length) throw new Error('計画が見つかりません');
       const t = today();
