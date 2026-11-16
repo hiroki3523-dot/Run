@@ -2,6 +2,7 @@
 import { Hono } from 'hono';
 import { gpt, GPT_TOKEN_KEY } from './gpt';
 import { kvGet } from './settings';
+import { checkAccessToken } from './oauth';
 import type { Env } from './types';
 
 export const mcp = new Hono<{ Bindings: Env }>();
@@ -15,7 +16,12 @@ mcp.use('*', async (c, next) => {
   const saved = await kvGet(c.env, GPT_TOKEN_KEY);
   let diff = 0;
   if (saved && token.length === saved.length) for (let i = 0; i < saved.length; i++) diff |= token.charCodeAt(i) ^ saved.charCodeAt(i);
-  if (!saved || !token || token.length !== saved.length || diff) return c.json({ error: 'unauthorized' }, 401);
+  const byKey = !!saved && !!token && token.length === saved.length && !diff;
+  // ChatGPT 用の鍵そのもの、または OAuth で出したアクセストークン (src/oauth.ts) で使える
+  if (!byKey && !(saved && (await checkAccessToken(c.env, token)))) {
+    const meta = `${new URL(c.req.url).origin}/.well-known/oauth-protected-resource`;
+    return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'WWW-Authenticate': `Bearer resource_metadata="${meta}"` } });
+  }
   await next();
 });
 mcp.get('/', (c) => c.body(null, 405, { Allow: 'POST' }));
@@ -33,7 +39,8 @@ mcp.post('/', async (c) => {
   if (b.method === 'server/discover') return result({ supportedVersions: versions, capabilities: { tools: {} } });
   if (b.method === 'ping') return result({});
   if (!['tools/list', 'tools/call'].includes(b.method)) return error(-32601, 'Method not found');
-  const dispatch = (path: string, method = 'GET', body?: any) => (gpt as any).request(path, { method, headers: { Authorization: c.req.header('Authorization')!, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, c.env, c.executionCtx) as Promise<Response>;
+  const inner = await kvGet(c.env, GPT_TOKEN_KEY); // /gpt の入口には、いつも ChatGPT 用の鍵で入る (OAuth のトークンは /mcp だけで使う)
+  const dispatch = (path: string, method = 'GET', body?: any) => (gpt as any).request(path, { method, headers: { Authorization: `Bearer ${inner}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, c.env, c.executionCtx) as Promise<Response>;
   const spec: any = await (await dispatch('/openapi.json')).json();
   const entries = Object.entries(spec.paths).flatMap(([path, methods]: [string, any]) => Object.entries(methods).map(([method, op]: [string, any]) => {
     const inputSchema: any = op.requestBody?.content['application/json'].schema ?? { type: 'object', properties: Object.fromEntries((op.parameters || []).map((p: any) => [p.name, { ...p.schema, description: p.description }])), required: (op.parameters || []).filter((p: any) => p.required).map((p: any) => p.name) };
