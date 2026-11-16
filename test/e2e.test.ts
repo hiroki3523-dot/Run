@@ -210,7 +210,7 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     const s = (await call(env, 'GET', '/shoes')).json.find((x: any) => x.name === 'テストシューズA');
     await open(`#/shoes/${s.id}`, '11b-shoe-detail');
     expect(await page.textContent('.sh-head')).toContain('使用回数');
-    expect(await page.textContent('.sh-head')).toContain('補正を含む');
+    expect(await page.textContent('.sh-head')).toContain('＋ 補正 50.0');
     await page.click('[data-shtab="hist"]');
     expect(await page.locator('.sh-pane[data-pane="hist"] .hl-run').count()).toBeGreaterThanOrEqual(4);
     await page.click('[data-shtab="feel"]');
@@ -724,6 +724,40 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     await page.click('#ext-gpt [data-gact="off"]');
     await page.waitForSelector('#ext-gpt [data-gact="on"]', { state: 'attached' });
     expect((await call(env, 'GET', '/gpt-token')).json.enabled).toBe(false);
+  }, 60000);
+  it('シューズ: 累計の内訳 (記録＋補正) を出す・走行距離を変えなければ補正はそのまま・変えたら最新の記録から補正', async () => {
+    const sid = (await call(env, 'POST', '/shoes', { name: '内訳テスト', strava_gear_id: 'g-bk', initial_km: 0 })).json.id;
+    await addRun(env, { date: addDays(TODAY, -3), km: 20, segs: [{ km: 20, pace: 290 }], gear_id: 'g-bk' });
+    // Nike Run Club に合わせて累計を 12km に直した (20km のランが入ったあと) → 補正 −8
+    await call(env, 'PUT', `/shoes/${sid}`, { name: '内訳テスト', purpose: 'race', strava_gear_id: 'g-bk', limit_km: 700, initial_km: -8 });
+    await open(`#/shoes/${sid}`);
+    await page.waitForSelector('.sh-head .hl-tile');
+    const tile = (await page.textContent('.sh-head .hl-tile'))!.replace(/\s+/g, '');
+    expect(tile).toContain('12.0km');
+    expect(tile).toContain('記録20.0−補正8.0');
+    await page.click('#shoe-edit');
+    await page.waitForSelector('#sh-break');
+    expect(await page.textContent('#sh-break')).toBe('記録の合計 20.0km − 補正 8.0km (記録より少なくしています)');
+    await page.fill('dialog[open] [name=total_km]', '32');
+    expect(await page.textContent('#sh-break')).toBe('記録の合計 20.0km ＋ 補正 12.0km');
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/35-shoe-break.png` });
+    await page.fill('dialog[open] [name=total_km]', '12');
+    // 開いている間に新しいランが入っても、走行距離を変えずに保存すれば補正は −8 のまま
+    await addRun(env, { date: addDays(TODAY, -1), km: 10, segs: [{ km: 10, pace: 300 }], gear_id: 'g-bk' });
+    await page.click('dialog[open] button[value="ok"]');
+    await page.waitForTimeout(800);
+    let sh = (await call(env, 'GET', '/shoes')).json.find((x: any) => x.id === sid);
+    expect([sh.initial_km, Math.round(sh.total_km * 10) / 10]).toEqual([-8, 22]);
+    // 走行距離を 40 に変えたら、最新の記録 (30km) から補正 +10
+    await open(`#/shoes/${sid}`);
+    await page.click('#shoe-edit');
+    await page.waitForSelector('#sh-break');
+    await page.fill('dialog[open] [name=total_km]', '40');
+    await page.click('dialog[open] button[value="ok"]');
+    await page.waitForTimeout(800);
+    sh = (await call(env, 'GET', '/shoes')).json.find((x: any) => x.id === sid);
+    expect([sh.initial_km, Math.round(sh.total_km * 10) / 10]).toEqual([10, 40]);
+    await call(env, 'DELETE', `/shoes/${sid}`);
   }, 60000);
   it('ホーム: 今日の体調に体重・体脂肪率 (適正体重・目標まで) をまとめる・保存ボタンは大きく目立つ・見出しのボタンが中身に重ならない', async () => {
     await call(env, 'POST', '/body', { date: addDays(TODAY, -2), weight: 72.0, body_fat: 19.0 });
