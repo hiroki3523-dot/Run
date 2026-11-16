@@ -4480,6 +4480,50 @@ async function editShoe(s, opts = {}) {
 
 // ---- 設定
 
+/** 設定 › 拡張機能: ChatGPT 連携 (使う人だけ。ChatGPT の有料プランで自分専用の GPT を作り、Actions に STRIDE をつなぐ) */
+const GPT_INSTRUCTIONS = `あなたはマラソンのコーチです。利用者の練習記録アプリ STRIDE の Actions を使って、実際のデータをもとに答えてください。
+- 練習や体調の質問には、まず getToday と listRuns (必要なら getRun) でデータを確かめる。データにないことは推測で埋めず「記録がない」と言う
+- ペースは 分:秒/km、距離は km で話す
+- 計画を作ったら、まず日付・種類・距離・ペース・ステップを表で見せる。利用者が「登録して」と言ったときだけ savePlans を呼ぶ
+- savePlans は最初の日から最後の日までの計画を置き換える (走った記録と結びついた計画は残る・今日より前は入らない)。登録後は件数と、入らなかった日と理由を伝える`;
+async function renderGptExt() {
+  const box = document.getElementById('ext-gpt');
+  if (!box) return;
+  let st = { enabled: false, token: null };
+  try { st = await api('/gpt-token'); } catch {}
+  const schema = `${location.origin}/gpt/openapi.json`;
+  const copyBtn = (k, label) => `<button type="button" class="chip mini" data-gcopy="${k}">${label}</button>`;
+  box.innerHTML = `<h2>拡張機能</h2>
+    <details class="ext" ${st.enabled ? 'open' : ''}><summary><b>ChatGPT 連携</b> <span class="muted">${st.enabled ? '使っています' : '使っていません'}</span></summary>
+      <p class="muted">ChatGPT の有料プランで自分専用の GPT を作ると、ChatGPT が STRIDE のラン・計画・体調を読んで相談に乗り、作った計画を STRIDE に登録できます。使わない人は何もしなくて大丈夫です。</p>
+      ${st.enabled ? `
+        <div class="ext-row"><span>説明書の URL</span><code>${esc(schema)}</code>${copyBtn('schema', 'コピー')}</div>
+        <div class="ext-row"><span>ChatGPT 用の鍵</span><code>${esc(st.token.slice(0, 8))}…${esc(st.token.slice(-4))}</code>${copyBtn('token', 'コピー')}</div>
+        <ol class="ext-steps">
+          <li>ChatGPT で「GPT を探す」→「作成する」→「構成」を開く</li>
+          <li>「指示をコピー」を押して、「指示」の欄に貼る ${copyBtn('inst', '指示をコピー')}</li>
+          <li>「新しいアクションを作成する」→「URL からインポート」に説明書の URL を貼る</li>
+          <li>「認証」→「API キー」→ 認証タイプ「Bearer」→ 鍵を貼る</li>
+          <li>右上の「作成する」→ 公開先は<b>「私だけ」</b>にする</li>
+        </ol>
+        <p class="muted" style="font-size:12px">この鍵で ChatGPT ができるのは、読むことと計画の登録だけです (ランの記録・COROS・Strava・設定には触れません)。計画は ChatGPT が内容を見せてから登録します。走った日の計画と、今日より前の日は変わりません。</p>
+        <div class="row" style="gap:8px;margin-top:8px"><button type="button" class="chip mini" data-gact="rotate">鍵を作り直す</button><button type="button" class="chip mini" data-gact="off">連携をやめる</button></div>` : `
+        <button type="button" class="fbx-save ext-on" data-gact="on">ChatGPT 連携を使う (鍵を発行)</button>`}
+    </details>`;
+  const toast = (b, t) => { const o = b.textContent; b.textContent = t; setTimeout(() => (b.textContent = o), 1500); };
+  box.querySelectorAll('[data-gcopy]').forEach((b) => (b.onclick = async () => {
+    const v = b.dataset.gcopy === 'schema' ? schema : b.dataset.gcopy === 'token' ? st.token : GPT_INSTRUCTIONS;
+    try { await navigator.clipboard.writeText(v); toast(b, 'コピーしました'); } catch { toast(b, 'コピーできません'); }
+  }));
+  box.querySelectorAll('[data-gact]').forEach((b) => (b.onclick = async () => {
+    const a = b.dataset.gact;
+    if (a === 'rotate' && !confirm('鍵を作り直すと、いまの鍵は使えなくなります。ChatGPT の GPT にも新しい鍵を貼り直してください。作り直しますか？')) return;
+    if (a === 'off' && !confirm('ChatGPT 連携をやめますか？ (鍵が使えなくなります。STRIDE のデータはそのままです)')) return;
+    b.disabled = true;
+    try { await api('/gpt-token', { method: a === 'off' ? 'DELETE' : 'POST' }); } catch (e) { alert(e.message); }
+    renderGptExt();
+  }));
+}
 /** 設定: 通信の速さ (この端末で記録した、読み込みと画面の表示にかかった時間) */
 const VIEW_NAME = { home: 'ホーム', plans: '計画', activities: '実績', 'activities-detail': 'ランの詳細', races: 'レース', 'races-detail': 'レースの詳細', shoes: 'シューズ', 'shoes-detail': 'シューズの詳細', settings: '設定', weather: '天気' };
 function renderPerf() {
@@ -4796,6 +4840,7 @@ async function settingsView() {
       <div class="row"><button id="open-cal" class="primary">カレンダーに追加</button><button id="copy-cal">URL をコピー</button></div>
     </div>
     <div class="card" id="perf-card"></div>
+    <div class="card" id="ext-gpt"></div>
     <div class="card" id="body-setup">
       <h2>からだのデータ (ヘルスケア)</h2>
       <p class="muted">iPhone のヘルスケアの体重・体脂肪率・安静時心拍・HRV・睡眠を、ショートカットで毎朝 STRIDE に送れます (ホームの「今日の体調」に出ます)。STRIDE はヘルスケアを直接は読めないため、この方法になります。</p>
@@ -4868,6 +4913,7 @@ async function route() {
     if (document.getElementById('shoe-cmp')) loadShoeCompare();
     if (document.getElementById('cond')) loadCondition();
     if (document.getElementById('perf-card')) renderPerf();
+    if (document.getElementById('ext-gpt')) renderGptExt();
   } catch (e) {
     if (seq === ROUTE_SEQ) view.innerHTML = `<div class="card error">${esc(e.message)}</div>`;
   }

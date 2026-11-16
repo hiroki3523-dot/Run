@@ -1,3 +1,4 @@
+import { gpt } from './gpt';
 import { Hono } from 'hono';
 import { api } from './api';
 import { backfillStep } from './backfill';
@@ -116,6 +117,9 @@ app.get('/cal/:sig/sub3.ics', async (c) => {
 });
 
 // ---------------------------------------------------------------- API (要トークン)
+
+// 拡張機能: ChatGPT (GPTs の Actions) 用。鍵は設定で発行する別の鍵 (src/gpt.ts)
+app.route('/gpt', gpt);
 
 app.use('/api/*', async (c, next) => {
   const token = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '') ?? '';
