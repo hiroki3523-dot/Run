@@ -681,6 +681,35 @@ describe.skipIf(!pw)('画面 (ブラウザ)', () => {
     expect((await call(env, 'GET', `/plans?from=${d}&to=${d}`)).json[0].type).toBe('easy');
     await call(env, 'DELETE', `/plans/${pid}`);
   }, 60000);
+  it('計画: ほかの形式 (days と steps・ペースは "5:15-5:40") の JSON も取り込める', async () => {
+    const d1 = addDays(TODAY, 40), d2 = addDays(TODAY, 41), d3 = addDays(TODAY, 42), d4 = addDays(TODAY, 43);
+    const data = { title: 'テスト', format: 'generic_training_plan_v1', days: [
+      { date: d1, name: '巡航ペース走14km', sport: 'running', steps: [{ type: 'warmup', distance_km: 2, pace_min_per_km: '5:15-5:40' }, { type: 'steady', distance_km: 10, pace_min_per_km: '4:35-4:40' }, { type: 'cooldown', distance_km: 2, pace_min_per_km: '5:20-5:45' }], shoe: 'EVO SL', notes: '終盤に加速しない' },
+      { date: d2, name: '回復ジョグ7km', sport: 'running', steps: [{ type: 'recovery', distance_km: 7, pace_min_per_km: '5:40-6:00' }] },
+      { date: d3, name: '2km×3本・レスト500m', sport: 'running', steps: [{ type: 'warmup', distance_km: 3, pace_min_per_km: '5:30-6:00' }, { type: 'interval', repeats: 3, steps: [{ type: 'steady', distance_km: 2, pace_min_per_km: '4:15-4:20' }, { type: 'recovery', distance_km: 0.5, pace_min_per_km: '5:45-6:30' }] }, { type: 'cooldown', distance_km: 2, pace_min_per_km: '5:35-6:05' }] },
+      { date: d4, name: '休養', sport: 'rest', steps: [] },
+    ] };
+    await open('#/plans');
+    await page.evaluate(() => { document.querySelectorAll('.pm-pane, .tool-pane').forEach((e) => e.classList.remove('hidden')); });
+    await page.fill('#bulk-text', JSON.stringify(data));
+    await page.click('#bulk-go');
+    await page.waitForSelector('#bulk-prev .bulk-row');
+    const rows = await page.$$eval('#bulk-prev .bulk-row', (els: Element[]) => els.map((e) => e.textContent!.replace(/\s+/g, '')));
+    expect(rows.length).toBe(4);
+    expect(rows[0]).toContain('Mペース走14km');
+    expect(rows[1]).toContain('Jog7km');
+    expect(rows[2]).toContain('LT走12.5km');
+    expect(rows[3]).toContain('休養');
+    await page.click('#bulk-go');
+    await page.waitForFunction(() => /4 件登録しました/.test(document.querySelector('#bulk-out')!.textContent || ''));
+    const got = (await call(env, 'GET', `/plans?from=${d1}&to=${d4}`)).json;
+    const m = got.find((p: any) => p.date === d1), lt = got.find((p: any) => p.date === d3);
+    expect([m.type, m.pace_min_s, m.pace_max_s, m.distance_m]).toEqual(['m', 275, 280, 14000]);
+    expect(m.notes).toContain('シューズ: EVO SL');
+    expect(JSON.parse(lt.steps)[1].reps).toBe(3);
+    expect(got.find((p: any) => p.date === d2).steps).toBeNull();
+    for (const p of got) await call(env, 'DELETE', `/plans/${p.id}`);
+  }, 60000);
   it('ホーム: 今日の体調に体重・体脂肪率 (適正体重・目標まで) をまとめる・保存ボタンは大きく目立つ・見出しのボタンが中身に重ならない', async () => {
     await call(env, 'POST', '/body', { date: addDays(TODAY, -2), weight: 72.0, body_fat: 19.0 });
     await call(env, 'POST', '/body', { weight: 71.4, body_fat: 0.187, resting_hr: 47, hrv: 64, sleep_h: 6.5 });
