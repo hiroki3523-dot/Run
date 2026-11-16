@@ -13,6 +13,7 @@ ChatGPT の有料プランを使う人だけが使う、オプションの機能
 - 鍵は APP_TOKEN とは別の「ChatGPT 用の鍵」(kv の gpt_token)。設定で発行・作り直し・停止。バックアップには入れない
 - この鍵で使えるのは /gpt/* の読み取りと計画の登録 (POST /gpt/plans) だけ。ランの記録・COROS・Strava・設定・バックアップには触れない
 - 説明書 (OpenAPI) は /gpt/openapi.json (鍵なしで読める。中身は入口の説明だけ)
+- wrangler.toml の run_worker_first に /gpt/* を追加 (画面のファイルではなく Worker が答えるように)
 
 ## 変えていないもの
 - COROS・Strava の連携・同期、既存の API (/api/*) と APP_TOKEN
