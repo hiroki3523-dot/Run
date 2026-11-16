@@ -1,3 +1,4 @@
+import { mcp } from './mcp';
 import { gpt } from './gpt';
 import { Hono } from 'hono';
 import { api } from './api';
@@ -120,6 +121,7 @@ app.get('/cal/:sig/sub3.ics', async (c) => {
 
 // 拡張機能: ChatGPT (GPTs の Actions) 用。鍵は設定で発行する別の鍵 (src/gpt.ts)
 app.route('/gpt', gpt);
+app.route('/mcp', mcp);
 
 app.use('/api/*', async (c, next) => {
   const token = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '') ?? '';
