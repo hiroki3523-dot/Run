@@ -4516,10 +4516,18 @@ async function renderGptExt() {
   const copyBtn = (k, label) => `<button type="button" class="chip mini" data-gcopy="${k}">${label}</button>`;
   box.innerHTML = `<h2>拡張機能</h2>
     <details class="ext" ${st.enabled ? 'open' : ''}><summary><b>ChatGPT 連携</b> <span class="muted">${st.enabled ? '使っています' : '使っていません'}</span></summary>
-      <p class="muted">ChatGPT の有料プランで自分専用の GPT を作ると、ChatGPT が STRIDE のラン・計画・体調を読んで相談に乗り、作った計画を STRIDE に登録できます。使わない人は何もしなくて大丈夫です。</p>
+      <p class="muted">ChatGPT の有料プランで、ChatGPT が STRIDE のラン・計画・体調を読んで相談に乗り、作った計画を STRIDE に登録できます。つなぎ方は 2 つ (コネクタ または 自分専用の GPT)。使わない人は何もしなくて大丈夫です。</p>
       ${st.enabled ? `
         <div class="ext-row"><span>説明書の URL</span><code>${esc(schema)}</code>${copyBtn('schema', 'コピー')}</div>
         <div class="ext-row"><span>ChatGPT 用の鍵</span><code>${esc(st.token.slice(0, 8))}…${esc(st.token.slice(-4))}</code>${copyBtn('token', 'コピー')}</div>
+        <h3 class="pf-t">ChatGPT のコネクタ (MCP) でつなぐ</h3>
+        <div class="ext-row"><span>接続先の URL</span><code>${esc(location.origin)}/mcp</code>${copyBtn('mcp', 'コピー')}</div>
+        <ol class="ext-steps">
+          <li>ChatGPT の「Add custom MCP server」で、Connection に接続先の URL を貼る</li>
+          <li>Authentication は「OAuth」のまま、「I understand…」にチェックして作成</li>
+          <li>STRIDE のページが開くので、ChatGPT 用の鍵を貼って「許可する」</li>
+        </ol>
+        <h3 class="pf-t">自分専用の GPT (Actions) でつなぐ</h3>
         <ol class="ext-steps">
           <li>ChatGPT で「GPT を探す」→「作成する」→「構成」を開く</li>
           <li>「指示をコピー」を押して、「指示」の欄に貼る ${copyBtn('inst', '指示をコピー')}</li>
@@ -4533,12 +4541,12 @@ async function renderGptExt() {
     </details>`;
   const toast = (b, t) => { const o = b.textContent; b.textContent = t; setTimeout(() => (b.textContent = o), 1500); };
   box.querySelectorAll('[data-gcopy]').forEach((b) => (b.onclick = async () => {
-    const v = b.dataset.gcopy === 'schema' ? schema : b.dataset.gcopy === 'token' ? st.token : GPT_INSTRUCTIONS;
+    const v = b.dataset.gcopy === 'schema' ? schema : b.dataset.gcopy === 'token' ? st.token : b.dataset.gcopy === 'mcp' ? `${location.origin}/mcp` : GPT_INSTRUCTIONS;
     try { await navigator.clipboard.writeText(v); toast(b, 'コピーしました'); } catch { toast(b, 'コピーできません'); }
   }));
   box.querySelectorAll('[data-gact]').forEach((b) => (b.onclick = async () => {
     const a = b.dataset.gact;
-    if (a === 'rotate' && !confirm('鍵を作り直すと、いまの鍵は使えなくなります。ChatGPT の GPT にも新しい鍵を貼り直してください。作り直しますか？')) return;
+    if (a === 'rotate' && !confirm('鍵を作り直すと、いまの鍵と、コネクタの接続はすべて使えなくなります。GPT には新しい鍵を貼り直し、コネクタはもう一度接続してください。作り直しますか？')) return;
     if (a === 'off' && !confirm('ChatGPT 連携をやめますか？ (鍵が使えなくなります。STRIDE のデータはそのままです)')) return;
     b.disabled = true;
     try { await api('/gpt-token', { method: a === 'off' ? 'DELETE' : 'POST' }); } catch (e) { alert(e.message); }

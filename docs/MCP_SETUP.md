@@ -32,7 +32,20 @@
 3. getToday と listRuns で参照を確認する。認証確認のために savePlans を実行しない。
 4. 実エンドポイントとクライアントの認証方式を確認してからプラグインの接続設定を登録する。
 
-この実装は Bearer 認証。OAuth サーバーは含まない。接続画面が OAuth のみを受け付ける場合は、対応する認証連携が追加で必要。URLだけで接続完了とはならない。
+認証は 2 通り。(1) ChatGPT 用の鍵を Bearer で送る。(2) OAuth (src/oauth.ts)。ChatGPT の「Add custom MCP server」は Bearer の欄がなく OAuth か認証なしだけなので、(2) を使う。
+
+### OAuth (src/oauth.ts)
+- メタデータ: `/.well-known/oauth-protected-resource`・`/.well-known/oauth-authorization-server`。鍵なしの /mcp は 401 と `WWW-Authenticate: Bearer resource_metadata=...` を返す
+- クライアント登録 (動的): `POST /oauth/register` (https の redirect_uris のみ。連携を止めていると 403)
+- 許可: `GET /oauth/authorize` で STRIDE のページを出し、ChatGPT 用の鍵を貼って「許可する」。PKCE (S256) 必須
+- トークン: `POST /oauth/token` (authorization_code・refresh_token)。アクセストークン 1 時間・更新用 30 日 (使うたびに取り替え)。コードは 1 回だけ
+- トークンは /mcp だけで使える (/gpt・/api には使えない)。ChatGPT 用の鍵を作り直す・止めると、出したトークンはすべて無効
+- 保存は kv の oauth_* (ハッシュだけ。バックアップには入らない)
+
+### ChatGPT のコネクタの手順
+1. Connection: `https://run.hiroki3523.workers.dev/mcp`
+2. Authentication: OAuth のまま。「I understand…」にチェックして作成
+3. STRIDE のページが開くので、設定 › 拡張機能 の ChatGPT 用の鍵を貼って「許可する」
 プラグインをまだ登録していない。未検証エンドポイントを登録済みとして扱わない。
 
 ## コーチの動作ルール

@@ -9,7 +9,7 @@ keep_vars = true
 [assets]
 directory = "./public"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*", "/webhook", "/auth/*", "/cal/*", "/gpt/*", "/mcp", "/mcp/*"]
+run_worker_first = ["/api/*", "/webhook", "/auth/*", "/cal/*", "/gpt/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/*"]
 
 [[d1_databases]]
 binding = "DB"
